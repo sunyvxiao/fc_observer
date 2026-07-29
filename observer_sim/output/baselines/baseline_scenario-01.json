@@ -1,0 +1,30 @@
+{
+  "command_freq": {
+    "git": 3,
+    "python3": 2
+  },
+  "file_path_prefixes": [
+    "/home/dev/"
+  ],
+  "net_targets": [],
+  "event_type_freq": {
+    "exec": 5,
+    "file_open": 3
+  },
+  "agent_profiles": {
+    "code-agent-1": {
+      "event_count": 8,
+      "known_commands": [
+        "python3",
+        "git"
+      ],
+      "known_paths": [
+        "/home/dev/project/tests/test_main.py",
+        "/home/dev/project/main.py"
+      ],
+      "known_net_targets": []
+    }
+  },
+  "total_events": 8,
+  "is_warm": false
+}

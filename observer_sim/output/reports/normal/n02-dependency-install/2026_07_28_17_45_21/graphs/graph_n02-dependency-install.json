@@ -1,0 +1,205 @@
+{
+  "graph_info": {
+    "node_count": 6,
+    "edge_count": 5,
+    "agent_count": 1,
+    "cross_agent_edges": 0,
+    "generated_at": "2026-07-28T17:45:23.529176"
+  },
+  "nodes": [
+    {
+      "node_id": "evt_1",
+      "agent_id": "build-agent-1",
+      "event_type": "exec",
+      "description": "exec: /usr/bin/pip install -r requirements.txt --target /home/dev/venv/lib/",
+      "timestamp_ns": 1718092800000000000,
+      "risk_score": 0.16,
+      "risk_level": "LOW",
+      "decision": "ALLOW",
+      "tier": "TIER1",
+      "blocked": false,
+      "matched_rules": [
+        "R006"
+      ],
+      "metadata": {
+        "pid": 20001,
+        "ppid": 0,
+        "agent_framework": "test",
+        "executable": "/usr/bin/pip",
+        "arguments": [
+          "install",
+          "-r",
+          "requirements.txt",
+          "--target",
+          "/home/dev/venv/lib/"
+        ],
+        "command_string": "/usr/bin/pip install -r requirements.txt --target /home/dev/venv/lib/"
+      }
+    },
+    {
+      "node_id": "evt_2",
+      "agent_id": "build-agent-1",
+      "event_type": "file_open",
+      "description": "file_write: /home/dev/venv/lib/python3.11/site-packages/numpy/__init__.py",
+      "timestamp_ns": 1718092802000000000,
+      "risk_score": 0.0,
+      "risk_level": "LOW",
+      "decision": "ALLOW",
+      "tier": "TIER1",
+      "blocked": false,
+      "matched_rules": [],
+      "metadata": {
+        "pid": 20002,
+        "ppid": 0,
+        "agent_framework": "test",
+        "file_path": "/home/dev/venv/lib/python3.11/site-packages/numpy/__init__.py",
+        "file_op": "write"
+      }
+    },
+    {
+      "node_id": "evt_3",
+      "agent_id": "build-agent-1",
+      "event_type": "exec",
+      "description": "exec: /usr/bin/npm install --prefix /home/dev/frontend/",
+      "timestamp_ns": 1718092803000000000,
+      "risk_score": 0.0,
+      "risk_level": "LOW",
+      "decision": "ALLOW",
+      "tier": "TIER1",
+      "blocked": false,
+      "matched_rules": [],
+      "metadata": {
+        "pid": 20003,
+        "ppid": 0,
+        "agent_framework": "test",
+        "executable": "/usr/bin/npm",
+        "arguments": [
+          "install",
+          "--prefix",
+          "/home/dev/frontend/"
+        ],
+        "command_string": "/usr/bin/npm install --prefix /home/dev/frontend/"
+      }
+    },
+    {
+      "node_id": "evt_4",
+      "agent_id": "build-agent-1",
+      "event_type": "net_conn",
+      "description": "net_TCP: 104.16.21.14:443",
+      "timestamp_ns": 1718092806000000000,
+      "risk_score": 0.26,
+      "risk_level": "LOW",
+      "decision": "ALLOW",
+      "tier": "TIER1",
+      "blocked": false,
+      "matched_rules": [
+        "R012"
+      ],
+      "metadata": {
+        "pid": 20004,
+        "ppid": 0,
+        "agent_framework": "test",
+        "remote_addr": "104.16.21.14",
+        "remote_port": 443,
+        "protocol": null
+      }
+    },
+    {
+      "node_id": "evt_5",
+      "agent_id": "build-agent-1",
+      "event_type": "exec",
+      "description": "exec: /usr/bin/make build",
+      "timestamp_ns": 1718092806500000000,
+      "risk_score": 0.0,
+      "risk_level": "LOW",
+      "decision": "ALLOW",
+      "tier": "TIER1",
+      "blocked": false,
+      "matched_rules": [],
+      "metadata": {
+        "pid": 20005,
+        "ppid": 0,
+        "agent_framework": "test",
+        "executable": "/usr/bin/make",
+        "arguments": [
+          "build"
+        ],
+        "command_string": "/usr/bin/make build"
+      }
+    },
+    {
+      "node_id": "evt_6",
+      "agent_id": "build-agent-1",
+      "event_type": "file_open",
+      "description": "file_read: /home/dev/build/output/version.txt",
+      "timestamp_ns": 1718092808500000000,
+      "risk_score": 0.0,
+      "risk_level": "LOW",
+      "decision": "ALLOW",
+      "tier": "TIER1",
+      "blocked": false,
+      "matched_rules": [],
+      "metadata": {
+        "pid": 20006,
+        "ppid": 0,
+        "agent_framework": "test",
+        "file_path": "/home/dev/build/output/version.txt",
+        "file_op": "read"
+      }
+    }
+  ],
+  "edges": [
+    {
+      "source_id": "evt_1",
+      "target_id": "evt_2",
+      "edge_type": "sequential",
+      "weight": 1.0,
+      "description": "Agent build-agent-1 行为序列"
+    },
+    {
+      "source_id": "evt_2",
+      "target_id": "evt_3",
+      "edge_type": "sequential",
+      "weight": 1.0,
+      "description": "Agent build-agent-1 行为序列"
+    },
+    {
+      "source_id": "evt_3",
+      "target_id": "evt_4",
+      "edge_type": "sequential",
+      "weight": 1.0,
+      "description": "Agent build-agent-1 行为序列"
+    },
+    {
+      "source_id": "evt_4",
+      "target_id": "evt_5",
+      "edge_type": "sequential",
+      "weight": 1.0,
+      "description": "Agent build-agent-1 行为序列"
+    },
+    {
+      "source_id": "evt_5",
+      "target_id": "evt_6",
+      "edge_type": "sequential",
+      "weight": 1.0,
+      "description": "Agent build-agent-1 行为序列"
+    }
+  ],
+  "agent_summaries": {
+    "build-agent-1": {
+      "agent_id": "build-agent-1",
+      "total_events": 6,
+      "allowed": 6,
+      "alerted": 0,
+      "blocked": 0,
+      "avg_risk_score": 0.07,
+      "max_risk_score": 0.26,
+      "matched_rules": {
+        "R006": 1,
+        "R012": 1
+      },
+      "first_event_ns": 1718092800000000000,
+      "last_event_ns": 1718092808500000000
+    }
+  }
+}

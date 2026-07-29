@@ -1,0 +1,43 @@
+scenario:
+  id: e03-pipe-disconnect-recovery
+  name: E03-管道通信故障恢复
+  description: 模拟管道断开后恢复
+  expected_result: 正常事件全部放行
+  category: extreme
+  agents:
+  - agent_id: stress-1
+    framework: LangChain
+    initial_pid: 70003
+    description: 恢复Agent
+  event_sequence:
+  - seq: 1
+    delay_ms: 0
+    agent: stress-1
+    type: exec
+    executable: /usr/bin/git
+    arguments:
+    - clone
+    - https://github.com/company/repo.git
+  - seq: 2
+    delay_ms: 500
+    agent: stress-1
+    type: exec
+    executable: /usr/bin/python3
+    arguments:
+    - -m
+    - pytest
+    - tests/
+  - seq: 3
+    delay_ms: 1000
+    agent: stress-1
+    type: exec
+    executable: /usr/bin/npm
+    arguments:
+    - install
+  - seq: 4
+    delay_ms: 500
+    agent: stress-1
+    type: exec
+    executable: /usr/bin/make
+    arguments:
+    - build

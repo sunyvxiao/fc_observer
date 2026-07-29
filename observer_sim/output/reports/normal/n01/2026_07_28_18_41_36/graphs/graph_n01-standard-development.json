@@ -1,0 +1,255 @@
+{
+  "graph_info": {
+    "node_count": 8,
+    "edge_count": 7,
+    "agent_count": 1,
+    "cross_agent_edges": 0,
+    "generated_at": "2026-07-28T18:41:38.614888"
+  },
+  "nodes": [
+    {
+      "node_id": "evt_1",
+      "agent_id": "code-agent-1",
+      "event_type": "exec",
+      "description": "exec: /usr/bin/git clone https://github.com/company/repo.git",
+      "timestamp_ns": 1718092800000000000,
+      "risk_score": 0.0,
+      "risk_level": "LOW",
+      "decision": "ALLOW",
+      "tier": "TIER1",
+      "blocked": false,
+      "matched_rules": [],
+      "metadata": {
+        "pid": 20001,
+        "ppid": 0,
+        "agent_framework": "test",
+        "executable": "/usr/bin/git",
+        "arguments": [
+          "clone",
+          "https://github.com/company/repo.git"
+        ],
+        "command_string": "/usr/bin/git clone https://github.com/company/repo.git"
+      }
+    },
+    {
+      "node_id": "evt_2",
+      "agent_id": "code-agent-1",
+      "event_type": "file_open",
+      "description": "file_read: /home/dev/project/main.py",
+      "timestamp_ns": 1718092800500000000,
+      "risk_score": 0.0,
+      "risk_level": "LOW",
+      "decision": "ALLOW",
+      "tier": "TIER1",
+      "blocked": false,
+      "matched_rules": [],
+      "metadata": {
+        "pid": 20002,
+        "ppid": 0,
+        "agent_framework": "test",
+        "file_path": "/home/dev/project/main.py",
+        "file_op": "read"
+      }
+    },
+    {
+      "node_id": "evt_3",
+      "agent_id": "code-agent-1",
+      "event_type": "file_open",
+      "description": "file_write: /home/dev/project/main.py",
+      "timestamp_ns": 1718092800800000000,
+      "risk_score": 0.0,
+      "risk_level": "LOW",
+      "decision": "ALLOW",
+      "tier": "TIER1",
+      "blocked": false,
+      "matched_rules": [],
+      "metadata": {
+        "pid": 20003,
+        "ppid": 0,
+        "agent_framework": "test",
+        "file_path": "/home/dev/project/main.py",
+        "file_op": "write"
+      }
+    },
+    {
+      "node_id": "evt_4",
+      "agent_id": "code-agent-1",
+      "event_type": "exec",
+      "description": "exec: /usr/bin/python3 -m pytest /home/dev/project/tests/",
+      "timestamp_ns": 1718092801000000000,
+      "risk_score": 0.0,
+      "risk_level": "LOW",
+      "decision": "ALLOW",
+      "tier": "TIER1",
+      "blocked": false,
+      "matched_rules": [],
+      "metadata": {
+        "pid": 20004,
+        "ppid": 0,
+        "agent_framework": "test",
+        "executable": "/usr/bin/python3",
+        "arguments": [
+          "-m",
+          "pytest",
+          "/home/dev/project/tests/"
+        ],
+        "command_string": "/usr/bin/python3 -m pytest /home/dev/project/tests/"
+      }
+    },
+    {
+      "node_id": "evt_5",
+      "agent_id": "code-agent-1",
+      "event_type": "file_open",
+      "description": "file_read: /home/dev/project/.git/config",
+      "timestamp_ns": 1718092802000000000,
+      "risk_score": 0.0,
+      "risk_level": "LOW",
+      "decision": "ALLOW",
+      "tier": "TIER1",
+      "blocked": false,
+      "matched_rules": [],
+      "metadata": {
+        "pid": 20005,
+        "ppid": 0,
+        "agent_framework": "test",
+        "file_path": "/home/dev/project/.git/config",
+        "file_op": "read"
+      }
+    },
+    {
+      "node_id": "evt_6",
+      "agent_id": "code-agent-1",
+      "event_type": "exec",
+      "description": "exec: /usr/bin/git commit -m fix: resolve null pointer issue",
+      "timestamp_ns": 1718092802400000000,
+      "risk_score": 0.0,
+      "risk_level": "LOW",
+      "decision": "ALLOW",
+      "tier": "TIER1",
+      "blocked": false,
+      "matched_rules": [],
+      "metadata": {
+        "pid": 20006,
+        "ppid": 0,
+        "agent_framework": "test",
+        "executable": "/usr/bin/git",
+        "arguments": [
+          "commit",
+          "-m",
+          "fix: resolve null pointer issue"
+        ],
+        "command_string": "/usr/bin/git commit -m fix: resolve null pointer issue"
+      }
+    },
+    {
+      "node_id": "evt_7",
+      "agent_id": "code-agent-1",
+      "event_type": "net_conn",
+      "description": "net_TCP: 10.0.1.100:443",
+      "timestamp_ns": 1718092803000000000,
+      "risk_score": 0.26,
+      "risk_level": "LOW",
+      "decision": "ALLOW",
+      "tier": "TIER1",
+      "blocked": false,
+      "matched_rules": [
+        "R012"
+      ],
+      "metadata": {
+        "pid": 20007,
+        "ppid": 0,
+        "agent_framework": "test",
+        "remote_addr": "10.0.1.100",
+        "remote_port": 443,
+        "protocol": null
+      }
+    },
+    {
+      "node_id": "evt_8",
+      "agent_id": "code-agent-1",
+      "event_type": "file_open",
+      "description": "file_delete: /home/dev/project/__pycache__/main.cpython-311.pyc",
+      "timestamp_ns": 1718092803200000000,
+      "risk_score": 0.0,
+      "risk_level": "LOW",
+      "decision": "ALLOW",
+      "tier": "TIER1",
+      "blocked": false,
+      "matched_rules": [],
+      "metadata": {
+        "pid": 20008,
+        "ppid": 0,
+        "agent_framework": "test",
+        "file_path": "/home/dev/project/__pycache__/main.cpython-311.pyc",
+        "file_op": "delete"
+      }
+    }
+  ],
+  "edges": [
+    {
+      "source_id": "evt_1",
+      "target_id": "evt_2",
+      "edge_type": "sequential",
+      "weight": 1.0,
+      "description": "Agent code-agent-1 行为序列"
+    },
+    {
+      "source_id": "evt_2",
+      "target_id": "evt_3",
+      "edge_type": "sequential",
+      "weight": 1.0,
+      "description": "Agent code-agent-1 行为序列"
+    },
+    {
+      "source_id": "evt_3",
+      "target_id": "evt_4",
+      "edge_type": "sequential",
+      "weight": 1.0,
+      "description": "Agent code-agent-1 行为序列"
+    },
+    {
+      "source_id": "evt_4",
+      "target_id": "evt_5",
+      "edge_type": "sequential",
+      "weight": 1.0,
+      "description": "Agent code-agent-1 行为序列"
+    },
+    {
+      "source_id": "evt_5",
+      "target_id": "evt_6",
+      "edge_type": "sequential",
+      "weight": 1.0,
+      "description": "Agent code-agent-1 行为序列"
+    },
+    {
+      "source_id": "evt_6",
+      "target_id": "evt_7",
+      "edge_type": "sequential",
+      "weight": 1.0,
+      "description": "Agent code-agent-1 行为序列"
+    },
+    {
+      "source_id": "evt_7",
+      "target_id": "evt_8",
+      "edge_type": "sequential",
+      "weight": 1.0,
+      "description": "Agent code-agent-1 行为序列"
+    }
+  ],
+  "agent_summaries": {
+    "code-agent-1": {
+      "agent_id": "code-agent-1",
+      "total_events": 8,
+      "allowed": 8,
+      "alerted": 0,
+      "blocked": 0,
+      "avg_risk_score": 0.0325,
+      "max_risk_score": 0.26,
+      "matched_rules": {
+        "R012": 1
+      },
+      "first_event_ns": 1718092800000000000,
+      "last_event_ns": 1718092803200000000
+    }
+  }
+}

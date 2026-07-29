@@ -1,0 +1,1234 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>方寸观察者模拟学习系统</title>
+    <style>
+        /* ── CSS 变量 ── */
+        :root {
+            --bg-primary: #1a1a2e;
+            --bg-secondary: #16213e;
+            --bg-card: #0f3460;
+            --text-primary: #e0e0e0;
+            --text-secondary: #a0a0b0;
+            --accent-green: #00ff88;
+            --accent-yellow: #ffcc00;
+            --accent-red: #ff4444;
+            --accent-blue: #4499ff;
+            --accent-cyan: #00d4ff;
+            --border-color: #2a2a4e;
+            --sidebar-width: 240px;
+        }
+
+        /* ── 重置与基础 ── */
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            font-family: 'Segoe UI', 'Microsoft YaHei', sans-serif;
+            background: var(--bg-primary);
+            color: var(--text-primary);
+            height: 100vh;
+            overflow: hidden;
+        }
+
+        /* ── 布局 ── */
+        #app-container {
+            display: flex;
+            height: 100vh;
+        }
+
+        /* ── 侧边栏 ── */
+        #sidebar {
+            width: var(--sidebar-width);
+            background: var(--bg-secondary);
+            border-right: 1px solid var(--border-color);
+            display: flex;
+            flex-direction: column;
+            flex-shrink: 0;
+        }
+        .logo-area {
+            padding: 20px;
+            border-bottom: 1px solid var(--border-color);
+            text-align: center;
+        }
+        .logo-area h2 {
+            color: var(--accent-cyan);
+            font-size: 16px;
+            margin-top: 8px;
+        }
+        .logo-area .logo-icon {
+            font-size: 28px;
+        }
+        nav {
+            flex: 1;
+            padding: 12px 0;
+        }
+        .nav-item {
+            display: flex;
+            align-items: center;
+            padding: 12px 20px;
+            color: var(--text-secondary);
+            cursor: pointer;
+            transition: all 0.2s;
+            border-left: 3px solid transparent;
+            font-size: 14px;
+        }
+        .nav-item:hover {
+            background: rgba(68, 153, 255, 0.1);
+            color: var(--text-primary);
+        }
+        .nav-item.active {
+            background: rgba(68, 153, 255, 0.15);
+            color: var(--accent-blue);
+            border-left-color: var(--accent-blue);
+        }
+        .nav-icon { margin-right: 10px; font-size: 16px; }
+        .server-status {
+            padding: 16px 20px;
+            border-top: 1px solid var(--border-color);
+            font-size: 12px;
+            color: var(--text-secondary);
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+        .status-dot {
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            background: var(--accent-green);
+            display: inline-block;
+        }
+
+        /* ── 主内容区 ── */
+        #main-content {
+            flex: 1;
+            overflow-y: auto;
+            padding: 24px;
+        }
+        .view { display: none; }
+        .view.active-view { display: block; }
+        .view-title {
+            font-size: 22px;
+            color: var(--accent-cyan);
+            margin-bottom: 20px;
+            padding-bottom: 12px;
+            border-bottom: 1px solid var(--border-color);
+        }
+
+        /* ── 卡片 ── */
+        .card {
+            background: var(--bg-card);
+            border: 1px solid var(--border-color);
+            border-radius: 8px;
+            padding: 16px;
+            margin-bottom: 16px;
+        }
+        .card-title {
+            font-size: 16px;
+            font-weight: bold;
+            margin-bottom: 8px;
+        }
+        .card-meta {
+            font-size: 13px;
+            color: var(--text-secondary);
+        }
+
+        /* ── 分类网格 ── */
+        .category-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+            gap: 16px;
+        }
+        .category-card {
+            background: var(--bg-card);
+            border: 1px solid var(--border-color);
+            border-radius: 8px;
+            padding: 20px;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+        .category-card:hover {
+            border-color: var(--accent-blue);
+            transform: translateY(-2px);
+        }
+        .category-card .cat-name {
+            font-size: 16px;
+            font-weight: bold;
+            margin-bottom: 6px;
+        }
+        .category-card .cat-count {
+            font-size: 28px;
+            font-weight: bold;
+            margin: 8px 0;
+        }
+        .category-card .cat-desc {
+            font-size: 13px;
+            color: var(--text-secondary);
+        }
+        .cat-normal .cat-count { color: var(--accent-green); }
+        .cat-anomalous .cat-count { color: var(--accent-red); }
+        .cat-boundary .cat-count { color: var(--accent-yellow); }
+        .cat-multi_agent .cat-count { color: #cc66ff; }
+        .cat-extreme .cat-count { color: var(--accent-cyan); }
+
+        /* ── 场景列表 ── */
+        .scenario-item {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 12px 16px;
+            background: var(--bg-card);
+            border: 1px solid var(--border-color);
+            border-radius: 6px;
+            margin-bottom: 8px;
+        }
+        .scenario-item .sc-info { flex: 1; }
+        .scenario-item .sc-name {
+            font-size: 14px;
+            font-weight: bold;
+            margin-bottom: 4px;
+        }
+        .scenario-item .sc-desc {
+            font-size: 12px;
+            color: var(--text-secondary);
+        }
+        .scenario-item .sc-events {
+            font-size: 12px;
+            color: var(--text-secondary);
+            margin-right: 12px;
+        }
+
+        /* ── 按钮 ── */
+        .btn {
+            padding: 8px 16px;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 13px;
+            font-weight: bold;
+            transition: all 0.2s;
+        }
+        .btn-primary {
+            background: var(--accent-blue);
+            color: #fff;
+        }
+        .btn-primary:hover { background: #3388ee; }
+        .btn-danger {
+            background: var(--accent-red);
+            color: #fff;
+        }
+        .btn-danger:hover { background: #ee3333; }
+        .btn-success {
+            background: var(--accent-green);
+            color: #1a1a2e;
+        }
+        .btn-success:hover { background: #00dd77; }
+
+        /* ── 日志区 ── */
+        #event-log {
+            font-family: 'Consolas', 'Courier New', monospace;
+            font-size: 13px;
+            background: #0d0d1a;
+            border: 1px solid var(--border-color);
+            border-radius: 6px;
+            padding: 12px;
+            max-height: 400px;
+            overflow-y: auto;
+            line-height: 1.6;
+        }
+        .log-entry {
+            padding: 4px 0;
+            border-bottom: 1px solid rgba(255,255,255,0.05);
+        }
+        .log-step { color: var(--text-secondary); }
+        .log-allow { color: var(--accent-green); }
+        .log-alert { color: var(--accent-yellow); }
+        .log-block { color: var(--accent-red); }
+
+        /* ── 分析面板 ── */
+        .analysis-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
+            gap: 16px;
+            margin-top: 16px;
+        }
+        .analysis-card {
+            background: var(--bg-card);
+            border: 1px solid var(--border-color);
+            border-radius: 8px;
+            padding: 16px;
+        }
+        .analysis-card h4 {
+            font-size: 14px;
+            margin-bottom: 8px;
+        }
+        .analysis-card p {
+            font-size: 13px;
+            color: var(--text-secondary);
+            line-height: 1.5;
+        }
+
+        /* ── 报告 ── */
+        .report-tree { font-size: 13px; }
+        .report-cat { margin-bottom: 4px; }
+        .report-cat-header {
+            display: flex;
+            align-items: center;
+            padding: 10px 12px;
+            font-weight: bold;
+            color: var(--accent-blue);
+            cursor: pointer;
+            border-radius: 6px;
+            transition: background 0.2s;
+            user-select: none;
+        }
+        .report-cat-header:hover { background: rgba(68,153,255,0.1); }
+        .report-cat-header .arrow {
+            display: inline-block;
+            width: 18px;
+            font-size: 11px;
+            color: var(--text-secondary);
+            transition: transform 0.2s;
+        }
+        .report-cat-header .cat-label { flex: 1; }
+        .report-scenario-item {
+            display: flex;
+            align-items: center;
+            padding: 8px 12px 8px 30px;
+            cursor: pointer;
+            border-radius: 4px;
+            transition: background 0.2s;
+            user-select: none;
+        }
+        .report-scenario-item:hover { background: rgba(68,153,255,0.08); }
+        .report-scenario-item .arrow {
+            display: inline-block;
+            width: 18px;
+            font-size: 11px;
+            color: var(--text-secondary);
+            transition: transform 0.2s;
+        }
+        .report-scenario-item .sc-label { flex: 1; font-size: 13px; }
+        .report-scenario-item .sc-badge {
+            font-size: 11px;
+            background: var(--bg-card);
+            border: 1px solid var(--border-color);
+            border-radius: 10px;
+            padding: 1px 8px;
+            color: var(--text-secondary);
+            margin-left: 8px;
+        }
+        .report-ts-list { padding-left: 48px; }
+        .report-ts {
+            padding: 5px 8px;
+            font-size: 12px;
+            color: var(--text-secondary);
+            cursor: pointer;
+            border-radius: 3px;
+            transition: all 0.15s;
+        }
+        .report-ts:hover { color: var(--accent-blue); background: rgba(68,153,255,0.06); }
+        .report-content {
+            background: #0d0d1a;
+            border: 1px solid var(--border-color);
+            border-radius: 6px;
+            padding: 20px;
+            margin-top: 12px;
+            font-size: 13px;
+            line-height: 1.7;
+            max-height: 600px;
+            overflow-y: auto;
+        }
+        .report-content h1 { color: var(--accent-cyan); font-size: 18px; margin: 16px 0 8px; }
+        .report-content h2 { color: var(--accent-blue); font-size: 16px; margin: 14px 0 6px; }
+        .report-content h3 { color: var(--accent-yellow); font-size: 14px; margin: 12px 0 4px; }
+        .report-content code { background: var(--bg-card); padding: 1px 4px; border-radius: 3px; font-size: 12px; }
+        .report-content hr { border: none; border-top: 1px solid var(--border-color); margin: 12px 0; }
+        .report-content ul { padding-left: 20px; margin: 6px 0; }
+        .report-content strong { color: var(--accent-yellow); }
+        .report-back-btn {
+            display: inline-block;
+            margin-bottom: 12px;
+            color: var(--accent-blue);
+            cursor: pointer;
+            font-size: 13px;
+        }
+        .report-back-btn:hover { text-decoration: underline; }
+
+        /* ── 查看详细报告按钮 ── */
+        .btn-report {
+            background: linear-gradient(135deg, var(--accent-blue), #3388ee);
+            color: #fff;
+            padding: 10px 20px;
+            font-size: 14px;
+            margin-top: 16px;
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+        }
+        .btn-report:hover { background: linear-gradient(135deg, #3388ee, #2277dd); }
+        .btn-report:disabled {
+            background: var(--bg-secondary);
+            color: var(--text-secondary);
+            cursor: not-allowed;
+            opacity: 0.6;
+        }
+
+        /* ── 测试面板 ── */
+        .test-result {
+            text-align: center;
+            padding: 30px;
+        }
+        .test-result .big-number {
+            font-size: 48px;
+            font-weight: bold;
+        }
+        .test-passed { color: var(--accent-green); }
+        .test-failed { color: var(--accent-red); }
+
+        /* ── 进度条 ── */
+        .progress-bar {
+            width: 100%;
+            height: 20px;
+            background: var(--bg-secondary);
+            border-radius: 10px;
+            overflow: hidden;
+            margin: 12px 0;
+        }
+        .progress-fill {
+            height: 100%;
+            background: linear-gradient(90deg, var(--accent-blue), var(--accent-cyan));
+            transition: width 0.3s;
+            border-radius: 10px;
+        }
+
+        /* ── 通知 ── */
+        #notification-area {
+            position: fixed;
+            top: 16px;
+            right: 16px;
+            z-index: 1000;
+        }
+        .notification {
+            background: var(--bg-card);
+            border: 1px solid var(--accent-blue);
+            border-radius: 6px;
+            padding: 12px 16px;
+            margin-bottom: 8px;
+            font-size: 13px;
+            animation: fadeIn 0.3s;
+            max-width: 300px;
+        }
+        @keyframes fadeIn {
+            from { opacity: 0; transform: translateY(-10px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+
+        /* ── Spinner ── */
+        .spinner {
+            display: none;
+            width: 40px;
+            height: 40px;
+            border: 4px solid var(--border-color);
+            border-top-color: var(--accent-blue);
+            border-radius: 50%;
+            animation: spin 0.8s linear infinite;
+            margin: 20px auto;
+        }
+        @keyframes spin { to { transform: rotate(360deg); } }
+
+        /* ── 删除确认 ── */
+        .delete-section {
+            margin-bottom: 20px;
+            padding: 16px;
+            background: var(--bg-card);
+            border: 1px solid var(--border-color);
+            border-radius: 8px;
+        }
+        .delete-section h3 {
+            font-size: 15px;
+            margin-bottom: 12px;
+        }
+
+        /* ── 面包屑 ── */
+        .breadcrumb {
+            font-size: 13px;
+            color: var(--text-secondary);
+            margin-bottom: 16px;
+        }
+        .breadcrumb a {
+            color: var(--accent-blue);
+            cursor: pointer;
+            text-decoration: none;
+        }
+        .breadcrumb a:hover { text-decoration: underline; }
+
+        /* ── 响应式 ── */
+        @media (max-width: 768px) {
+            #sidebar { width: 60px; }
+            .nav-item span:not(.nav-icon) { display: none; }
+            .logo-area h2 { display: none; }
+            .server-status span:not(.status-dot) { display: none; }
+            .category-grid { grid-template-columns: 1fr; }
+            .analysis-grid { grid-template-columns: 1fr; }
+        }
+    </style>
+</head>
+<body>
+    <div id="app-container">
+        <!-- 侧边栏 -->
+        <div id="sidebar">
+            <div class="logo-area">
+                <div class="logo-icon">&#x1F6E1;</div>
+                <h2>方寸观察者</h2>
+            </div>
+            <nav>
+                <div class="nav-item active" data-view="scenarios" onclick="showView('scenarios')">
+                    <span class="nav-icon">&#x1F4CB;</span>
+                    <span>按分类浏览场景</span>
+                </div>
+                <div class="nav-item" data-view="tests" onclick="showView('tests')">
+                    <span class="nav-icon">&#x2705;</span>
+                    <span>运行单元测试</span>
+                </div>
+                <div class="nav-item" data-view="run-all" onclick="showView('run-all')">
+                    <span class="nav-icon">&#x1F680;</span>
+                    <span>全量模拟测试</span>
+                </div>
+                <div class="nav-item" data-view="reports" onclick="showView('reports')">
+                    <span class="nav-icon">&#x1F4C4;</span>
+                    <span>查看历史报告</span>
+                </div>
+                <div class="nav-item" data-view="delete" onclick="showView('delete')">
+                    <span class="nav-icon">&#x1F5D1;</span>
+                    <span>删除测试记录</span>
+                </div>
+            </nav>
+            <div class="server-status">
+                <span class="status-dot"></span>
+                <span>服务器运行中</span>
+            </div>
+        </div>
+
+        <!-- 主内容区 -->
+        <div id="main-content">
+            <!-- 视图: 分类浏览场景 -->
+            <div id="view-scenarios" class="view active-view">
+                <h1 class="view-title">&#x1F4CB; 场景分类浏览</h1>
+                <div id="categories-container" class="category-grid">
+                    <div class="card" style="color: var(--text-secondary);">加载中...</div>
+                </div>
+                <div id="scenarios-container" style="display:none; margin-top:20px;">
+                    <div class="breadcrumb">
+                        <a onclick="showCategories()">&#x2190; 返回分类</a>
+                        <span id="scenarios-breadcrumb"></span>
+                    </div>
+                    <div id="scenarios-list"></div>
+                </div>
+            </div>
+
+            <!-- 视图: 场景运行 -->
+            <div id="view-scenario-run" class="view">
+                <div class="breadcrumb">
+                    <a onclick="showView(state.previousView || 'scenarios')">&#x2190; 返回</a>
+                </div>
+                <div id="run-header" class="card" style="margin-bottom:16px;">
+                    <div class="card-title" id="run-scenario-name">-</div>
+                    <div class="card-meta" id="run-scenario-desc">-</div>
+                </div>
+                <div style="margin-bottom:12px;">
+                    <button class="btn btn-danger" onclick="stopCurrentRun()">&#x23F9; 停止运行</button>
+                </div>
+                <div id="event-log"></div>
+                <div id="analysis-panel"></div>
+            </div>
+
+            <!-- 视图: 单元测试 -->
+            <div id="view-tests" class="view">
+                <h1 class="view-title">&#x2705; 运行单元测试</h1>
+                <div class="card" style="text-align:center;">
+                    <p style="margin-bottom:16px; color: var(--text-secondary);">
+                        运行全部 130 个单元测试（约需 10-30 秒）
+                    </p>
+                    <button class="btn btn-primary" onclick="runUnitTests()">&#x25B6; 开始测试</button>
+                    <div id="test-spinner" class="spinner"></div>
+                    <div id="test-result"></div>
+                </div>
+            </div>
+
+            <!-- 视图: 全量运行 -->
+            <div id="view-run-all" class="view">
+                <h1 class="view-title">&#x1F680; 全量模拟测试</h1>
+                <div class="card" style="margin-bottom:16px;">
+                    <p style="margin-bottom:12px; color: var(--text-secondary);">
+                        运行全部 37 个场景（5 大分类）
+                    </p>
+                    <button class="btn btn-primary" onclick="runAllScenarios()">&#x25B6; 开始全量运行</button>
+                    <button class="btn btn-danger" onclick="stopCurrentRun()" style="margin-left:8px;">&#x23F9; 停止</button>
+                </div>
+                <div id="run-all-progress" style="display:none;">
+                    <div class="progress-bar"><div class="progress-fill" id="progress-fill" style="width:0%"></div></div>
+                    <div id="progress-text" style="font-size:13px; color:var(--text-secondary);"></div>
+                </div>
+                <div id="run-all-log" style="margin-top:16px;">
+                    <div id="event-log-all"></div>
+                </div>
+                <div id="run-all-stats"></div>
+            </div>
+
+            <!-- 视图: 历史报告查看 -->
+            <div id="view-reports" class="view">
+                <h1 class="view-title">&#x1F4C4; 查看历史报告</h1>
+                <div id="report-tree" class="report-tree">
+                    <div class="card" style="color: var(--text-secondary);">加载中...</div>
+                </div>
+                <div id="report-content" class="report-content" style="display:none;"></div>
+            </div>
+
+            <!-- 视图: 删除记录 -->
+            <div id="view-delete" class="view">
+                <h1 class="view-title">&#x1F5D1; 删除测试记录</h1>
+                <div class="delete-section">
+                    <h3>&#x26A0; 删除全部记录</h3>
+                    <p style="font-size:13px; color:var(--text-secondary); margin-bottom:12px;">
+                        删除所有场景的运行报告、审计日志和证据文件
+                    </p>
+                    <button class="btn btn-danger" onclick="deleteAll()">&#x1F5D1; 删除全部</button>
+                </div>
+                <div class="delete-section">
+                    <h3>按分类删除</h3>
+                    <p style="font-size:13px; color:var(--text-secondary); margin-bottom:12px;">
+                        删除指定分类的所有运行记录
+                    </p>
+                    <select id="delete-category-select" style="padding:6px; margin-right:8px; background:var(--bg-secondary); color:var(--text-primary); border:1px solid var(--border-color); border-radius:4px;">
+                        <option value="normal">Normal 正常行为</option>
+                        <option value="anomalous">Anomalous 异常行为</option>
+                        <option value="boundary">Boundary 边界场景</option>
+                        <option value="multi_agent">Multi-Agent 多Agent</option>
+                        <option value="extreme">Extreme 极端场景</option>
+                    </select>
+                    <button class="btn btn-danger" onclick="deleteCategory()">删除该分类</button>
+                </div>
+                <div id="delete-result" style="margin-top:16px;"></div>
+            </div>
+        </div>
+    </div>
+
+    <!-- 通知区 -->
+    <div id="notification-area"></div>
+
+    <script>
+        // ══════════════════════════════════════════════════════
+        //  1. 状态管理
+        // ══════════════════════════════════════════════════════
+        const CATEGORY_NAMES = {
+            "normal": "正常行为",
+            "anomalous": "异常行为",
+            "boundary": "边界场景",
+            "multi_agent": "多Agent协作",
+            "extreme": "极端场景",
+        };
+
+        const state = {
+            currentView: "scenarios",
+            sseConnection: null,
+            sseActive: false,
+            logBuffer: [],
+            analysisPanel: null,
+            progressData: null,
+            previousView: "scenarios",
+            lastRunReportPath: null,  // 最近一次运行生成的报告路径
+        };
+
+        // ══════════════════════════════════════════════════════
+        //  2. API 模块
+        // ══════════════════════════════════════════════════════
+        async function apiGet(url) {
+            const resp = await fetch(url);
+            if (!resp.ok) {
+                const err = await resp.json().catch(() => ({ error: resp.statusText }));
+                throw new Error(err.error || resp.statusText);
+            }
+            return resp.json();
+        }
+
+        async function apiPost(url, body) {
+            const resp = await fetch(url, {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify(body),
+            });
+            if (!resp.ok) {
+                const err = await resp.json().catch(() => ({ error: resp.statusText }));
+                throw new Error(err.error || resp.statusText);
+            }
+            return resp.json();
+        }
+
+        // ══════════════════════════════════════════════════════
+        //  3. 视图管理
+        // ══════════════════════════════════════════════════════
+        function showView(viewId) {
+            state.previousView = state.currentView;
+            state.currentView = viewId;
+            document.querySelectorAll(".view").forEach(v => v.classList.remove("active-view"));
+            const el = document.getElementById(`view-${viewId}`);
+            if (el) el.classList.add("active-view");
+            document.querySelectorAll(".nav-item").forEach(n => n.classList.remove("active"));
+            const navEl = document.querySelector(`[data-view="${viewId}"]`);
+            if (navEl) navEl.classList.add("active");
+            if (viewId === "scenario-run" && state.logBuffer.length > 0) {
+                restoreLogFromBuffer();
+            }
+            if (viewId === "scenarios") showCategories();
+            if (viewId === "reports") loadReportList();
+        }
+
+        // ══════════════════════════════════════════════════════
+        //  4. 分类与场景渲染
+        // ══════════════════════════════════════════════════════
+        async function showCategories() {
+            const container = document.getElementById("categories-container");
+            const scenariosContainer = document.getElementById("scenarios-container");
+            scenariosContainer.style.display = "none";
+            container.style.display = "";
+            try {
+                const data = await apiGet("/api/categories");
+                container.innerHTML = "";
+                data.categories.forEach(cat => {
+                    const card = document.createElement("div");
+                    card.className = `category-card cat-${cat.id}`;
+                    card.innerHTML = `
+                        <div class="cat-name">${cat.name}</div>
+                        <div class="cat-count">${cat.count} <span style="font-size:14px;">个场景</span></div>
+                        <div class="cat-desc">${cat.description}</div>
+                    `;
+                    card.onclick = () => showScenarios(cat.id, cat.name);
+                    container.appendChild(card);
+                });
+            } catch (e) {
+                container.innerHTML = `<div class="card" style="color:var(--accent-red);">加载失败: ${e.message}</div>`;
+            }
+        }
+
+        async function showScenarios(category, catName) {
+            const container = document.getElementById("categories-container");
+            const scenariosContainer = document.getElementById("scenarios-container");
+            const listEl = document.getElementById("scenarios-list");
+            container.style.display = "none";
+            scenariosContainer.style.display = "";
+            document.getElementById("scenarios-breadcrumb").textContent = ` / ${catName}`;
+            listEl.innerHTML = '<div style="color:var(--text-secondary);">加载中...</div>';
+            try {
+                const data = await apiGet(`/api/scenarios?category=${category}`);
+                listEl.innerHTML = "";
+                data.scenarios.forEach(sc => {
+                    const item = document.createElement("div");
+                    item.className = "scenario-item";
+                    item.innerHTML = `
+                        <div class="sc-info">
+                            <div class="sc-name">${sc.name}</div>
+                            <div class="sc-desc">${sc.description}</div>
+                        </div>
+                        <div class="sc-events">${sc.event_count} 事件</div>
+                        <button class="btn btn-primary" onclick="runScenario('${sc.id}','${sc.category}','${sc.name.replace(/'/g, "\\'")}')">&#x25B6; 运行</button>
+                    `;
+                    listEl.appendChild(item);
+                });
+            } catch (e) {
+                listEl.innerHTML = `<div style="color:var(--accent-red);">加载失败: ${e.message}</div>`;
+            }
+        }
+
+        // ══════════════════════════════════════════════════════
+        //  5. 场景运行 (SSE)
+        // ══════════════════════════════════════════════════════
+        async function runScenario(scenarioId, category, scenarioName) {
+            state.previousView = state.currentView;
+            showView("scenario-run");
+            state.logBuffer = [];
+            state.analysisPanel = null;
+            state.lastRunReportPath = null;
+            document.getElementById("event-log").innerHTML = "";
+            document.getElementById("analysis-panel").innerHTML = "";
+            document.getElementById("run-scenario-name").textContent = scenarioName || scenarioId;
+            document.getElementById("run-scenario-desc").textContent = `场景 ID: ${scenarioId} | 分类: ${category}`;
+
+            try {
+                const { run_id } = await apiPost("/api/scenario/run",
+                    { scenario_id: scenarioId, category: category });
+                connectScenarioStream(run_id);
+            } catch (e) {
+                showNotification("启动失败: " + e.message);
+            }
+        }
+
+        function connectScenarioStream(runId) {
+            // 先检查是否已完成
+            apiGet(`/api/scenario/result/${runId}`).then(result => {
+                if (result.status === "completed") {
+                    renderAnalysisPanel(result.analysis_panel);
+                    renderFileLinks(result.files_generated);
+                    return;
+                }
+                // 正在运行 -> 建立 SSE
+                startSSE(runId);
+            }).catch(() => {
+                startSSE(runId);
+            });
+        }
+
+        function startSSE(runId) {
+            const es = new EventSource(`/api/scenario/stream/${runId}`);
+            state.sseConnection = es;
+            state.sseActive = true;
+
+            es.onmessage = (e) => {
+                const data = JSON.parse(e.data);
+                if (data.type === "step") {
+                    const entry = renderLogEntry(data);
+                    state.logBuffer.push(entry);
+                    const log = document.getElementById("event-log");
+                    log.appendChild(entry);
+                    log.scrollTop = log.scrollHeight;
+                } else if (data.type === "done") {
+                    renderAnalysisPanel(data.analysis_panel);
+                    if (data.files_generated) renderFileLinks(data.files_generated);
+                    es.close();
+                    state.sseConnection = null;
+                    state.sseActive = false;
+                    showNotification("场景运行完成");
+                } else if (data.type === "error") {
+                    showNotification("错误: " + data.message);
+                    es.close();
+                    state.sseConnection = null;
+                    state.sseActive = false;
+                }
+            };
+
+            es.onerror = () => {
+                es.close();
+                state.sseConnection = null;
+                setTimeout(() => connectScenarioStream(runId), 1000);
+            };
+        }
+
+        function stopCurrentRun() {
+            if (state.sseConnection) {
+                state.sseConnection.close();
+                state.sseConnection = null;
+                state.sseActive = false;
+                showNotification("场景运行已停止");
+            }
+        }
+
+        function restoreLogFromBuffer() {
+            const container = document.getElementById("event-log");
+            container.innerHTML = "";
+            state.logBuffer.forEach(entry => container.appendChild(entry.cloneNode(true)));
+            container.scrollTop = container.scrollHeight;
+        }
+
+        // ══════════════════════════════════════════════════════
+        //  6. 日志渲染
+        // ══════════════════════════════════════════════════════
+        function renderLogEntry(data) {
+            const div = document.createElement("div");
+            div.className = "log-entry";
+            const actionClass = data.decision_action === "BLOCK" ? "log-block"
+                : data.decision_action === "ALERT" ? "log-alert" : "log-allow";
+            const icon = data.decision_action === "BLOCK" ? "&#x274C;"
+                : data.decision_action === "ALERT" ? "&#x26A0;" : "&#x2705;";
+            div.innerHTML = `
+                <span class="log-step">[${data.seq}/${data.total}]</span>
+                <span style="color:var(--accent-blue);">${data.event_type}</span>
+                ${icon} <span class="${actionClass}">${data.decision_action}</span>
+                <span style="color:var(--text-secondary);">| ${data.normalized_summary}</span>
+                <span style="color:${data.risk_score >= 0.6 ? 'var(--accent-red)' : data.risk_score >= 0.3 ? 'var(--accent-yellow)' : 'var(--accent-green)'};">
+                    (${data.risk_score.toFixed(2)} ${data.risk_level})
+                </span>
+            `;
+            return div;
+        }
+
+        // ══════════════════════════════════════════════════════
+        //  7. 分析面板
+        // ══════════════════════════════════════════════════════
+        function renderAnalysisPanel(panel) {
+            if (!panel) return;
+            state.analysisPanel = panel;
+            const el = document.getElementById("analysis-panel");
+            el.innerHTML = `
+                <h3 style="margin:16px 0 12px; color:var(--accent-cyan);">&#x1F4CA; 场景分析面板</h3>
+                <div class="analysis-grid">
+                    <div class="analysis-card">
+                        <h4 style="color:var(--accent-yellow);">&#x2460; 测试目的</h4>
+                        <p>${panel.test_purpose || '-'}</p>
+                    </div>
+                    <div class="analysis-card">
+                        <h4 style="color:var(--accent-red);">&#x2461; 风险发现</h4>
+                        <p>${panel.risk_findings || '-'}</p>
+                    </div>
+                    <div class="analysis-card">
+                        <h4 style="color:#cc66ff;">&#x2462; 风险归因</h4>
+                        <p>${panel.root_cause || '-'}</p>
+                    </div>
+                    <div class="analysis-card">
+                        <h4 style="color:var(--accent-green);">&#x2463; 处置策略</h4>
+                        <p>${panel.comprehensive_strategy || '-'}</p>
+                    </div>
+                </div>
+                <div style="margin-top:16px;">
+                    <button class="btn btn-report" onclick="viewLastRunReport()" ${!state.lastRunReportPath ? 'disabled' : ''}>
+                        &#x1F4C4; 查看详细报告
+                    </button>
+                </div>
+            `;
+        }
+
+        function renderFileLinks(files) {
+            if (!files || !files.length) return;
+            // 查找 .md 报告路径，用于"查看详细报告"按钮
+            const mdFile = files.find(f => f.type === 'md');
+            if (mdFile) {
+                // 从完整路径中提取相对于 reports 目录的路径
+                const mdPath = mdFile.path;
+                const reportsIdx = mdPath.indexOf('reports/');
+                if (reportsIdx >= 0) {
+                    state.lastRunReportPath = mdPath.substring(reportsIdx + 'reports/'.length);
+                } else {
+                    state.lastRunReportPath = mdPath;
+                }
+            }
+            const el = document.getElementById("analysis-panel");
+            const div = document.createElement("div");
+            div.style.marginTop = "12px";
+            div.innerHTML = "<h4 style='margin-bottom:8px; color:var(--text-secondary);'>生成文件:</h4>";
+            files.forEach(f => {
+                const link = document.createElement("a");
+                link.textContent = `[${f.type}] ${f.path}`;
+                link.style.cssText = "display:block; color:var(--accent-blue); cursor:pointer; font-size:13px; margin:4px 0;";
+                link.onclick = () => viewReportFile(f.path);
+                div.appendChild(link);
+            });
+            el.appendChild(div);
+            // 启用"查看详细报告"按钮
+            const btn = el.querySelector('.btn-report');
+            if (btn && state.lastRunReportPath) {
+                btn.disabled = false;
+            }
+        }
+
+        function viewLastRunReport() {
+            if (!state.lastRunReportPath) {
+                showNotification("该场景尚未生成报告");
+                return;
+            }
+            viewReportFile(state.lastRunReportPath);
+        }
+
+        // ══════════════════════════════════════════════════════
+        //  8. 单元测试
+        // ══════════════════════════════════════════════════════
+        async function runUnitTests() {
+            const spinner = document.getElementById("test-spinner");
+            const resultEl = document.getElementById("test-result");
+            spinner.style.display = "block";
+            resultEl.innerHTML = "";
+            try {
+                const result = await apiPost("/api/tests/run", {});
+                spinner.style.display = "none";
+                const color = result.failed > 0 ? "test-failed" : "test-passed";
+                resultEl.innerHTML = `
+                    <div class="test-result">
+                        <div class="big-number ${color}">${result.passed} / ${result.total}</div>
+                        <p style="margin-top:8px; color:var(--text-secondary);">
+                            通过: ${result.passed} | 失败: ${result.failed} | 耗时: ${result.duration_seconds}s
+                        </p>
+                        ${result.failed_names.length > 0 ? `<div style="text-align:left; margin-top:12px; color:var(--accent-red); font-size:13px;">
+                            失败用例:<br>${result.failed_names.join("<br>")}
+                        </div>` : ""}
+                    </div>
+                `;
+            } catch (e) {
+                spinner.style.display = "none";
+                resultEl.innerHTML = `<div style="color:var(--accent-red);">测试失败: ${e.message}</div>`;
+            }
+        }
+
+        // ══════════════════════════════════════════════════════
+        //  9. 全量运行
+        // ══════════════════════════════════════════════════════
+        function runAllScenarios(category) {
+            const progressEl = document.getElementById("run-all-progress");
+            const logEl = document.getElementById("event-log-all");
+            const statsEl = document.getElementById("run-all-stats");
+            progressEl.style.display = "block";
+            logEl.innerHTML = "";
+            statsEl.innerHTML = "";
+
+            const catParam = category ? `?category=${category}` : "";
+            const es = new EventSource(`/api/scenario/run-all${catParam}`);
+            state.sseConnection = es;
+            state.sseActive = true;
+
+            es.onmessage = (e) => {
+                const data = JSON.parse(e.data);
+                if (data.type === "scenario_start") {
+                    document.getElementById("progress-text").textContent =
+                        `正在运行: ${data.scenario_name || data.scenario_id} (${data.completed || 0}/${data.total || '?'})`;
+                } else if (data.type === "step") {
+                    const entry = renderLogEntry(data);
+                    logEl.appendChild(entry);
+                    logEl.scrollTop = logEl.scrollHeight;
+                } else if (data.type === "scenario_done") {
+                    const pct = data.total ? Math.round((data.completed / data.total) * 100) : 0;
+                    document.getElementById("progress-fill").style.width = pct + "%";
+                } else if (data.type === "all_done") {
+                    document.getElementById("progress-fill").style.width = "100%";
+                    document.getElementById("progress-text").textContent = `全部完成! ${data.total} 个场景`;
+                    es.close();
+                    state.sseConnection = null;
+                    state.sseActive = false;
+                    showNotification("全量运行完成");
+                } else if (data.type === "error") {
+                    showNotification("错误: " + data.message);
+                    es.close();
+                    state.sseConnection = null;
+                    state.sseActive = false;
+                }
+            };
+
+            es.onerror = () => {
+                es.close();
+                state.sseConnection = null;
+                recoverRunAllProgress();
+            };
+        }
+
+        async function recoverRunAllProgress() {
+            try {
+                const p = await apiGet("/api/scenario/run-all/progress");
+                if (p.status === "running") {
+                    setTimeout(() => recoverRunAllProgress(), 2000);
+                }
+            } catch (e) { /* ignore */ }
+        }
+
+        // ══════════════════════════════════════════════════════
+        //  10. 报告查看
+        // ══════════════════════════════════════════════════════
+        async function loadReportList() {
+            const tree = document.getElementById("report-tree");
+            const content = document.getElementById("report-content");
+            content.style.display = "none";
+            tree.style.display = "";
+            tree.innerHTML = '<div style="color:var(--text-secondary);">加载中...</div>';
+            try {
+                const data = await apiGet("/api/reports/list");
+                tree.innerHTML = "";
+                const cats = data.categories;
+                if (Object.keys(cats).length === 0) {
+                    tree.innerHTML = '<div class="card" style="color:var(--text-secondary);">暂无报告。请先运行场景。</div>';
+                    return;
+                }
+                for (const [catId, scenarios] of Object.entries(cats)) {
+                    const catDiv = document.createElement("div");
+                    catDiv.className = "report-cat";
+
+                    // 分类头部（可折叠）
+                    const catHeader = document.createElement("div");
+                    catHeader.className = "report-cat-header";
+                    const catName = CATEGORY_NAMES[catId] || catId;
+                    catHeader.innerHTML = `<span class="arrow">&#x25B6;</span><span class="cat-label">${catName} (${scenarios.length})</span>`;
+
+                    const catBody = document.createElement("div");
+                    catBody.style.display = "none";
+
+                    catHeader.onclick = () => {
+                        const open = catBody.style.display !== "none";
+                        catBody.style.display = open ? "none" : "block";
+                        catHeader.querySelector('.arrow').innerHTML = open ? '&#x25B6;' : '&#x25BC;';
+                    };
+
+                    scenarios.forEach(sc => {
+                        const scWrapper = document.createElement("div");
+
+                        // 场景行（可折叠）
+                        const scItem = document.createElement("div");
+                        scItem.className = "report-scenario-item";
+                        const displayName = sc.scenario_name || sc.scenario_id;
+                        scItem.innerHTML = `<span class="arrow">&#x25B6;</span><span class="sc-label">${displayName}</span><span class="sc-badge">${sc.count}次</span>`;
+
+                        const tsList = document.createElement("div");
+                        tsList.className = "report-ts-list";
+                        tsList.style.display = "none";
+
+                        scItem.onclick = () => {
+                            const open = tsList.style.display !== "none";
+                            tsList.style.display = open ? "none" : "block";
+                            scItem.querySelector('.arrow').innerHTML = open ? '&#x25B6;' : '&#x25BC;';
+                        };
+
+                        sc.timestamps.forEach(ts => {
+                            const tsDiv = document.createElement("div");
+                            tsDiv.className = "report-ts";
+                            // 格式化时间戳显示
+                            const tsFormatted = ts.replace(/_/g, function(m, i) {
+                                return (i === 4 || i === 7 || i === 10) ? '-' :
+                                       (i === 13 || i === 16) ? ':' : m;
+                            });
+                            tsDiv.textContent = `\u{1F553} ${tsFormatted}`;
+                            tsDiv.onclick = (e) => {
+                                e.stopPropagation();
+                                viewReportFile(`${catId}/${sc.scenario_id}/${ts}`);
+                            };
+                            tsList.appendChild(tsDiv);
+                        });
+
+                        scWrapper.appendChild(scItem);
+                        scWrapper.appendChild(tsList);
+                        catBody.appendChild(scWrapper);
+                    });
+
+                    catDiv.appendChild(catHeader);
+                    catDiv.appendChild(catBody);
+                    tree.appendChild(catDiv);
+                }
+            } catch (e) {
+                tree.innerHTML = `<div style="color:var(--accent-red);">加载失败: ${e.message}</div>`;
+            }
+        }
+
+        async function viewReportFile(path) {
+            const content = document.getElementById("report-content");
+            const tree = document.getElementById("report-tree");
+            content.style.display = "block";
+            content.innerHTML = "<span style='color:var(--text-secondary);'>加载中...</span>";
+            // 如果在报告查看页面，隐藏树，显示内容；否则切换到报告视图
+            if (state.currentView !== "reports") {
+                showView("reports");
+            }
+            tree.style.display = "none";
+            try {
+                const resp = await fetch(`/api/reports/view?path=${encodeURIComponent(path)}`);
+                if (!resp.ok) {
+                    const err = await resp.json().catch(() => ({ error: resp.statusText }));
+                    throw new Error(err.error || resp.statusText);
+                }
+                const ct = resp.headers.get('content-type') || '';
+                const text = await resp.text();
+
+                // 检查是否返回目录列表JSON
+                if (ct.includes('application/json')) {
+                    const dirData = JSON.parse(text);
+                    if (dirData.directory && dirData.files) {
+                        content.innerHTML = `<div class="report-back-btn" onclick="backToReportTree()">\u2190 返回列表</div>
+                            <h3 style="margin-bottom:12px;">目录文件列表</h3>` +
+                            dirData.files.map(f => {
+                                const filePath = `${dirData.base_path}/${f}`;
+                                return `<div class="report-ts" onclick="viewReportFile('${filePath.replace(/'/g, "\\'")}')" style="padding:8px;margin:4px 0;">${f}</div>`;
+                            }).join('');
+                        return;
+                    }
+                }
+
+                // Markdown 渲染
+                const backBtn = `<div class="report-back-btn" onclick="backToReportTree()">\u2190 返回报告列表</div>`;
+                if (path.endsWith('.md') || ct.includes('markdown')) {
+                    content.innerHTML = backBtn + renderMarkdown(text);
+                } else if (path.endsWith('.json') || ct.includes('json')) {
+                    // JSON 美化显示
+                    try {
+                        const formatted = JSON.stringify(JSON.parse(text), null, 2);
+                        content.innerHTML = backBtn + `<pre style="white-space:pre-wrap;font-family:Consolas,monospace;font-size:12px;">${formatted.replace(/</g,'&lt;').replace(/>/g,'&gt;')}</pre>`;
+                    } catch {
+                        content.innerHTML = backBtn + `<pre style="white-space:pre-wrap;">${text.replace(/</g,'&lt;').replace(/>/g,'&gt;')}</pre>`;
+                    }
+                } else {
+                    content.innerHTML = backBtn + `<pre style="white-space:pre-wrap;">${text.replace(/</g,'&lt;').replace(/>/g,'&gt;')}</pre>`;
+                }
+            } catch (e) {
+                content.innerHTML = `<div class="report-back-btn" onclick="backToReportTree()">\u2190 返回报告列表</div><div style="color:var(--accent-red);">加载失败: ${e.message}</div>`;
+            }
+        }
+
+        function backToReportTree() {
+            const tree = document.getElementById("report-tree");
+            const content = document.getElementById("report-content");
+            content.style.display = "none";
+            tree.style.display = "";
+        }
+
+        // ══════════════════════════════════════════════════════
+        //  11. 删除记录
+        // ══════════════════════════════════════════════════════
+        async function deleteAll() {
+            if (!confirm("确定要删除所有运行记录吗？此操作不可恢复。")) return;
+            try {
+                const result = await apiPost("/api/reports/delete", { scope: "all" });
+                showNotification(`已删除 ${result.deleted.directories} 个目录, ${result.deleted.files} 个文件`);
+            } catch (e) { showNotification("删除失败: " + e.message); }
+        }
+
+        async function deleteCategory() {
+            const cat = document.getElementById("delete-category-select").value;
+            if (!confirm(`确定要删除 "${cat}" 分类的所有运行记录吗？`)) return;
+            try {
+                const result = await apiPost("/api/reports/delete", { scope: "category", category: cat });
+                showNotification(`已删除 ${result.deleted.directories} 个目录, ${result.deleted.files} 个文件`);
+            } catch (e) { showNotification("删除失败: " + e.message); }
+        }
+
+        // ══════════════════════════════════════════════════════
+        //  12. 工具函数
+        // ══════════════════════════════════════════════════════
+        function showNotification(msg) {
+            const area = document.getElementById("notification-area");
+            const div = document.createElement("div");
+            div.className = "notification";
+            div.textContent = msg;
+            area.appendChild(div);
+            setTimeout(() => div.remove(), 4000);
+        }
+
+        function renderMarkdown(md) {
+            if (!md) return "";
+            let html = md
+                .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")
+                .replace(/^### (.+)$/gm, '<h3>$1</h3>')
+                .replace(/^## (.+)$/gm, '<h2>$1</h2>')
+                .replace(/^# (.+)$/gm, '<h1>$1</h1>')
+                .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
+                .replace(/\*(.+?)\*/g, '<em>$1</em>')
+                .replace(/`(.+?)`/g, '<code>$1</code>')
+                .replace(/^\- (.+)$/gm, '<li>$1</li>')
+                .replace(/^---$/gm, '<hr>')
+                .replace(/\n/g, '<br>');
+            html = html.replace(/(<li>.*?<\/li>(<br>)?)+/g, m => `<ul>${m.replace(/<br>/g, "")}</ul>`);
+            return html;
+        }
+
+        // ══════════════════════════════════════════════════════
+        //  13. 初始化
+        // ══════════════════════════════════════════════════════
+        document.addEventListener("DOMContentLoaded", () => {
+            showCategories();
+            // 健康检查
+            apiGet("/api/health").then(d => {
+                document.querySelector(".status-dot").style.background = "var(--accent-green)";
+            }).catch(() => {
+                document.querySelector(".status-dot").style.background = "var(--accent-red)";
+            });
+        });
+
+        window.addEventListener("beforeunload", () => {
+            if (state.sseConnection) {
+                state.sseConnection.close();
+                state.sseConnection = null;
+            }
+        });
+    </script>
+</body>
+</html>

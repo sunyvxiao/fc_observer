@@ -1,0 +1,32 @@
+scenario:
+  id: b03-off-hours-operation
+  name: B03-非工作时间执行敏感操作
+  description: 凌晨3:00执行数据导出
+  expected_result: 操作合法但时间偏离,MEDIUM ALERT
+  category: boundary
+  agents:
+  - agent_id: etl-1
+    framework: LangChain
+    initial_pid: 10301
+    description: 非工时ETL Agent
+  event_sequence:
+  - seq: 1
+    delay_ms: 0
+    agent: etl-1
+    type: exec
+    executable: /usr/bin/python3
+    arguments:
+    - /opt/etl/export_customer_data.py
+  - seq: 2
+    delay_ms: 1000
+    agent: etl-1
+    type: net_conn
+    remote_addr: 10.0.2.50
+    remote_port: 5432
+    protocol: TCP
+  - seq: 3
+    delay_ms: 2000
+    agent: etl-1
+    type: file_open
+    file_path: /data/exports/customers_20260101_0300.csv
+    file_op: write

@@ -1,0 +1,223 @@
+{
+  "graph_info": {
+    "node_count": 7,
+    "edge_count": 6,
+    "agent_count": 1,
+    "cross_agent_edges": 0,
+    "generated_at": "2026-07-28T17:48:23.446021"
+  },
+  "nodes": [
+    {
+      "node_id": "evt_1",
+      "agent_id": "cron-agent-1",
+      "event_type": "exec",
+      "description": "exec: /usr/bin/python3 /opt/backup/db_backup.py",
+      "timestamp_ns": 1718092800000000000,
+      "risk_score": 0.0,
+      "risk_level": "LOW",
+      "decision": "ALLOW",
+      "tier": "TIER1",
+      "blocked": false,
+      "matched_rules": [],
+      "metadata": {
+        "pid": 20001,
+        "ppid": 0,
+        "agent_framework": "test",
+        "executable": "/usr/bin/python3",
+        "arguments": [
+          "/opt/backup/db_backup.py"
+        ],
+        "command_string": "/usr/bin/python3 /opt/backup/db_backup.py"
+      }
+    },
+    {
+      "node_id": "evt_2",
+      "agent_id": "cron-agent-1",
+      "event_type": "net_conn",
+      "description": "net_TCP: 10.0.2.50:5432",
+      "timestamp_ns": 1718092801000000000,
+      "risk_score": 0.26,
+      "risk_level": "LOW",
+      "decision": "ALLOW",
+      "tier": "TIER1",
+      "blocked": false,
+      "matched_rules": [
+        "R012"
+      ],
+      "metadata": {
+        "pid": 20002,
+        "ppid": 0,
+        "agent_framework": "test",
+        "remote_addr": "10.0.2.50",
+        "remote_port": 5432,
+        "protocol": null
+      }
+    },
+    {
+      "node_id": "evt_3",
+      "agent_id": "cron-agent-1",
+      "event_type": "file_open",
+      "description": "file_write: /backup/db/daily/db_20260101.sql.gz",
+      "timestamp_ns": 1718092803000000000,
+      "risk_score": 0.0,
+      "risk_level": "LOW",
+      "decision": "ALLOW",
+      "tier": "TIER1",
+      "blocked": false,
+      "matched_rules": [],
+      "metadata": {
+        "pid": 20003,
+        "ppid": 0,
+        "agent_framework": "test",
+        "file_path": "/backup/db/daily/db_20260101.sql.gz",
+        "file_op": "write"
+      }
+    },
+    {
+      "node_id": "evt_4",
+      "agent_id": "cron-agent-1",
+      "event_type": "exec",
+      "description": "exec: /usr/bin/python3 /opt/cleanup/purge_logs.py",
+      "timestamp_ns": 1718092803500000000,
+      "risk_score": 0.0,
+      "risk_level": "LOW",
+      "decision": "ALLOW",
+      "tier": "TIER1",
+      "blocked": false,
+      "matched_rules": [],
+      "metadata": {
+        "pid": 20004,
+        "ppid": 0,
+        "agent_framework": "test",
+        "executable": "/usr/bin/python3",
+        "arguments": [
+          "/opt/cleanup/purge_logs.py"
+        ],
+        "command_string": "/usr/bin/python3 /opt/cleanup/purge_logs.py"
+      }
+    },
+    {
+      "node_id": "evt_5",
+      "agent_id": "cron-agent-1",
+      "event_type": "file_open",
+      "description": "file_delete: /var/log/myapp/archive/old.log.gz",
+      "timestamp_ns": 1718092804000000000,
+      "risk_score": 0.0,
+      "risk_level": "LOW",
+      "decision": "ALLOW",
+      "tier": "TIER1",
+      "blocked": false,
+      "matched_rules": [],
+      "metadata": {
+        "pid": 20005,
+        "ppid": 0,
+        "agent_framework": "test",
+        "file_path": "/var/log/myapp/archive/old.log.gz",
+        "file_op": "delete"
+      }
+    },
+    {
+      "node_id": "evt_6",
+      "agent_id": "cron-agent-1",
+      "event_type": "file_open",
+      "description": "file_delete: /var/log/myapp/archive/old2.log.gz",
+      "timestamp_ns": 1718092804200000000,
+      "risk_score": 0.0,
+      "risk_level": "LOW",
+      "decision": "ALLOW",
+      "tier": "TIER1",
+      "blocked": false,
+      "matched_rules": [],
+      "metadata": {
+        "pid": 20006,
+        "ppid": 0,
+        "agent_framework": "test",
+        "file_path": "/var/log/myapp/archive/old2.log.gz",
+        "file_op": "delete"
+      }
+    },
+    {
+      "node_id": "evt_7",
+      "agent_id": "cron-agent-1",
+      "event_type": "exec",
+      "description": "exec: /usr/bin/python3 /opt/report/daily_report.py",
+      "timestamp_ns": 1718092804700000000,
+      "risk_score": 0.0,
+      "risk_level": "LOW",
+      "decision": "ALLOW",
+      "tier": "TIER1",
+      "blocked": false,
+      "matched_rules": [],
+      "metadata": {
+        "pid": 20007,
+        "ppid": 0,
+        "agent_framework": "test",
+        "executable": "/usr/bin/python3",
+        "arguments": [
+          "/opt/report/daily_report.py"
+        ],
+        "command_string": "/usr/bin/python3 /opt/report/daily_report.py"
+      }
+    }
+  ],
+  "edges": [
+    {
+      "source_id": "evt_1",
+      "target_id": "evt_2",
+      "edge_type": "sequential",
+      "weight": 1.0,
+      "description": "Agent cron-agent-1 行为序列"
+    },
+    {
+      "source_id": "evt_2",
+      "target_id": "evt_3",
+      "edge_type": "sequential",
+      "weight": 1.0,
+      "description": "Agent cron-agent-1 行为序列"
+    },
+    {
+      "source_id": "evt_3",
+      "target_id": "evt_4",
+      "edge_type": "sequential",
+      "weight": 1.0,
+      "description": "Agent cron-agent-1 行为序列"
+    },
+    {
+      "source_id": "evt_4",
+      "target_id": "evt_5",
+      "edge_type": "sequential",
+      "weight": 1.0,
+      "description": "Agent cron-agent-1 行为序列"
+    },
+    {
+      "source_id": "evt_5",
+      "target_id": "evt_6",
+      "edge_type": "sequential",
+      "weight": 1.0,
+      "description": "Agent cron-agent-1 行为序列"
+    },
+    {
+      "source_id": "evt_6",
+      "target_id": "evt_7",
+      "edge_type": "sequential",
+      "weight": 1.0,
+      "description": "Agent cron-agent-1 行为序列"
+    }
+  ],
+  "agent_summaries": {
+    "cron-agent-1": {
+      "agent_id": "cron-agent-1",
+      "total_events": 7,
+      "allowed": 7,
+      "alerted": 0,
+      "blocked": 0,
+      "avg_risk_score": 0.0371,
+      "max_risk_score": 0.26,
+      "matched_rules": {
+        "R012": 1
+      },
+      "first_event_ns": 1718092800000000000,
+      "last_event_ns": 1718092804700000000
+    }
+  }
+}

@@ -1,0 +1,26 @@
+scenario:
+  id: b05-dynamic-dns
+  name: B05-连接动态DNS域名
+  description: 连接duckdns.org动态DNS
+  expected_result: 动态DNS触发网络告警,MEDIUM ALERT
+  category: boundary
+  agents:
+  - agent_id: code-1
+    framework: LangChain
+    initial_pid: 10001
+    description: DDNS Agent
+  event_sequence:
+  - seq: 1
+    delay_ms: 0
+    agent: code-1
+    type: exec
+    executable: /usr/bin/curl
+    arguments:
+    - https://my-service.duckdns.org/api/data
+  - seq: 2
+    delay_ms: 1000
+    agent: code-1
+    type: net_conn
+    remote_addr: 203.0.113.42
+    remote_port: 443
+    protocol: TCP

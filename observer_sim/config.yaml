@@ -1,0 +1,107 @@
+# 方寸观察者模拟学习系统 — 全局配置
+# 所有管道名、超时参数、评分权重等集中配置
+
+# === 管道通信配置 ===
+pipes:
+  events: "\\\\.\\pipe\\observer_events"      # 正向管道: C++ → Python
+  commands: "\\\\.\\pipe\\observer_commands"   # 反向管道: Python → C++
+  connect_timeout_ms: 5000                    # 管道连接超时（毫秒）
+  heartbeat_interval_ms: 1000                 # 心跳间隔（毫秒）
+  heartbeat_max_miss: 3                       # 最大心跳未响应次数
+
+# === 虚拟时钟配置 ===
+virtual_clock:
+  start_ns: 1718092800000000000               # 起始时间戳 (2024-06-11 08:00:00 UTC)
+
+# === 风险评分权重 ===
+scoring:
+  dimensions:
+    rule_match:
+      weight: 0.40
+      class: "BasicRuleScore"
+    baseline_deviation:
+      weight: 0.25
+      class: "BasicBaselineScore"
+    context_risk:
+      weight: 0.20
+      class: "BasicContextScore"
+    sequence_anomaly:
+      weight: 0.15
+      class: "BasicSequenceScore"
+  risk_levels:
+    low_max: 0.3
+    medium_max: 0.6
+
+# === 阻断升级配置 ===
+blocking:
+  violation_window_ms: 300000                 # 违规升级滑动窗口（5分钟，虚拟时钟）
+  tier1_to_tier2_threshold: 3                 # Tier1 累计次数 → 升级 Tier2
+  tier2_to_tier3_threshold: 2                 # Tier2 累计次数 → 升级 Tier3
+
+# === 事件序列窗口 ===
+monitoring:
+  event_window_size: 10                       # 最近 N 个事件用于上下文分析
+  process_window_ms: 60000                    # 进程关联时间窗口（毫秒）
+
+# === 基线配置 ===
+baseline:
+  cold_start_deviation: 0.0                   # 冷启动期偏离分固定值
+  min_events_for_baseline: 20                 # 最少事件数才激活偏离检测
+
+# === 输出配置 ===
+output:
+  audit_dir: "output/audit"                   # 审计日志目录
+  reports_dir: "output/reports"               # 风险分析报告目录
+  graphs_dir: "output/graphs"                 # 行为图谱目录
+  baselines_dir: "output/baselines"           # 基线快照目录
+  audit_format: "jsonl"                       # 审计日志格式
+
+# === 场景配置（37个测试场景，按分类子目录组织） ===
+scenarios:
+  # --- Normal (N01-N08) ---
+  - "scenarios/normal/n01_standard_development.yaml"
+  - "scenarios/normal/n02_dependency_install.yaml"
+  - "scenarios/normal/n03_config_and_logging.yaml"
+  - "scenarios/normal/n04_parallel_fork.yaml"
+  - "scenarios/normal/n05_etl_pipeline.yaml"
+  - "scenarios/normal/n06_docker_deploy.yaml"
+  - "scenarios/normal/n07_cron_scheduled.yaml"
+  - "scenarios/normal/n08_large_directory_scan.yaml"
+  # --- Anomalous (A01-A12) ---
+  - "scenarios/anomalous/a01_rm_root.yaml"
+  - "scenarios/anomalous/a02_curl_pipe_bash.yaml"
+  - "scenarios/anomalous/a03_env_exfiltration.yaml"
+  - "scenarios/anomalous/a04_sudo_escalation.yaml"
+  - "scenarios/anomalous/a05_ssh_backdoor.yaml"
+  - "scenarios/anomalous/a06_port_scan.yaml"
+  - "scenarios/anomalous/a07_reverse_shell.yaml"
+  - "scenarios/anomalous/a08_bulk_sensitive_read.yaml"
+  - "scenarios/anomalous/a09_download_and_execute.yaml"
+  - "scenarios/anomalous/a10_system_file_tamper.yaml"
+  - "scenarios/anomalous/a11_crypto_mining.yaml"
+  - "scenarios/anomalous/a12_bulk_data_exfil.yaml"
+  # --- Boundary (B01-B08) ---
+  - "scenarios/boundary/b01_rm_temp_dir.yaml"
+  - "scenarios/boundary/b02_unknown_package_install.yaml"
+  - "scenarios/boundary/b03_off_hours_operation.yaml"
+  - "scenarios/boundary/b04_read_system_logs.yaml"
+  - "scenarios/boundary/b05_dynamic_dns.yaml"
+  - "scenarios/boundary/b06_kill_own_child.yaml"
+  - "scenarios/boundary/b07_symlink_attack.yaml"
+  - "scenarios/boundary/b08_nonstandard_port.yaml"
+  # --- Multi-Agent (M01-M05) ---
+  - "scenarios/multi_agent/m01_legitimate_collaboration.yaml"
+  - "scenarios/multi_agent/m02_covert_data_transfer.yaml"
+  - "scenarios/multi_agent/m03_environment_poisoning.yaml"
+  - "scenarios/multi_agent/m04_privilege_escalation_chain.yaml"
+  - "scenarios/multi_agent/m05_time_dispersed_collusion.yaml"
+  # --- Extreme (E01-E04) ---
+  - "scenarios/extreme/e01_high_rate_events.yaml"
+  - "scenarios/extreme/e02_long_command_args.yaml"
+  - "scenarios/extreme/e03_pipe_disconnect_recovery.yaml"
+  - "scenarios/extreme/e04_command_timeout_degradation.yaml"
+
+# === 日志配置 ===
+logging:
+  level: "INFO"                               # DEBUG | INFO | WARNING | ERROR
+  format: "[%(asctime)s] %(levelname)s %(name)s: %(message)s"

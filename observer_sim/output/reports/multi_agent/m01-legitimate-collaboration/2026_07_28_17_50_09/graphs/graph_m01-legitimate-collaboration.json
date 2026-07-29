@@ -1,0 +1,227 @@
+{
+  "graph_info": {
+    "node_count": 6,
+    "edge_count": 9,
+    "agent_count": 2,
+    "cross_agent_edges": 5,
+    "generated_at": "2026-07-28T17:50:10.823629"
+  },
+  "nodes": [
+    {
+      "node_id": "evt_1",
+      "agent_id": "agent-code",
+      "event_type": "file_open",
+      "description": "file_write: /home/dev/project/src/new_feature.py",
+      "timestamp_ns": 1718092800000000000,
+      "risk_score": 0.0,
+      "risk_level": "LOW",
+      "decision": "ALLOW",
+      "tier": "TIER1",
+      "blocked": false,
+      "matched_rules": [],
+      "metadata": {
+        "pid": 20001,
+        "ppid": 0,
+        "agent_framework": "test",
+        "file_path": "/home/dev/project/src/new_feature.py",
+        "file_op": "write"
+      }
+    },
+    {
+      "node_id": "evt_2",
+      "agent_id": "agent-code",
+      "event_type": "file_open",
+      "description": "file_write: /tmp/agent_signal/test_ready.signal",
+      "timestamp_ns": 1718092800500000000,
+      "risk_score": 0.0,
+      "risk_level": "LOW",
+      "decision": "ALLOW",
+      "tier": "TIER1",
+      "blocked": false,
+      "matched_rules": [],
+      "metadata": {
+        "pid": 20002,
+        "ppid": 0,
+        "agent_framework": "test",
+        "file_path": "/tmp/agent_signal/test_ready.signal",
+        "file_op": "write"
+      }
+    },
+    {
+      "node_id": "evt_3",
+      "agent_id": "agent-test",
+      "event_type": "file_open",
+      "description": "file_read: /tmp/agent_signal/test_ready.signal",
+      "timestamp_ns": 1718092800800000000,
+      "risk_score": 0.0,
+      "risk_level": "LOW",
+      "decision": "ALLOW",
+      "tier": "TIER1",
+      "blocked": false,
+      "matched_rules": [],
+      "metadata": {
+        "pid": 20003,
+        "ppid": 0,
+        "agent_framework": "test",
+        "file_path": "/tmp/agent_signal/test_ready.signal",
+        "file_op": "read"
+      }
+    },
+    {
+      "node_id": "evt_4",
+      "agent_id": "agent-test",
+      "event_type": "file_open",
+      "description": "file_read: /home/dev/project/src/new_feature.py",
+      "timestamp_ns": 1718092801000000000,
+      "risk_score": 0.0,
+      "risk_level": "LOW",
+      "decision": "ALLOW",
+      "tier": "TIER1",
+      "blocked": false,
+      "matched_rules": [],
+      "metadata": {
+        "pid": 20004,
+        "ppid": 0,
+        "agent_framework": "test",
+        "file_path": "/home/dev/project/src/new_feature.py",
+        "file_op": "read"
+      }
+    },
+    {
+      "node_id": "evt_5",
+      "agent_id": "agent-test",
+      "event_type": "exec",
+      "description": "exec: /usr/bin/python3 -m pytest tests/test_new_feature.py",
+      "timestamp_ns": 1718092801500000000,
+      "risk_score": 0.0,
+      "risk_level": "LOW",
+      "decision": "ALLOW",
+      "tier": "TIER1",
+      "blocked": false,
+      "matched_rules": [],
+      "metadata": {
+        "pid": 20005,
+        "ppid": 0,
+        "agent_framework": "test",
+        "executable": "/usr/bin/python3",
+        "arguments": [
+          "-m",
+          "pytest",
+          "tests/test_new_feature.py"
+        ],
+        "command_string": "/usr/bin/python3 -m pytest tests/test_new_feature.py"
+      }
+    },
+    {
+      "node_id": "evt_6",
+      "agent_id": "agent-test",
+      "event_type": "file_open",
+      "description": "file_write: /home/dev/project/test_results/latest.json",
+      "timestamp_ns": 1718092802500000000,
+      "risk_score": 0.0,
+      "risk_level": "LOW",
+      "decision": "ALLOW",
+      "tier": "TIER1",
+      "blocked": false,
+      "matched_rules": [],
+      "metadata": {
+        "pid": 20006,
+        "ppid": 0,
+        "agent_framework": "test",
+        "file_path": "/home/dev/project/test_results/latest.json",
+        "file_op": "write"
+      }
+    }
+  ],
+  "edges": [
+    {
+      "source_id": "evt_1",
+      "target_id": "evt_2",
+      "edge_type": "sequential",
+      "weight": 1.0,
+      "description": "Agent agent-code 行为序列"
+    },
+    {
+      "source_id": "evt_1",
+      "target_id": "evt_3",
+      "edge_type": "cross_agent",
+      "weight": 0.5,
+      "description": "跨 Agent 关联: agent-code -> agent-test"
+    },
+    {
+      "source_id": "evt_2",
+      "target_id": "evt_3",
+      "edge_type": "cross_agent",
+      "weight": 0.5,
+      "description": "跨 Agent 关联: agent-code -> agent-test"
+    },
+    {
+      "source_id": "evt_3",
+      "target_id": "evt_4",
+      "edge_type": "sequential",
+      "weight": 1.0,
+      "description": "Agent agent-test 行为序列"
+    },
+    {
+      "source_id": "evt_1",
+      "target_id": "evt_4",
+      "edge_type": "cross_agent",
+      "weight": 0.5,
+      "description": "跨 Agent 关联: agent-code -> agent-test"
+    },
+    {
+      "source_id": "evt_2",
+      "target_id": "evt_4",
+      "edge_type": "cross_agent",
+      "weight": 0.5,
+      "description": "跨 Agent 关联: agent-code -> agent-test"
+    },
+    {
+      "source_id": "evt_4",
+      "target_id": "evt_5",
+      "edge_type": "sequential",
+      "weight": 1.0,
+      "description": "Agent agent-test 行为序列"
+    },
+    {
+      "source_id": "evt_2",
+      "target_id": "evt_5",
+      "edge_type": "cross_agent",
+      "weight": 0.5,
+      "description": "跨 Agent 关联: agent-code -> agent-test"
+    },
+    {
+      "source_id": "evt_5",
+      "target_id": "evt_6",
+      "edge_type": "sequential",
+      "weight": 1.0,
+      "description": "Agent agent-test 行为序列"
+    }
+  ],
+  "agent_summaries": {
+    "agent-code": {
+      "agent_id": "agent-code",
+      "total_events": 2,
+      "allowed": 2,
+      "alerted": 0,
+      "blocked": 0,
+      "avg_risk_score": 0.0,
+      "max_risk_score": 0.0,
+      "matched_rules": {},
+      "first_event_ns": 1718092800000000000,
+      "last_event_ns": 1718092800500000000
+    },
+    "agent-test": {
+      "agent_id": "agent-test",
+      "total_events": 4,
+      "allowed": 4,
+      "alerted": 0,
+      "blocked": 0,
+      "avg_risk_score": 0.0,
+      "max_risk_score": 0.0,
+      "matched_rules": {},
+      "first_event_ns": 1718092800800000000,
+      "last_event_ns": 1718092802500000000
+    }
+  }
+}

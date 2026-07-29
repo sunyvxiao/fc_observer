@@ -1,0 +1,245 @@
+# 默认安全策略规则 — 15 条初始规则
+# 分为三大类: command(6) + file(5) + network(4)
+
+version: "1.0"
+metadata:
+  created: "2026-01-01"
+  description: "默认安全策略 — 方寸观察者模拟学习系统"
+
+rules:
+  # ==================== 命令执行规则 (command) ====================
+
+  - rule_id: "R001"
+    name: "block-dangerous-commands"
+    category: "command"
+    priority: 100
+    enabled: true
+    action: block
+    description: "阻断已知高危系统命令（rm -rf, dd, mkfs 等）"
+    conditions:
+      event_type: "exec"
+      match_mode: "pattern"
+      patterns:
+        - "rm -rf /"
+        - "rm -rf /*"
+        - "dd if=/dev/zero"
+        - "mkfs"
+        - "format c:"
+
+  - rule_id: "R002"
+    name: "block-curl-pipe-bash"
+    category: "command"
+    priority: 95
+    enabled: true
+    action: block
+    description: "阻断 curl/wget 管道执行（远程代码执行攻击）"
+    conditions:
+      event_type: "exec"
+      match_mode: "regex"
+      patterns:
+        - "curl.*\\|.*bash"
+        - "curl.*\\|.*sh"
+        - "wget.*\\|.*bash"
+        - "wget.*\\|.*sh"
+
+  - rule_id: "R003"
+    name: "alert-chmod-777"
+    category: "command"
+    priority: 70
+    enabled: true
+    action: alert
+    description: "告警危险权限设置（chmod 777）"
+    conditions:
+      event_type: "exec"
+      match_mode: "regex"
+      patterns:
+        - "chmod\\s+777"
+        - "chmod\\s+-R\\s+777"
+
+  - rule_id: "R004"
+    name: "alert-sudo-usage"
+    category: "command"
+    priority: 60
+    enabled: true
+    action: alert
+    description: "告警 sudo 提权使用"
+    conditions:
+      event_type: "exec"
+      match_mode: "pattern"
+      patterns:
+        - "sudo "
+        - "sudo\t"
+
+  - rule_id: "R005"
+    name: "block-data-exfil-curl"
+    category: "command"
+    priority: 90
+    enabled: true
+    action: block
+    description: "阻断通过 curl 外传敏感文件"
+    conditions:
+      event_type: "exec"
+      match_mode: "regex"
+      patterns:
+        - "curl.*-d.*\\.env"
+        - "curl.*--data.*\\.env"
+        - "curl.*-F.*\\.env"
+
+  - rule_id: "R006"
+    name: "alert-pip-install-unknown"
+    category: "command"
+    priority: 40
+    enabled: true
+    action: alert
+    description: "告警安装未知 Python 包（可能引入恶意依赖）"
+    conditions:
+      event_type: "exec"
+      match_mode: "regex"
+      patterns:
+        - "pip install"
+        - "pip3 install"
+
+  # ==================== 文件操作规则 (file) ====================
+
+  - rule_id: "R007"
+    name: "alert-sensitive-file-read"
+    category: "file"
+    priority: 75
+    enabled: true
+    action: alert
+    description: "告警读取敏感文件（.env, *.pem, shadow 等）"
+    conditions:
+      event_type: "file_open"
+      match_mode: "path_glob"
+      patterns:
+        - "*.env"
+        - "*.pem"
+        - "*.key"
+        - "*shadow*"
+        - "*secret*"
+        - "*password*"
+
+  - rule_id: "R008"
+    name: "block-system-dir-write"
+    category: "file"
+    priority: 85
+    enabled: true
+    action: block
+    description: "阻断写入系统目录"
+    conditions:
+      event_type: "file_open"
+      match_mode: "path_glob"
+      patterns:
+        - "/etc/*"
+        - "/usr/bin/*"
+        - "/usr/sbin/*"
+        - "C:\\Windows\\*"
+        - "C:\\Program Files\\*"
+
+  - rule_id: "R009"
+    name: "alert-bulk-delete"
+    category: "file"
+    priority: 80
+    enabled: true
+    action: alert
+    description: "告警批量文件删除操作"
+    conditions:
+      event_type: "file_open"
+      match_mode: "pattern"
+      patterns:
+        - "delete"
+
+  - rule_id: "R010"
+    name: "alert-config-modify"
+    category: "file"
+    priority: 50
+    enabled: true
+    action: alert
+    description: "告警修改配置文件"
+    conditions:
+      event_type: "file_open"
+      match_mode: "path_glob"
+      patterns:
+        - "*.yaml"
+        - "*.yml"
+        - "*.conf"
+        - "*.ini"
+        - "*.toml"
+
+  - rule_id: "R011"
+    name: "block-ssh-key-access"
+    category: "file"
+    priority: 90
+    enabled: true
+    action: block
+    description: "阻断 SSH 密钥文件访问"
+    conditions:
+      event_type: "file_open"
+      match_mode: "path_glob"
+      patterns:
+        - "*/.ssh/*"
+        - "*id_rsa*"
+        - "*id_ed25519*"
+
+  # ==================== 网络规则 (network) ====================
+
+  - rule_id: "R012"
+    name: "alert-external-connection"
+    category: "network"
+    priority: 65
+    enabled: true
+    action: alert
+    description: "告警外联非白名单 IP（非内网地址）"
+    conditions:
+      event_type: "net_conn"
+      match_mode: "regex"
+      patterns:
+        # 匹配非内网 IP（排除 10.x, 172.16-31.x, 192.168.x, 127.x）
+        - "^(?!10\\.)"
+        - "^(?!172\\.(1[6-9]|2[0-9]|3[01])\\.)"
+        - "^(?!192\\.168\\.)"
+        - "^(?!127\\.)"
+
+  - rule_id: "R013"
+    name: "alert-suspicious-port"
+    category: "network"
+    priority: 70
+    enabled: true
+    action: alert
+    description: "告警非标准端口连接（非常用端口）"
+    conditions:
+      event_type: "net_conn"
+      match_mode: "regex"
+      patterns:
+        - ".*:8080$"
+        - ".*:4444$"
+        - ".*:1337$"
+        - ".*:31337$"
+
+  - rule_id: "R014"
+    name: "block-known-malicious-ip"
+    category: "network"
+    priority: 95
+    enabled: true
+    action: block
+    description: "阻断已知恶意 IP 连接"
+    conditions:
+      event_type: "net_conn"
+      match_mode: "pattern"
+      patterns:
+        - "45.33.32.156"
+        - "203.0.113.50"
+
+  - rule_id: "R015"
+    name: "alert-dns-suspicious"
+    category: "network"
+    priority: 55
+    enabled: true
+    action: alert
+    description: "告警可疑 DNS 查询（非标准域名）"
+    conditions:
+      event_type: "net_conn"
+      match_mode: "regex"
+      patterns:
+        - ".*\\.onion$"
+        - ".*\\.tor$"

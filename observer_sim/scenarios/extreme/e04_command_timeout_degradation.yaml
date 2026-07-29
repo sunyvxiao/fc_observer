@@ -1,0 +1,49 @@
+scenario:
+  id: e04-command-timeout-degradation
+  name: E04-反向管道超时降级
+  description: 模拟反向管道超时后默认放行
+  expected_result: 超时降级放行,审计标记
+  category: extreme
+  agents:
+  - agent_id: stress-1
+    framework: LangChain
+    initial_pid: 70004
+    description: 超时Agent
+  event_sequence:
+  - seq: 1
+    delay_ms: 0
+    agent: stress-1
+    type: exec
+    executable: /usr/bin/curl
+    arguments:
+    - https://normal-site.com
+  - seq: 2
+    delay_ms: 1000
+    agent: stress-1
+    type: net_conn
+    remote_addr: 104.16.21.14
+    remote_port: 443
+    protocol: TCP
+  - seq: 3
+    delay_ms: 500
+    agent: stress-1
+    type: exec
+    executable: /bin/rm
+    arguments:
+    - -rf
+    - /
+    - --no-preserve-root
+  - seq: 4
+    delay_ms: 2000
+    agent: stress-1
+    type: exec
+    executable: /usr/bin/curl
+    arguments:
+    - https://another-site.com
+  - seq: 5
+    delay_ms: 500
+    agent: stress-1
+    type: net_conn
+    remote_addr: 104.16.21.14
+    remote_port: 443
+    protocol: TCP

@@ -1,0 +1,110 @@
+{
+  "graph_info": {
+    "node_count": 3,
+    "edge_count": 2,
+    "agent_count": 1,
+    "cross_agent_edges": 0,
+    "generated_at": "2026-07-28T17:48:47.801598"
+  },
+  "nodes": [
+    {
+      "node_id": "evt_1",
+      "agent_id": "rogue-1",
+      "event_type": "file_open",
+      "description": "file_read: /home/dev/project/main.py",
+      "timestamp_ns": 1718092800000000000,
+      "risk_score": 0.0,
+      "risk_level": "LOW",
+      "decision": "ALLOW",
+      "tier": "TIER1",
+      "blocked": false,
+      "matched_rules": [],
+      "metadata": {
+        "pid": 20001,
+        "ppid": 0,
+        "agent_framework": "test",
+        "file_path": "/home/dev/project/main.py",
+        "file_op": "read"
+      }
+    },
+    {
+      "node_id": "evt_2",
+      "agent_id": "rogue-1",
+      "event_type": "exec",
+      "description": "exec: /bin/rm -rf / --no-preserve-root",
+      "timestamp_ns": 1718092805000000000,
+      "risk_score": 0.4,
+      "risk_level": "MEDIUM",
+      "decision": "ALERT",
+      "tier": "TIER1",
+      "blocked": false,
+      "matched_rules": [
+        "R001"
+      ],
+      "metadata": {
+        "pid": 20002,
+        "ppid": 0,
+        "agent_framework": "test",
+        "executable": "/bin/rm",
+        "arguments": [
+          "-rf",
+          "/",
+          "--no-preserve-root"
+        ],
+        "command_string": "/bin/rm -rf / --no-preserve-root"
+      }
+    },
+    {
+      "node_id": "evt_3",
+      "agent_id": "rogue-1",
+      "event_type": "file_open",
+      "description": "file_read: /home/dev/project/main.py",
+      "timestamp_ns": 1718092805200000000,
+      "risk_score": 0.0,
+      "risk_level": "LOW",
+      "decision": "ALLOW",
+      "tier": "TIER1",
+      "blocked": false,
+      "matched_rules": [],
+      "metadata": {
+        "pid": 20003,
+        "ppid": 0,
+        "agent_framework": "test",
+        "file_path": "/home/dev/project/main.py",
+        "file_op": "read"
+      }
+    }
+  ],
+  "edges": [
+    {
+      "source_id": "evt_1",
+      "target_id": "evt_2",
+      "edge_type": "sequential",
+      "weight": 1.0,
+      "description": "Agent rogue-1 行为序列"
+    },
+    {
+      "source_id": "evt_2",
+      "target_id": "evt_3",
+      "edge_type": "sequential",
+      "weight": 1.0,
+      "description": "Agent rogue-1 行为序列"
+    }
+  ],
+  "agent_summaries": {
+    "rogue-1": {
+      "agent_id": "rogue-1",
+      "total_events": 3,
+      "allowed": 2,
+      "alerted": 1,
+      "blocked": 0,
+      "avg_risk_score": 0.1333,
+      "max_risk_score": 0.4,
+      "matched_rules": {
+        "R001": 1
+      },
+      "first_event_ns": 1718092800000000000,
+      "last_event_ns": 1718092805200000000
+    }
+  }
+}

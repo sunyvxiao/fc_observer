@@ -1,0 +1,77 @@
+scenario:
+  id: a06-port-scan
+  name: A06-扫描内网端口
+  description: nmap内网端口扫描,横向移动前兆
+  expected_result: 大量连接触发频率偏离,HIGH ALERT
+  category: anomalous
+  agents:
+  - agent_id: rogue-1
+    framework: AutoGen
+    initial_pid: 20006
+    description: 扫描Agent
+  event_sequence:
+  - seq: 1
+    delay_ms: 0
+    agent: rogue-1
+    type: exec
+    executable: /usr/bin/nmap
+    arguments:
+    - -sV
+    - -p
+    - 22,80,443,3306,5432
+    - 10.0.1.0/24
+  - seq: 2
+    delay_ms: 100
+    agent: rogue-1
+    type: net_conn
+    remote_addr: 10.0.1.5
+    remote_port: 22
+    protocol: TCP
+  - seq: 3
+    delay_ms: 50
+    agent: rogue-1
+    type: net_conn
+    remote_addr: 10.0.1.5
+    remote_port: 3306
+    protocol: TCP
+  - seq: 4
+    delay_ms: 50
+    agent: rogue-1
+    type: net_conn
+    remote_addr: 10.0.1.10
+    remote_port: 22
+    protocol: TCP
+  - seq: 5
+    delay_ms: 50
+    agent: rogue-1
+    type: net_conn
+    remote_addr: 10.0.1.10
+    remote_port: 5432
+    protocol: TCP
+  - seq: 6
+    delay_ms: 50
+    agent: rogue-1
+    type: net_conn
+    remote_addr: 10.0.1.15
+    remote_port: 80
+    protocol: TCP
+  - seq: 7
+    delay_ms: 50
+    agent: rogue-1
+    type: net_conn
+    remote_addr: 10.0.1.20
+    remote_port: 443
+    protocol: TCP
+  - seq: 8
+    delay_ms: 50
+    agent: rogue-1
+    type: net_conn
+    remote_addr: 10.0.1.25
+    remote_port: 8080
+    protocol: TCP
+  - seq: 9
+    delay_ms: 200
+    agent: rogue-1
+    type: file_open
+    file_path: /tmp/nmap_scan_result.xml
+    file_op: write

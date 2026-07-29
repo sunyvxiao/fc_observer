@@ -1,0 +1,55 @@
+scenario:
+  id: m01-legitimate-collaboration
+  name: M01-合法多Agent协作
+  description: 代码Agent A和测试Agent B协作
+  expected_result: 全部放行,图谱展示协作边
+  category: multi_agent
+  agents:
+  - agent_id: agent-code
+    framework: LangChain
+    initial_pid: 40001
+    description: 代码Agent A
+  - agent_id: agent-test
+    framework: CrewAI
+    initial_pid: 50001
+    description: 测试Agent B
+  event_sequence:
+  - seq: 1
+    delay_ms: 0
+    agent: agent-code
+    type: file_open
+    file_path: /home/dev/project/src/new_feature.py
+    file_op: write
+  - seq: 2
+    delay_ms: 500
+    agent: agent-code
+    type: file_open
+    file_path: /tmp/agent_signal/test_ready.signal
+    file_op: write
+  - seq: 3
+    delay_ms: 300
+    agent: agent-test
+    type: file_open
+    file_path: /tmp/agent_signal/test_ready.signal
+    file_op: read
+  - seq: 4
+    delay_ms: 200
+    agent: agent-test
+    type: file_open
+    file_path: /home/dev/project/src/new_feature.py
+    file_op: read
+  - seq: 5
+    delay_ms: 500
+    agent: agent-test
+    type: exec
+    executable: /usr/bin/python3
+    arguments:
+    - -m
+    - pytest
+    - tests/test_new_feature.py
+  - seq: 6
+    delay_ms: 1000
+    agent: agent-test
+    type: file_open
+    file_path: /home/dev/project/test_results/latest.json
+    file_op: write
