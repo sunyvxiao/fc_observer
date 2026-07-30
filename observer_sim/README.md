@@ -1,44 +1,88 @@
 # 方寸观察者模拟学习系统 (Fangcun Observer Simulation)
 
-> 模拟 eBPF 行为监控系统的教学原型，通过 C++ 探针层 + Python 业务逻辑，演示 AI Coding Agent 的全链路行为监控与风险研判。
+> 统一架构的 eBPF 行为监控教学系统，支持 Windows 模拟模式 + Linux eBPF/strace 真实采集模式，三入口自动检测平台并选择采集方案。
 
 ## 项目简介
 
-**方寸观察者模拟学习系统**是一个教学原型，模拟真实 eBPF 行为监控系统的核心功能：
+**方寸观察者模拟学习系统**是一个教学原型，通过统一架构支持三种采集模式：
 
-- **C++ 探针模拟层**：三类探针（进程/文件/网络），模拟 eBPF 内核级行为采集
+- **Simulation 模式**（Windows/通用）：场景 YAML 驱动 + 虚拟时钟，用于教学演示和回归测试
+- **eBPF 模式**（Linux）：内核态 tracepoint 探针，真实采集 execve/openat/connect syscall
+- **strace 模式**（Linux 降级）：ptrace 跟踪目标进程，解析 syscall 输出
+
+核心能力：
+- **统一采集接口**：`ICollector` 抽象 + 3 个实现类，`start()` 直接 yield `RawEvent`
+- **平台自动检测**：启动时检测 `sys.platform`，自动选择采集模式（`--mode auto`）
 - **Python 业务逻辑层**：事件归一化、规则匹配、四维风险评分、三级梯度阻断、审计输出
-- **双向命名管道通信**：正向事件管道 + 反向指令管道，支持实时阻断反馈
-- **虚拟时钟驱动**：纳秒级虚拟时间戳，保证全系统时间判定确定可复现
+- **核心零改动**：`observer_core/`、`models/`、`scenarios/`、`rules/` 全程不变
 - **37 个测试场景**：覆盖正常/异常/边界/多Agent/极端 5 大分类
+- **295 个单元测试**：覆盖全部模块（130 原有 + 51 adapter/collector + 114 ebpf/strace/integration）
 
-**技术栈**：Python 3.10+ / C++17 / CMake 3.15+ / Windows Named Pipe
+**技术栈**：Python 3.10+ / C++17 / CMake 3.15+ / eBPF (libbpf + clang) / strace
 **设计目标**：教学演示 > 生产性能，代码可读性优先，全链路透明可追踪
 **运行模式**：命令行交互模式（demo.py）| Web 浏览器模式（app.py）| 批量运行模式（main.py）
+**双环境架构**：Windows 宿主机（模拟模式）+ Linux VMware Ubuntu 22.04 LTS（eBPF/strace 模式）
 
 ---
 
 ## 系统架构
 
+### 统一架构（Phase 7-8 升级后）
+
+```
+┌──────────────────────────────────────────────────────────────────────────┐
+│                    入口层 (main.py / demo.py / app.py)                     │
+│  解析 --mode → 加载 config.yaml → 平台检测 → 创建 Collector → 消费事件     │
+└──────────────────────────────┬───────────────────────────────────────────┘
+                               │ ICollector.start() yield RawEvent
+            ┌──────────────────┼──────────────────┐
+            ▼                  ▼                  ▼
+  ┌─────────────────┐ ┌───────────────┐ ┌────────────────────┐
+  │ Simulation      │ │ Strace        │ │ Ebpf               │
+  │ Collector       │ │ Collector     │ │ Collector           │
+  │ (Windows/通用)  │ │ (Linux 降级)  │ │ (Linux, eBPF 观测)  │
+  │ 场景YAML+Clock  │ │ strace -p PID │ │ libbpf+ring buffer │
+  └────────┬────────┘ └──────┬────────┘ └─────────┬──────────┘
+           └─────────────────┼────────────────────┘
+                             ▼
+┌──────────────────────────────────────────────────────────────────────────┐
+│              核心逻辑层 (observer_core/)              [零改动]             │
+│  EventNormalizer → RuleEngine → RiskScorer → DecisionEngine             │
+│  → BlockingCoordinator → BehaviorGraph → AuditLogger                    │
+└──────────────────────────────────────────────────────────────────────────┘
+```
+
+### 适配层 (adapter/)
+
+| 模块 | 职责 |
+|------|------|
+| `platform_detect.py` | 平台检测 + eBPF 能力查询 + `detect_and_create_collector()` 工厂 |
+| `pipe_factory.py` | 管道适配器（Windows 命名管道 / Linux FIFO） |
+| `time_source.py` | 时间源抽象（VirtualClock / realtime_monotonic） |
+
+### 采集层 (collector/)
+
+| 采集器 | 平台 | 能力 | 时间源 |
+|--------|:---:|------|--------|
+| `SimulationCollector` | 通用 | 观测 + Tier2/3 模拟阻断 | VirtualClock (虚拟) |
+| `StraceCollector` | Linux | 仅观测（can_block = False） | time.time_ns() |
+| `EbpfCollector` | Linux | 仅观测（第一版，can_block = False） | bpf_ktime_get_ns() |
+
+### 传统架构（保留兼容）
+
 ```
 ┌──────────────────────────────────────────────────┐
-│  场景 YAML → 事件生成器 → C++ 探针模拟层          │
+│  场景 YAML → C++ 探针模拟层 (cpp_probe/)           │
 │  ProcessProbe | FileProbe | NetworkProbe          │
-│  EventFormatter + PipeWriter + CommandReader      │
 └──────────────────┬───────────────────────────────┘
-                   │  \\.\pipe\observer_events (正向 JSON行)
-                   │  \\.\pipe\observer_commands (反向 JSON行)
+                   │  \\.\pipe\observer_events
                    ▼
 ┌──────────────────────────────────────────────────┐
 │  Python Observer 核心引擎                         │
-│                                                   │
 │  [监测层] PipeReader → Normalizer → RuleEngine    │
 │  [评判层] RiskScorer → Baseline → Decision        │
 │  [阻断层] BlockingCoordinator → Tier1/2/3         │
 │  [审计层] BehaviorGraph + AuditLogger + Report    │
-│                                                   │
-│  [虚拟时钟] VirtualClock 驱动全系统时间判定         │
-│  [自优化]   ITraceStore/IPatternMiner/IGenerator  │
 └──────────────────────────────────────────────────┘
 ```
 
@@ -81,33 +125,98 @@
 
 ## 环境要求
 
+### Windows 宿主机（模拟模式）
+
 | 依赖 | 版本要求 | 说明 |
 |------|---------|------|
-| Python | >= 3.10（推荐 3.14+） | 业务逻辑层 |
-| CMake | >= 3.15 | C++ 探针层编译 |
-| Visual Studio Build Tools | 2019+ | 含 C++ 桌面开发工作负载 |
+| Python | >= 3.10 | 业务逻辑层 |
+| CMake | >= 3.15 | C++ 探针层编译（可选） |
+| Visual Studio Build Tools | 2019+ | 含 C++ 桌面开发工作负载（可选） |
 | pyyaml | 最新版 | `pip install pyyaml` |
+| pytest | 最新版 | `pip install pytest` |
 
-### 安装步骤
+### Linux 虚拟机（eBPF/strace 模式）
+
+| 依赖 | 版本要求 | 说明 |
+|------|---------|------|
+| Ubuntu | 22.04 LTS | 内核 >= 5.15（HWE 内核 6.8+） |
+| Python | >= 3.10 | Ubuntu 22.04 自带 3.10 |
+| clang | >= 14 | eBPF 探针编译 |
+| bpftool | >= 7.x | BTF 生成 + 程序加载验证 |
+| libbpf-dev | 1.2+ | Python ctypes 绑定 libbpf.so |
+| linux-headers | 与内核匹配 | eBPF 编译依赖 |
+| strace | >= 5.x | strace 降级采集模式 |
+| pyyaml + pytest | 最新版 | Python 依赖 |
+
+> 详细环境搭建步骤请参考 [迁移方案.md](../杂项文档/迁移方案.md)（从虚拟机创建到完整工具链安装）。
+
+### 快速环境检查
 
 ```bash
-# 1. 安装 Python 依赖
-pip install pyyaml
+# 运行环境预检脚本（Windows 和 Linux 通用）
+python check_env.py
+```
 
-# 2. 验证环境
-python --version
-cmake --version
+### Windows 安装步骤
+
+```bash
+pip install pyyaml pytest
+python check_env.py    # 验证环境
+```
+
+### Linux 一键安装（Ubuntu 22.04）
+
+```bash
+# Python 依赖
+pip3 install pyyaml pytest
+
+# eBPF 工具链
+sudo apt update
+sudo apt install -y clang llvm libbpf-dev make linux-headers-$(uname -r) strace
+
+# 生成 BTF 头文件
+cd observer_sim/ebpf
+bpftool btf dump file /sys/kernel/btf/vmlinux format c > vmlinux.h
+make    # 编译 eBPF 探针
+
+python3 check_env.py    # 验证环境
 ```
 
 ---
 
 ## 快速开始
 
+### 采集模式选择
+
+三个入口（`main.py` / `app.py` / `demo.py`）均支持 `--mode` 参数：
+
+```bash
+# 自动检测（默认）—— Windows 选 simulation，Linux 选 ebpf/strace
+python main.py --mode auto --scenario all
+
+# 强制模拟模式（Windows/Linux 通用）
+python main.py --mode simulation --scenario all
+
+# eBPF 模式（仅 Linux，需 root 权限）
+sudo python3 main.py --mode ebpf --pid <TARGET_PID>
+
+# strace 降级模式（仅 Linux）
+python3 main.py --mode strace --pid <TARGET_PID>
+```
+
+| 模式 | 平台 | 说明 |
+|------|:---:|------|
+| `auto` | 双端 | 自动检测平台并选择采集模式 |
+| `simulation` | 双端 | 强制模拟模式，加载场景 YAML |
+| `ebpf` | Linux | eBPF 内核探针采集真实 syscall |
+| `strace` | Linux | strace 降级采集 |
+
 ### Web 浏览器模式（推荐）
 
 ```bash
 cd observer_sim
 python app.py
+# 可选: python app.py --mode simulation
 ```
 
 启动后自动打开浏览器，访问 `http://localhost:8080`，提供：
@@ -314,124 +423,123 @@ output/
 
 ```
 observer_sim/
-├── app.py                          # Web 模式入口（ThreadingHTTPServer + SSE，约 980 行）
-├── main.py                         # 全场景批量运行入口（支持 --scenario/--category/--output）
+├── app.py                          # Web 模式入口（ThreadingHTTPServer + SSE，支持 --mode）
+├── main.py                         # 全场景批量运行入口（支持 --scenario/--category/--mode）
 ├── demo.py                         # 交互式命令行演示脚本（主菜单 + 场景分析面板）
-├── config.yaml                     # 全局配置（管道名/评分权重/超时参数）
+├── config.yaml                     # 全局配置（mode/pipeline/simulation/ebpf/strace + 原有字段）
+├── check_env.py                    # 环境预检脚本（Windows/Linux 双端检测）
 ├── conftest.py                     # pytest 插件（unit_test 输出管理）
 ├── generate_scenarios.py           # 批量生成 37 个场景 YAML 的工具脚本
 ├── analysis_panels.py              # 37 个场景的分析面板数据（SA 字典，CLI/Web 共享）
+├── .gitignore                      # Git 排除规则（output/、build/、__pycache__、ebpf/*.o）
+│
+├── adapter/                        # 平台适配层 [新增]
+│   ├── __init__.py
+│   ├── platform_detect.py          # 平台检测 + eBPF 能力查询 + detect_and_create_collector()
+│   ├── pipe_factory.py             # 管道适配器（Windows 命名管道 / Linux FIFO）
+│   └── time_source.py              # 时间源抽象（VirtualClock / realtime_monotonic）
+│
+├── collector/                      # 采集层 [新增]
+│   ├── __init__.py                 # 导出 ICollector, CollectorCapabilities
+│   ├── base_collector.py           # ICollector 抽象接口 + CollectorCapabilities 数据类
+│   ├── simulation_collector.py     # 模拟采集器（封装场景 YAML + VirtualClock）
+│   ├── ebpf_collector.py           # eBPF 采集器（libbpf ctypes + perf ring buffer）
+│   └── strace_collector.py         # strace 采集器（subprocess + 行解析）
+│
+├── ebpf/                           # eBPF 探针 [新增，仅 Linux]
+│   ├── observer.bpf.c              # eBPF 内核态 C 程序（3 个 tracepoint，仅观测）
+│   ├── Makefile                     # 编译脚本（make → observer.bpf.o）
+│   ├── vmlinux.h                    # 内核类型定义（bpftool 生成，.gitignore 排除）
+│   └── observer.bpf.o              # 编译产物（.gitignore 排除）
 │
 ├── static/                         # Web 前端静态文件
-│   └── index.html                  # 单文件应用（HTML + CSS + JS 内联，深色终端主题，约 1100 行）
+│   └── index.html                  # 单文件应用（HTML + CSS + JS 内联，深色终端主题）
 │
-├── scenarios/                      # 场景定义 YAML（37 个，按分类组织）
+├── scenarios/                      # 场景定义 YAML（37 个，按分类组织） [零改动]
 │   ├── normal/                     # 正常行为 (N01-N08)
-│   │   ├── n01_standard_development.yaml
-│   │   ├── n02_dependency_install.yaml
-│   │   └── ... (共 8 个)
 │   ├── anomalous/                  # 异常行为 (A01-A12)
-│   │   ├── a01_rm_root.yaml
-│   │   ├── a02_curl_pipe_bash.yaml
-│   │   └── ... (共 12 个)
 │   ├── boundary/                   # 边界场景 (B01-B08)
-│   │   ├── b01_rm_temp_dir.yaml
-│   │   └── ... (共 8 个)
 │   ├── multi_agent/                # 多Agent协作 (M01-M05)
-│   │   ├── m01_legitimate_collaboration.yaml
-│   │   └── ... (共 5 个)
 │   └── extreme/                    # 极端场景 (E01-E04)
-│       ├── e01_high_rate_events.yaml
-│       └── ... (共 4 个)
 │
-├── rules/                          # 安全策略规则库
+├── rules/                          # 安全策略规则库 [零改动]
 │   └── default_policy.yaml         # 15 条初始规则（命令6/文件5/网络4）
 │
-├── cpp_probe/                      # C++ 探针模拟层
+├── cpp_probe/                      # C++ 探针模拟层（保留兼容）
 │   ├── CMakeLists.txt
 │   ├── main.cpp                    # 探针入口
-│   ├── iprobe.h                    # IProbe 抽象接口
-│   ├── process_probe.h             # 进程探针
-│   ├── file_probe.h                # 文件探针
-│   ├── network_probe.h             # 网络探针
-│   ├── event_formatter.h           # 事件格式化器
-│   ├── pipe_writer.h               # 正向管道写入器（含 RingBuffer）
-│   ├── command_reader.h            # 反向管道读取器
-│   ├── process_table.h/.cpp        # 简易进程表
-│   ├── common.h                    # 公共数据结构
-│   └── ring_buffer.h               # 环形缓冲区
+│   ├── iprobe.h / process_probe.h / file_probe.h / network_probe.h
+│   ├── event_formatter.h / pipe_writer.h / command_reader.h
+│   ├── process_table.h/.cpp / common.h / ring_buffer.h
+│   └── build/                      # CMake 编译产物（.gitignore 排除）
 │
-├── observer_core/                  # Python Observer 核心引擎
-│   ├── monitoring/                 # 监测机制
-│   │   ├── pipe_reader.py          # 管道读取器
-│   │   ├── event_normalizer.py     # 事件归一化器
-│   │   └── rule_engine.py          # 规则引擎
-│   ├── judgment/                   # 评判机制
-│   │   ├── risk_scorer.py          # 多维评分器
-│   │   ├── baseline_checker.py     # 基线检查器
-│   │   ├── decision_engine.py      # 研判引擎
-│   │   └── chain_report_builder.py # 链式报告构建器
-│   ├── blocking/                   # 阻断机制
-│   │   ├── blocking_coordinator.py # 三级阻断协调器
-│   │   ├── command_sender.py       # 反向管道指令发送器
-│   │   └── violation_tracker.py    # 违规追踪与升级
-│   └── audit/                      # 审计与输出
-│       ├── behavior_graph.py       # 行为图谱
-│       ├── audit_logger.py         # JSON 行审计日志
-│       ├── report_exporter.py      # Markdown 报告导出
-│       └── output_path_manager.py  # 输出路径管理器（RunOutputManager）
+├── observer_core/                  # Python Observer 核心引擎 [零改动]
+│   ├── monitoring/                 # 监测: pipe_reader / event_normalizer / rule_engine
+│   ├── judgment/                   # 评判: risk_scorer / baseline_checker / decision_engine
+│   ├── blocking/                   # 阻断: blocking_coordinator / command_sender / violation_tracker
+│   └── audit/                      # 审计: behavior_graph / audit_logger / report_exporter
 │
-├── evolution/                      # 自优化接口（预留）
+├── evolution/                      # 自优化接口（预留） [零改动]
 │   └── interfaces.py               # ITraceStore/IPatternMiner/IStrategyGenerator
 │
-├── models/                         # 共享数据模型
-│   ├── event.py                    # RawEvent / NormalizedEvent
+├── models/                         # 共享数据模型 [零改动]
+│   ├── event.py                    # RawEvent / NormalizedEvent / AgentContext
 │   ├── risk.py                     # RiskAssessment / Decision / BlockingResult
 │   ├── command.py                  # Command（反向管道指令）
 │   └── virtual_clock.py            # VirtualClock 虚拟时钟
 │
-├── tests/                          # 测试套件（130 个测试）
-│   ├── test_virtual_clock.py       # Phase 1: 虚拟时钟（16）
-│   ├── test_pipe_communication.py  # Phase 1: 管道通信（26）
-│   ├── test_monitoring.py          # Phase 2: 监测机制（18）
-│   ├── test_judgment.py            # Phase 3: 评判机制（21）
-│   ├── test_blocking.py            # Phase 4: 阻断机制（16）
-│   ├── test_audit.py               # Phase 5: 审计输出（16）
-│   └── test_integration.py         # Phase 6: 集成测试（17）
+├── tests/                          # 测试套件（295 个测试）
+│   ├── test_virtual_clock.py       # 虚拟时钟（16）
+│   ├── test_pipe_communication.py  # 管道通信（26）
+│   ├── test_monitoring.py          # 监测机制（18）
+│   ├── test_judgment.py            # 评判机制（21）
+│   ├── test_blocking.py            # 阻断机制（16）
+│   ├── test_audit.py               # 审计输出（16）
+│   ├── test_integration.py         # 集成测试（17）
+│   ├── test_adapter.py             # 平台适配层测试（23） [新增]
+│   ├── test_simulation_collector.py # 模拟采集器测试（28） [新增]
+│   ├── test_ebpf_collector.py      # eBPF 采集器测试（30） [新增]
+│   ├── test_strace_collector.py    # strace 采集器测试（45） [新增]
+│   └── test_collector_integration.py # 采集层集成测试（39） [新增]
 │
-└── output/                         # 运行输出目录（自动生成）
+└── output/                         # 运行输出目录（自动生成，.gitignore 排除）
     ├── reports/                    # 场景报告（按分类+场景+时间戳归档）
-    │   ├── normal/
-    │   ├── anomalous/
-    │   ├── boundary/
-    │   ├── multi_agent/
-    │   └── extreme/
-    └── unit_test/                  # 单元测试输出（始终最新一次）
+    ├── audit/                      # 审计日志
+    ├── baselines/                  # 行为基线
+    └── unit_test/                  # 单元测试输出
 ```
 
 ---
 
 ## 测试说明
 
-项目采用四层测试体系，共 **130 个测试用例**，覆盖 Phase 1-6 全部功能：
+项目测试体系共 **295 个测试用例**（Windows 端 295 passed + 2 skipped Linux-only），覆盖全部模块：
 
-| Phase | 测试文件 | 测试数量 | 覆盖内容 |
-|:---:|---------|:---:|---------|
-| 1 | test_virtual_clock.py | 16 | 虚拟时钟推进、边界、溢出、窗口判定 |
-| 1 | test_pipe_communication.py | 26 | 事件序列化、指令序列化、Mock 管道、场景 YAML |
-| 2 | test_monitoring.py | 18 | 归一化、进程树、规则匹配、Agent 上下文 |
-| 3 | test_judgment.py | 21 | 四维评分、基线偏离、研判矩阵、链式报告 |
-| 4 | test_blocking.py | 16 | 违规升级、三级阻断、反向管道、终止后丢弃 |
-| 5 | test_audit.py | 16 | 行为图谱、审计日志、报告导出、跨 Agent 检测 |
-| 6 | test_integration.py | 17 | 虚拟时钟一致性、边界条件、自优化接口、端到端 |
-| **合计** | | **130** | **全部通过** |
+| 模块 | 测试文件 | 数量 | 覆盖内容 |
+|------|---------|:---:|--------|
+| 核心 | test_virtual_clock.py | 16 | 虚拟时钟推进、边界、溢出、窗口判定 |
+| 核心 | test_pipe_communication.py | 26 | 事件序列化、指令序列化、Mock 管道 |
+| 核心 | test_monitoring.py | 18 | 归一化、进程树、规则匹配 |
+| 核心 | test_judgment.py | 21 | 四维评分、基线偏离、研判矩阵 |
+| 核心 | test_blocking.py | 16 | 违规升级、三级阻断、反向管道 |
+| 核心 | test_audit.py | 16 | 行为图谱、审计日志、报告导出 |
+| 核心 | test_integration.py | 17 | 端到端集成、边界条件、自优化接口 |
+| 采集 | test_adapter.py | 23 | 平台检测、管道工厂、时间源 |
+| 采集 | test_simulation_collector.py | 28 | YAML 加载、多 Agent、VirtualClock |
+| 采集 | test_ebpf_collector.py | 30 | event_t→RawEvent 映射、capabilities |
+| 采集 | test_strace_collector.py | 45 | strace 行解析、正则表达式、生命周期 |
+| 采集 | test_collector_integration.py | 39 | 模式切换、降级逻辑、接口一致性 |
+| **合计** | | **295** | **Windows: 295 passed, 2 skipped** |
+
+> 在 Linux 上运行时应为 **297 passed, 0 failed**（2 个 skipped 的测试在 Linux 上正常执行）。
 
 ```bash
 # 运行全部测试
 python -m pytest -v
 
-# 运行特定 Phase 测试
-python -m pytest tests/test_blocking.py -v
+# 运行特定模块测试
+python -m pytest tests/test_ebpf_collector.py -v     # eBPF 采集器
+python -m pytest tests/test_collector_integration.py -v  # 采集层集成
 ```
 
 ---
@@ -515,28 +623,143 @@ es.onmessage = (e) => {
 
 ## 开发进度
 
-全部 6 个阶段 + Web 模式已完成：
+### 原始功能（Phase 1-6 + Web）
 
 | Phase | 内容 | 状态 | 测试 |
 |-------|------|:---:|:---:|
-| Phase 1 | 数据通道：C++ 探针 + 双向管道 + VirtualClock | 已完成 | 42 |
-| Phase 2 | 监测机制：EventNormalizer + RuleEngine + 15 条规则 | 已完成 | 18 |
-| Phase 3 | 评判机制：四维评分 + 基线 + 决策 + 链式报告 | 已完成 | 21 |
-| Phase 4 | 阻断机制：三级阻断 + 违规升级 + 反向管道联动 | 已完成 | 16 |
-| Phase 5 | 审计输出：行为图谱 + 审计日志 + Markdown 报告 | 已完成 | 16 |
-| Phase 6 | 接口预留：自优化接口 + main.py + 集成测试 | 已完成 | 17 |
-| **Web 模式** | **app.py + index.html + SSE 实时推送 + 报告管理** | **已完成** | **API+SSE** |
+| Phase 1 | 数据通道：C++ 探针 + 双向管道 + VirtualClock | ✅ 已完成 | 42 |
+| Phase 2 | 监测机制：EventNormalizer + RuleEngine + 15 条规则 | ✅ 已完成 | 18 |
+| Phase 3 | 评判机制：四维评分 + 基线 + 决策 + 链式报告 | ✅ 已完成 | 21 |
+| Phase 4 | 阻断机制：三级阻断 + 违规升级 + 反向管道联动 | ✅ 已完成 | 16 |
+| Phase 5 | 审计输出：行为图谱 + 审计日志 + Markdown 报告 | ✅ 已完成 | 16 |
+| Phase 6 | 接口预留：自优化接口 + main.py + 集成测试 | ✅ 已完成 | 17 |
+| **Web 模式** | **app.py + index.html + SSE 实时推送 + 报告管理** | ✅ **已完成** | **API+SSE** |
+
+### 统一架构升级（eBPF 数据输入模块）
+
+| 阶段 | 环境 | 内容 | 状态 |
+|------|:---:|------|:---:|
+| Phase 7 (Day 1-2) | Win | adapter/ 平台适配层 + ICollector 接口 + SimulationCollector | ✅ 已完成 |
+| Phase 7 (Day 3-4) | Win | 三入口改造 (main.py/demo.py/app.py) + config.yaml + 无回归 | ✅ 已完成 |
+| Phase 8 (Day 5-8) | Linux | eBPF C 探针 + EbpfCollector + StraceCollector + 114 测试 | ✅ 已完成 |
+| Phase 9 (Day 9) | 双端 | 跨环境集成联调（Windows 端已完成，Linux 端待验证） | 🟡 部分 |
+| Phase 10 (Day 10) | 双端 | 全量验证 + README + 环境脚本 + 文档（Windows 端已完成） | 🟡 部分 |
+
+---
+
+## eBPF 开发指南
+
+### eBPF 探针架构
+
+`ebpf/observer.bpf.c` 实现了三个 tracepoint 探针（第一版仅观测，不支持阻断）：
+
+| 探针 | 挂载点 | 捕获参数 |
+|------|--------|----------|
+| execve | `tracepoint/syscalls/sys_enter_execve` | filename, argv |
+| openat | `tracepoint/syscalls/sys_enter_openat` | filename, flags |
+| connect | `tracepoint/syscalls/sys_enter_connect` | sockaddr (IP:Port) |
+
+**event_t 结构体**（内核态与用户态共享）：
+
+```c
+struct event_t {
+    u64  timestamp_ns;       // bpf_ktime_get_ns()
+    u32  pid, ppid, uid;
+    u8   event_type;         // 0=execve, 1=openat, 2=connect
+    u8   blocked;            // 第一版固定为0
+    union { exec/file/net }; // 根据 event_type 选择
+    char comm[16];            // 进程名
+};
+```
+
+> 注意：event_t 超过 512 字节 BPF 栈限制，使用 `BPF_MAP_TYPE_PERCPU_ARRAY` 作为事件缓冲区。
+
+### 编译 eBPF 程序
+
+```bash
+cd observer_sim/ebpf
+
+# 生成 vmlinux.h（内核类型定义，仅首次需要）
+bpftool btf dump file /sys/kernel/btf/vmlinux format c > vmlinux.h
+
+# 编译
+make    # 产出: observer.bpf.o (~50KB)
+
+# 验证加载
+sudo bpftool prog load observer.bpf.o /sys/fs/bpf/observer_test
+```
+
+### Python 加载器
+
+`collector/ebpf_collector.py` 通过 Python `ctypes` 绑定 `libbpf.so`：
+
+```python
+# 加载 eBPF 程序 + 挂载探针 + 消费事件
+from collector.ebpf_collector import EbpfCollector
+
+config = {"ebpf": {"bpf_object_path": "ebpf/observer.bpf.o", "target_agent_id": "my-agent"}}
+collector = EbpfCollector(config)
+collector.attach(agent_id="my-agent")
+
+for raw_event in collector.start():
+    print(f"{raw_event.event_type}: pid={raw_event.pid}")
+```
+
+### 第一版限制
+
+- eBPF 第一版仅做观测，`send_command()` 返回 `False`
+- 阻断功能留待第二版（kprobe + `bpf_override_return`）
+- 需要 root 权限或 `CAP_BPF + CAP_PERFMON` 能力
+
+---
+
+## 双环境开发指南
+
+本项目采用 Windows 宿主机 + Linux 虚拟机的双环境开发架构：
+
+```
+┌──────────────────────────────────┐   ┌──────────────────────────────────┐
+│ Windows 宿主机                     │   │ Linux VM (Ubuntu 22.04 LTS)        │
+│ 模拟模式 + 核心逻辑验证              │   │ eBPF/strace 模式 + 真实采集验证    │
+│                                    │   │                                    │
+│ python main.py --mode simulation   │   │ sudo python3 main.py --mode ebpf │
+│ python demo.py --auto              │   │ python3 main.py --mode strace    │
+│ python app.py                      │   │ python3 app.py                   │
+└──────────────────────────────────┘   └──────────────────────────────────┘
+              │ Git push/pull 同步 │
+              └─────────────────────┘
+```
+
+**Git 同步流程**：
+
+```bash
+# Windows 端开发完成后
+
+git add -A
+git commit -m "Day N: ..."
+git push
+
+# 切换到 Linux VM
+git pull
+python3 -m pytest -v     # 确认无回归
+```
+
+**环境搭建**：详细步骤请参考 [迁移方案.md](../杂项文档/迁移方案.md)（从 VMware 创建到完整 eBPF 工具链安装）。
+
+**环境预检**：两端均可运行 `python check_env.py` 检查环境依赖。
 
 ---
 
 ## 相关文档
 
 - [ARCHITECTURE.md](../ARCHITECTURE.md) - 项目架构文档
-- [开发方案定稿](../杂项文档/开发方案定稿.md) - 完整的系统设计与实施计划
+- [eBPF 开发方案定稿](../杂项文档/统一架构切换_eBPF%20数据输入模块开发方案定稿.md) - 统一架构设计与排期
+- [迁移方案](../杂项文档/迁移方案.md) - Linux 环境搭建指南（VMware + eBPF 工具链）
+- [第一次交接](../杂项文档/第一次交接.md) - Windows → Linux 交接文档（Phase 1-2 成果）
+- [第二次交接](../杂项文档/第二次交接.md) - Linux → Windows 交接文档（Phase 3 成果）
+- [第三次交接](../杂项文档/第三次交接.md) - Windows → Linux 交接文档（Phase 4-5 Windows 部分）
 - [前端开发方案定稿](../杂项文档/前端开发方案定稿.md) - Web 模式详细设计
-- [项目描述](../杂项文档/项目描述.md) - 面向业务方的项目介绍
 - [测试场景清单](../杂项文档/测试场景描述.md) - 37 个场景的详细描述与验收标准
-- [初步调研报告](../杂项文档/初步调研报告.md) - 技术调研与可行性分析
 
 ---
 
@@ -544,10 +767,12 @@ es.onmessage = (e) => {
 
 本项目为教学原型，代码以可读性为优先。如需扩展：
 
-1. **新增评分维度**：实现 `IRiskDimension` 接口并注册到 `RiskScorer`
-2. **新增安全规则**：编辑 `rules/default_policy.yaml`
-3. **新增演示场景**：参考 `scenarios/` 目录下分类子目录中的 YAML 格式，或使用 `generate_scenarios.py` 中的辅助函数
-4. **实现自优化**：基于 `evolution/interfaces.py` 中的接口实现具体算法
+1. **新增采集模式**：实现 `ICollector` 接口（参考 `collector/base_collector.py`），在 `adapter/platform_detect.py` 注册
+2. **新增评分维度**：实现 `IRiskDimension` 接口并注册到 `RiskScorer`
+3. **新增安全规则**：编辑 `rules/default_policy.yaml`
+4. **新增演示场景**：参考 `scenarios/` 目录下 YAML 格式，或使用 `generate_scenarios.py`
+5. **实现 eBPF 阻断**：新增 kprobe 程序 + `block_policy` map + `bpf_override_return`（第二版）
+6. **实现自优化**：基于 `evolution/interfaces.py` 中的接口实现具体算法
 
 ---
 
