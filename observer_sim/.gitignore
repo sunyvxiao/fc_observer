@@ -1,3 +1,7 @@
+# ============================================================
+# observer_sim/.gitignore — 方寸观察者模拟学习系统
+# ============================================================
+
 # === Python ===
 __pycache__/
 *.py[cod]
@@ -7,8 +11,21 @@ dist/
 build/
 .eggs/
 
-# === 项目输出目录 ===
+# === pytest ===
+.pytest_cache/
+.pytest_cache/**
+
+# === 项目输出目录（运行时动态生成，不纳入版本控制） ===
+# 报告、审计日志、证据文件、基线、图谱、单元测试输出
 output/
+
+# === 临时测试输出文件 ===
+demo_output.txt
+mode_test.txt
+*.log
+
+# === C++ 探针编译产物 ===
+cpp_probe/build/
 
 # === eBPF 编译产物 (Phase 3) ===
 ebpf/vmlinux.h
@@ -31,6 +48,3 @@ desktop.ini
 .venv/
 venv/
 env/
-
-# === pytest ===
-.pytest_cache/
