@@ -41,7 +41,7 @@ ebpf:
 # strace 采集模式配置 (新增，降级备选)
 # ============================================================
 strace:
-  strace_binary: "/usr/bin/strace"
+  strace_bin: "/usr/bin/strace"
   trace_syscalls: "execve,openat,connect,unlink,sendto"
   target_pid: null
 

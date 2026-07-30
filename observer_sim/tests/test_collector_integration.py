@@ -84,12 +84,14 @@ class TestFactoryModeSwitching:
         collector = detect_and_create_collector(config, mode_override="simulation")
         assert isinstance(collector, SimulationCollector)
 
+    @pytest.mark.skipif(sys.platform == "win32", reason="strace 模式仅支持 Linux")
     def test_strace_mode(self):
         """strace 模式返回 StraceCollector"""
         config = _make_base_config()
         collector = detect_and_create_collector(config, mode_override="strace")
         assert isinstance(collector, StraceCollector)
 
+    @pytest.mark.skipif(sys.platform == "win32", reason="eBPF 模式仅支持 Linux")
     def test_ebpf_mode_linux(self):
         """ebpf 模式在 Linux 上返回 EbpfCollector"""
         config = _make_base_config()
