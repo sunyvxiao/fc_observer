@@ -1,0 +1,16 @@
+"""
+collector/ — 采集层
+
+统一采集抽象接口 + 多种采集实现:
+- base_collector:         ICollector 抽象接口 + CollectorCapabilities
+- simulation_collector:   模拟采集器（场景 YAML → RawEvent）
+- ebpf_collector:         eBPF 采集器（Linux，Phase 3 实现）
+- strace_collector:       strace 采集器（Linux 降级，Phase 3 实现）
+"""
+
+from collector.base_collector import ICollector, CollectorCapabilities
+
+__all__ = [
+    "ICollector",
+    "CollectorCapabilities",
+]

@@ -55,6 +55,7 @@ from observer_core.audit.behavior_graph import BehaviorGraph
 from observer_core.audit.audit_logger import AuditLogger
 from observer_core.audit.report_exporter import ReportExporter
 from observer_core.audit.output_path_manager import RunOutputManager
+from collector.simulation_collector import SimulationCollector
 
 # ── 全局常量 ──────────────────────────────────────────────────
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -90,7 +91,11 @@ class StreamScenarioRunner:
     def __init__(self, base_dir, output_dir, category, scenario_id):
         self.base_dir = base_dir
         self.output_dir = output_dir
-        self.clock = VirtualClock(start_ns=1718092800000000000)
+        # 统一架构: 使用 SimulationCollector 替代直接创建 VirtualClock
+        self.collector = SimulationCollector({
+            "virtual_clock": {"start_ns": 1718092800000000000}
+        })
+        self.clock = self.collector.clock  # 共享时钟引用
         self.normalizer = EventNormalizer(clock=self.clock, window_size=10)
         self.engine = RuleEngine()
         self.engine.load_rules(os.path.join(base_dir, 'rules', 'default_policy.yaml'))
@@ -125,12 +130,16 @@ class StreamScenarioRunner:
         events = scenario['event_sequence']
         total = len(events)
 
-        for i, event_data in enumerate(events, 1):
+        # 统一架构: 使用 Collector 提供事件
+        self.collector.load_scenario(scenario_path)
+        raw_events = list(self.collector.start())
+
+        for i, raw in enumerate(raw_events, 1):
             # 微小延迟让 SSE 客户端有时间连接和接收
-            delay_ms = event_data.get('delay_ms', 0)
+            delay_ms = events[i - 1].get('delay_ms', 0) if i - 1 < len(events) else 0
             if delay_ms > 0:
                 time.sleep(min(delay_ms / 1000.0, 0.3))
-            yield self._process_one_event(event_data, scenario, i, total)
+            yield self._process_one_event(raw, scenario, i, total)
 
         self.audit_logger.close()
         files = self._generate_reports(scenario)
@@ -143,31 +152,17 @@ class StreamScenarioRunner:
             "statistics": self.stats.copy(),
         }
 
-    def _process_one_event(self, event_data, scenario, seq, total):
-        """处理单个事件，返回结构化 step_data"""
-        self.clock.advance(event_data.get('delay_ms', 0))
-        raw = RawEvent(
-            event_id=f"evt_{event_data['seq']}",
-            timestamp_ns=self.clock.now_ns(),
-            event_type=event_data['type'],
-            pid=20000 + event_data['seq'], ppid=0,
-            agent_id=event_data['agent'], agent_framework="test",
-            executable=event_data.get('executable', ''),
-            arguments=event_data.get('arguments', []),
-            file_path=event_data.get('file_path', ''),
-            file_op=event_data.get('file_op', ''),
-            remote_addr=event_data.get('remote_addr', ''),
-            remote_port=event_data.get('remote_port', 0),
-        )
+    def _process_one_event(self, raw, scenario, seq, total):
+        """处理单个事件，接受 RawEvent，返回结构化 step_data"""
         norm = self.normalizer.normalize(raw)
-        if 'normal' in event_data.get('agent', ''):
+        if 'normal' in raw.agent_id:
             self.baseline.collect(norm)
         match = self.engine.match(norm)
-        context = self.normalizer.get_agent_context(event_data['agent'])
+        context = self.normalizer.get_agent_context(raw.agent_id)
         self.scorer.set_baseline(self.baseline.get_baseline_dict())
         assessment = self.scorer.assess(norm, match, context)
         decision = self.decision_engine.decide(
-            assessment, event_id=raw.event_id, agent_id=event_data['agent'])
+            assessment, event_id=raw.event_id, agent_id=raw.agent_id)
 
         blocking_result = self.blocking_coord.execute(norm, decision)
         self.behavior_graph.add_event(
@@ -969,6 +964,9 @@ def main():
     parser.add_argument("--port", type=int, default=8080, help="监听端口 (默认 8080)")
     parser.add_argument("--host", default="localhost", help="监听地址 (默认 localhost)")
     parser.add_argument("--no-browser", action="store_true", help="不自动打开浏览器")
+    parser.add_argument("--mode", type=str, default=None,
+                        choices=["auto", "simulation", "strace", "ebpf"],
+                        help="采集模式 (默认从 config.yaml 读取)")
     args = parser.parse_args()
 
     host, port = args.host, args.port

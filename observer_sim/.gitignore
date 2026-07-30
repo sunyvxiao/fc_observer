@@ -1,0 +1,36 @@
+# === Python ===
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+dist/
+build/
+.eggs/
+
+# === 项目输出目录 ===
+output/
+
+# === eBPF 编译产物 (Phase 3) ===
+ebpf/vmlinux.h
+ebpf/*.o
+ebpf/*.llc
+
+# === IDE ===
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# === 操作系统 ===
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# === 虚拟环境 ===
+.venv/
+venv/
+env/
+
+# === pytest ===
+.pytest_cache/

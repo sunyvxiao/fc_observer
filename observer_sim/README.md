@@ -14,6 +14,7 @@
 
 **技术栈**：Python 3.10+ / C++17 / CMake 3.15+ / Windows Named Pipe
 **设计目标**：教学演示 > 生产性能，代码可读性优先，全链路透明可追踪
+**运行模式**：命令行交互模式（demo.py）| Web 浏览器模式（app.py）| 批量运行模式（main.py）
 
 ---
 
@@ -102,10 +103,34 @@ cmake --version
 
 ## 快速开始
 
-### 交互式演示（推荐）
+### Web 浏览器模式（推荐）
 
 ```bash
 cd observer_sim
+python app.py
+```
+
+启动后自动打开浏览器，访问 `http://localhost:8080`，提供：
+- **可视化界面**：深色终端主题，左侧导航栏 + 右侧主内容区
+- **实时推送**：基于 SSE（Server-Sent Events）逐步展示场景运行过程
+- **场景浏览**：按 5 大分类浏览 37 个场景，点击运行并实时查看事件处理流水线
+- **全量模拟**：一键运行全部场景，进度条 + 统计面板
+- **单元测试**：一键运行 130 个测试用例，同步返回结果
+- **报告管理**：三级折叠树浏览历史报告，Markdown 渲染，支持三级删除
+- **分析面板**：场景运行完成后展示四维分析（威胁评分/规则命中/行为图谱/审计建议）
+
+技术特点：
+- 基于 Python 标准库 `ThreadingHTTPServer`，零 pip install 依赖
+- 14 个 REST/SSE API 端点，详见 [API 端点列表](#api-端点列表)
+- 单文件前端（`static/index.html`），HTML/CSS/JS 内联，约 1100 行
+- `StreamScenarioRunner` 适配层将同步场景执行转为生成器，逐步 yield 事件处理数据
+- 后台工作线程架构：`queue.Queue` + `threading.Thread`
+- 15 秒 SSE 心跳保活 + JSON 回退机制
+- 路径遍历安全防护（`os.path.realpath()` + 前缀校验）
+
+### 交互式命令行模式
+
+```bash
 python demo.py
 ```
 
@@ -159,7 +184,7 @@ python demo.py
 | 风险成因（归因分析） | 命中规则、基线偏离、上下文序列触发原因 |
 | 综合处置策略 | 联合应对方案（阻断+隔离+审计+建议） |
 
-37 个场景均内置了分析数据映射（`demo.py` 中的 `SA` 字典）。
+37 个场景均内置了分析数据映射（`analysis_panels.py` 中的 `SA` 字典，CLI 和 Web 模式共享）。
 
 ### 命令行运行
 
@@ -289,11 +314,16 @@ output/
 
 ```
 observer_sim/
-├── main.py                         # 全场景运行入口（支持 --scenario/--category/--output）
-├── demo.py                         # 交互式演示脚本（主菜单 + 场景分析面板）
+├── app.py                          # Web 模式入口（ThreadingHTTPServer + SSE，约 980 行）
+├── main.py                         # 全场景批量运行入口（支持 --scenario/--category/--output）
+├── demo.py                         # 交互式命令行演示脚本（主菜单 + 场景分析面板）
 ├── config.yaml                     # 全局配置（管道名/评分权重/超时参数）
 ├── conftest.py                     # pytest 插件（unit_test 输出管理）
 ├── generate_scenarios.py           # 批量生成 37 个场景 YAML 的工具脚本
+├── analysis_panels.py              # 37 个场景的分析面板数据（SA 字典，CLI/Web 共享）
+│
+├── static/                         # Web 前端静态文件
+│   └── index.html                  # 单文件应用（HTML + CSS + JS 内联，深色终端主题，约 1100 行）
 │
 ├── scenarios/                      # 场景定义 YAML（37 个，按分类组织）
 │   ├── normal/                     # 正常行为 (N01-N08)
@@ -406,9 +436,86 @@ python -m pytest tests/test_blocking.py -v
 
 ---
 
+## API 端点列表
+
+Web 模式（`app.py`）提供 14 个 REST/SSE 端点：
+
+| 方法 | 路径 | 说明 | 类型 |
+|------|------|------|------|
+| GET | `/` | 返回 `static/index.html` | 静态 |
+| GET | `/api/health` | 健康检查 | JSON |
+| GET | `/api/categories` | 场景分类列表（5 大分类） | JSON |
+| GET | `/api/scenarios?category={name}` | 分类下场景列表 | JSON |
+| POST | `/api/scenario/run` | 启动单个场景（返回 run_id） | JSON |
+| GET | `/api/scenario/stream/{run_id}` | SSE 事件流（逐步推送处理结果） | SSE |
+| GET | `/api/scenario/run-all?category={name}` | SSE 批量运行全部场景 | SSE |
+| GET | `/api/scenario/run-all/progress` | 全量运行进度查询 | JSON |
+| GET | `/api/scenario/result/{run_id}` | 场景运行结果 + 分析面板 | JSON |
+| POST | `/api/tests/run` | 同步运行 130 个单元测试 | JSON |
+| GET | `/api/reports/list` | 报告文件列表（三级树结构） | JSON |
+| GET | `/api/reports/view?path=...` | 报告内容（含路径安全校验） | text |
+| POST | `/api/reports/delete` | 删除记录（全部/按分类/按场景） | JSON |
+| POST | `/api/server/stop` | 关闭服务器 | JSON |
+
+---
+
+## SSE 流式协议
+
+场景运行通过 SSE（Server-Sent Events）实时推送每个事件的处理结果。
+
+### 事件类型
+
+| 事件类型 | event 字段 | 触发时机 |
+|---------|:---:|------|
+| 场景步骤 | `step` | 每个事件处理完毕 |
+| 场景完成 | `done` | 场景全部事件处理完 |
+| 批量-场景开始 | `scenario_start` | run-all 每个场景开始 |
+| 批量-场景完成 | `scenario_done` | run-all 每个场景完成 |
+| 批量-全部完成 | `all_done` | 37 场景全部完成 |
+| 心跳 | `heartbeat` | 每 15 秒（保活） |
+| 错误 | `error` | 异常/服务器关闭 |
+
+### step_data 字段定义
+
+每个 `step` 事件包含以下结构化数据：
+
+| 字段 | 类型 | 说明 |
+|------|------|------|
+| `seq` | int | 当前步骤序号（1-based） |
+| `total` | int | 总步骤数 |
+| `event_type` | string | exec / file_open / net_conn |
+| `raw_input` | string | 原始事件描述 |
+| `normalized_summary` | string | 归一化后摘要 |
+| `rule_match.hit` | bool | 是否命中规则 |
+| `rule_match.rules` | array | 命中规则列表 [{id, name, action}] |
+| `risk_score` | float | 综合风险评分 0.0~1.0 |
+| `risk_level` | string | LOW / MEDIUM / HIGH / CRITICAL |
+| `risk_breakdown` | object | 四维评分 {rule, baseline, context, sequence} |
+| `decision_action` | string | ALLOW / ALERT / BLOCK |
+| `decision_tier` | string | Tier1 / Tier2 / Tier3 |
+| `disposal_summary` | string | 处置结果摘要 |
+| `timestamp_ns` | int | 虚拟时钟纳秒 |
+
+### 前端 SSE 消费示例
+
+```javascript
+const es = new EventSource(`/api/scenario/stream/${run_id}`);
+es.onmessage = (e) => {
+    const data = JSON.parse(e.data);
+    if (data.type === "step") {
+        // 追加日志 + 更新 UI
+    } else if (data.type === "done") {
+        // 渲染分析面板
+        es.close();
+    }
+};
+```
+
+---
+
 ## 开发进度
 
-全部 6 个阶段已完成：
+全部 6 个阶段 + Web 模式已完成：
 
 | Phase | 内容 | 状态 | 测试 |
 |-------|------|:---:|:---:|
@@ -418,14 +525,15 @@ python -m pytest tests/test_blocking.py -v
 | Phase 4 | 阻断机制：三级阻断 + 违规升级 + 反向管道联动 | 已完成 | 16 |
 | Phase 5 | 审计输出：行为图谱 + 审计日志 + Markdown 报告 | 已完成 | 16 |
 | Phase 6 | 接口预留：自优化接口 + main.py + 集成测试 | 已完成 | 17 |
-
-**后续迭代**：37 场景体系 + 输出目录重构 + demo.py 交互菜单 + conftest.py 插件
+| **Web 模式** | **app.py + index.html + SSE 实时推送 + 报告管理** | **已完成** | **API+SSE** |
 
 ---
 
 ## 相关文档
 
+- [ARCHITECTURE.md](../ARCHITECTURE.md) - 项目架构文档
 - [开发方案定稿](../杂项文档/开发方案定稿.md) - 完整的系统设计与实施计划
+- [前端开发方案定稿](../杂项文档/前端开发方案定稿.md) - Web 模式详细设计
 - [项目描述](../杂项文档/项目描述.md) - 面向业务方的项目介绍
 - [测试场景清单](../杂项文档/测试场景描述.md) - 37 个场景的详细描述与验收标准
 - [初步调研报告](../杂项文档/初步调研报告.md) - 技术调研与可行性分析

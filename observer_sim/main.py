@@ -41,6 +41,7 @@ from observer_core.audit.behavior_graph import BehaviorGraph
 from observer_core.audit.audit_logger import AuditLogger
 from observer_core.audit.report_exporter import ReportExporter
 from observer_core.audit.output_path_manager import RunOutputManager, infer_category
+from adapter.platform_detect import detect_and_create_collector
 
 
 def setup_logging(config: dict):
@@ -65,7 +66,7 @@ def load_scenario(scenario_path: str) -> dict:
 
 
 def create_raw_event(event_data: dict, agent_info: dict, seq: int) -> RawEvent:
-    """从场景 YAML 事件数据创建 RawEvent"""
+    """从场景 YAML 事件数据创建 RawEvent（保留用于兼容）"""
     return RawEvent(
         event_id=f"evt-{seq:04d}",
         timestamp_ns=0,  # 由 VirtualClock 设置
@@ -94,68 +95,76 @@ def run_scenario_pipeline(scenario: dict, clock: VirtualClock,
                           blocking_coord: BlockingCoordinator,
                           behavior_graph: BehaviorGraph,
                           audit_logger: AuditLogger,
-                          output_dir: str) -> Dict:
+                          output_dir: str,
+                          collector=None) -> Dict:
     """
     运行单个场景的全链路处理流水线。
+
+    Args:
+        collector: 可选的 ICollector 实例。如提供，使用 collector.start() 获取事件；
+                   如不提供，使用传统 YAML 遍历方式（向后兼容）。
 
     Returns:
         Dict: 场景运行摘要
     """
     scenario_id = scenario["id"]
     scenario_name = scenario["name"]
-
-    # 构建 agent 信息映射
-    agents_map = {}
-    for agent in scenario.get("agents", []):
-        agents_map[agent["agent_id"]] = agent
-
     events = scenario.get("event_sequence", [])
     total = len(events)
 
     stats = {"total": total, "allow": 0, "alert": 0, "block": 0}
 
-    for i, event_data in enumerate(events, 1):
-        seq = event_data.get("seq", i)
-        delay_ms = event_data.get("delay_ms", 0)
-        agent_id = event_data.get("agent", "unknown")
-        agent_info = agents_map.get(agent_id, {"agent_id": agent_id, "initial_pid": 10001})
+    if collector is not None:
+        # 新架构: 从 Collector 获取事件
+        event_iter = enumerate(collector.start(), 1)
+    else:
+        # 兼容模式: 传统 YAML 遍历
+        agents_map = {}
+        for agent in scenario.get("agents", []):
+            agents_map[agent["agent_id"]] = agent
 
-        # 1. 推进虚拟时钟
-        clock.advance(delay_ms)
+        def _legacy_iter():
+            for i, event_data in enumerate(events, 1):
+                seq = event_data.get("seq", i)
+                delay_ms = event_data.get("delay_ms", 0)
+                agent_id = event_data.get("agent", "unknown")
+                agent_info = agents_map.get(agent_id, {"agent_id": agent_id, "initial_pid": 10001})
+                clock.advance(delay_ms)
+                raw = create_raw_event(event_data, agent_info, seq)
+                raw.timestamp_ns = clock.now_ns()
+                yield i, raw
 
-        # 2. 创建 RawEvent
-        raw = create_raw_event(event_data, agent_info, seq)
-        raw.timestamp_ns = clock.now_ns()
+        event_iter = _legacy_iter()
 
-        # 3. 归一化
+    for i, raw in event_iter:
         norm = normalizer.normalize(raw)
 
-        # 4. 规则匹配
+        # 规则匹配
         match_result = rule_engine.match(norm)
         matched_rule_ids = [r.rule_id for r in match_result.matched_rules]
 
-        # 5. 基线收集
+        # 基线收集
         baseline_checker.collect(norm)
 
-        # 6. 风险评分
+        # 风险评分
         baseline_data = baseline_checker.get_baseline_dict()
         scorer.set_baseline(baseline_data)
-        agent_ctx = normalizer.get_agent_context(agent_id)
+        agent_ctx = normalizer.get_agent_context(raw.agent_id)
         assessment = scorer.assess(norm, match_result, agent_ctx)
 
-        # 7. 研判决策
-        decision = decision_engine.decide(assessment, norm.event_id, agent_id)
+        # 研判决策
+        decision = decision_engine.decide(assessment, norm.event_id, raw.agent_id)
 
-        # 8. 阻断执行
+        # 阻断执行
         blocking_result = blocking_coord.execute(norm, decision)
 
-        # 9. 记录到行为图谱
+        # 记录到行为图谱
         behavior_graph.add_event(
             norm, assessment=assessment, decision=decision,
             blocking_result=blocking_result, matched_rules=matched_rule_ids
         )
 
-        # 10. 写入审计日志
+        # 写入审计日志
         description = _build_description(norm)
         audit_logger.log_event(
             norm, assessment=assessment, decision=decision,
@@ -246,6 +255,9 @@ def main():
                         help="配置文件路径")
     parser.add_argument("--output", type=str, default="output",
                         help="输出目录")
+    parser.add_argument("--mode", type=str, default=None,
+                        choices=["auto", "simulation", "strace", "ebpf"],
+                        help="采集模式 (默认从 config.yaml 读取)")
     args = parser.parse_args()
 
     # 切换到脚本所在目录
@@ -275,6 +287,10 @@ def main():
 
     logger.info(f"Found {len(scenario_files)} scenario(s) to run")
 
+    # 创建 Collector（统一架构，只创建一次）
+    collector = detect_and_create_collector(config, mode_override=args.mode)
+    logger.info(f"采集器: {collector.capabilities().name}")
+
     all_summaries = []
 
     for scenario_path in scenario_files:
@@ -291,8 +307,12 @@ def main():
         # 为本次运行创建输出路径管理器
         run_mgr = RunOutputManager(base_output, category, scenario_id)
 
-        # 初始化/重置核心组件
-        clock = VirtualClock()
+        # 绑定 Collector 到当前场景（统一架构，复用同一实例）
+        collector.attach(agent_id=scenario_id)
+        collector.load_scenario(scenario_path)
+
+        # 初始化/重置核心组件（使用 collector 的时钟）
+        clock = collector.clock if hasattr(collector, 'clock') else VirtualClock()
         normalizer = EventNormalizer(clock)
         rule_engine = RuleEngine()
         rule_engine.load_rules("rules/default_policy.yaml")
@@ -315,7 +335,7 @@ def main():
         # 开始审计日志
         audit_logger.start_scenario(scenario_id)
 
-        # 运行流水线
+        # 运行流水线（使用 collector 提供事件）
         stats = run_scenario_pipeline(
             scenario=scenario, clock=clock,
             normalizer=normalizer, rule_engine=rule_engine,
@@ -323,7 +343,11 @@ def main():
             decision_engine=decision_engine, chain_builder=chain_builder,
             blocking_coord=blocking_coord, behavior_graph=behavior_graph,
             audit_logger=audit_logger, output_dir=run_mgr.run_dir,
+            collector=collector,
         )
+
+        # 清理 collector
+        collector.detach()
 
         audit_logger.close()
 

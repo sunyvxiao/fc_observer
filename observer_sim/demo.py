@@ -52,6 +52,7 @@ from observer_core.audit.behavior_graph import BehaviorGraph
 from observer_core.audit.audit_logger import AuditLogger
 from observer_core.audit.report_exporter import ReportExporter
 from observer_core.audit.output_path_manager import RunOutputManager, infer_category
+from collector.simulation_collector import SimulationCollector
 
 
 # ── ANSI 颜色码 ──────────────────────────────────────────────
@@ -144,7 +145,11 @@ class ScenarioRunner:
         self.silent = silent
         self.base_dir = os.path.dirname(os.path.abspath(__file__))
         self.output_dir = os.path.join(self.base_dir, 'output')
-        self.clock = VirtualClock(start_ns=1718092800000000000)
+        # 统一架构: 使用 SimulationCollector 替代直接创建 VirtualClock
+        self.collector = SimulationCollector({
+            "virtual_clock": {"start_ns": 1718092800000000000}
+        })
+        self.clock = self.collector.clock  # 共享时钟引用
         self.normalizer = EventNormalizer(clock=self.clock, window_size=10)
         self.engine = RuleEngine()
         self.engine.load_rules(os.path.join(self.base_dir, 'rules', 'default_policy.yaml'))
@@ -193,24 +198,16 @@ class ScenarioRunner:
             data = yaml.safe_load(f)
         return data['scenario'], path
 
-    def run_event(self, event_data, event_num, total):
-        self.clock.advance(event_data.get('delay_ms', 0))
-        raw = RawEvent(
-            event_id=f"evt_{event_data['seq']}", timestamp_ns=self.clock.now_ns(),
-            event_type=event_data['type'], pid=20000 + event_data['seq'], ppid=0,
-            agent_id=event_data['agent'], agent_framework="test",
-            executable=event_data.get('executable', ''), arguments=event_data.get('arguments', []),
-            file_path=event_data.get('file_path', ''), file_op=event_data.get('file_op', ''),
-            remote_addr=event_data.get('remote_addr', ''), remote_port=event_data.get('remote_port', 0),
-        )
+    def run_event(self, raw, event_num, total):
+        """处理单个事件（接受 RawEvent，由 Collector 提供）"""
         norm = self.normalizer.normalize(raw)
-        if 'normal' in event_data.get('agent', ''):
+        if 'normal' in raw.agent_id:
             self.baseline.collect(norm)
         match = self.engine.match(norm)
-        context = self.normalizer.get_agent_context(event_data['agent'])
+        context = self.normalizer.get_agent_context(raw.agent_id)
         self.scorer.set_baseline(self.baseline.get_baseline_dict())
         assessment = self.scorer.assess(norm, match, context)
-        decision = self.decision_engine.decide(assessment, event_id=raw.event_id, agent_id=event_data['agent'])
+        decision = self.decision_engine.decide(assessment, event_id=raw.event_id, agent_id=raw.agent_id)
         cmd_count_before = len(self.cmd_sender.sent_commands)
         blocking_result = self.blocking_coord.execute(norm, decision)
         cmd_count_after = len(self.cmd_sender.sent_commands)
@@ -225,7 +222,7 @@ class ScenarioRunner:
         self.audit_logger.log_event(norm, assessment=assessment, decision=decision,
                                      blocking_result=blocking_result, matched_rules=matched_rule_ids, description=desc)
         if not self.silent:
-            self._print_event_pipeline(event_data, norm, match, assessment, decision,
+            self._print_event_pipeline(raw, norm, match, assessment, decision,
                                         blocking_result, reverse_cmd, escalated, event_num, total)
         self._update_stats(assessment, decision, match, blocking_result, escalated, reverse_cmd)
         if not self.auto_mode and not self.silent:
@@ -240,7 +237,7 @@ class ScenarioRunner:
             return f"{norm.raw.remote_addr}:{norm.raw.remote_port}"
         return norm.event_type
 
-    def _print_event_pipeline(self, event_data, norm, match, assessment, decision,
+    def _print_event_pipeline(self, raw, norm, match, assessment, decision,
                                blocking_result, reverse_cmd, escalated, event_num, total):
         desc = self._build_event_desc(norm)
         print_event_header(event_num, total, norm.event_type, desc)
@@ -329,8 +326,11 @@ class ScenarioRunner:
             print()
         events = scenario['event_sequence']
         total = len(events)
-        for i, event_data in enumerate(events, 1):
-            self.run_event(event_data, i, total)
+        # 统一架构: 使用 Collector 提供事件
+        self.collector.load_scenario(scenario_file)
+        raw_events = list(self.collector.start())
+        for i, raw in enumerate(raw_events, 1):
+            self.run_event(raw, i, total)
         self.audit_logger.close()
         if not self.silent:
             self._generate_reports(scenario)

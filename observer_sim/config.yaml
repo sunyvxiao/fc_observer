@@ -1,7 +1,55 @@
-# 方寸观察者模拟学习系统 — 全局配置
+# 方寸观察者模拟学习系统 — 全局配置（统一架构版）
 # 所有管道名、超时参数、评分权重等集中配置
 
-# === 管道通信配置 ===
+# ============================================================
+# 运行模式 (新增)
+# ============================================================
+mode: "auto"
+# 可选值: "auto" | "simulation" | "strace" | "ebpf"
+
+# ============================================================
+# 管道配置 (新增，统一跨平台管道配置)
+# ============================================================
+pipeline:
+  # Windows (命名管道)
+  win_event_pipe: "\\\\.\\pipe\\observer_events"
+  win_command_pipe: "\\\\.\\pipe\\observer_commands"
+  # Linux (FIFO)
+  linux_event_fifo: "/tmp/observer/events"
+  linux_command_fifo: "/tmp/observer/commands"
+
+# ============================================================
+# 模拟模式配置 (新增)
+# ============================================================
+simulation:
+  scenarios_dir: "scenarios/"
+  cpp_probe_exe: "cpp_probe/build/cpp_probe"
+  virtual_clock_start_ns: 0
+  step_by_step: true
+
+# ============================================================
+# eBPF 采集模式配置 (新增)
+# ============================================================
+ebpf:
+  bpf_object_path: "ebpf/observer.bpf.o"
+  target_pid: null                  # 运行时指定 (--pid 参数)
+  target_agent_id: "observed-agent"
+  perf_buffer_page_count: 64
+  heartbeat_interval_sec: 15
+
+# ============================================================
+# strace 采集模式配置 (新增，降级备选)
+# ============================================================
+strace:
+  strace_binary: "/usr/bin/strace"
+  trace_syscalls: "execve,openat,connect,unlink,sendto"
+  target_pid: null
+
+# ============================================================
+# 以下为现有配置段，全部保留不做修改
+# ============================================================
+
+# === 管道通信配置 (保留，Windows 模拟模式使用) ===
 pipes:
   events: "\\\\.\\pipe\\observer_events"      # 正向管道: C++ → Python
   commands: "\\\\.\\pipe\\observer_commands"   # 反向管道: Python → C++
@@ -9,11 +57,11 @@ pipes:
   heartbeat_interval_ms: 1000                 # 心跳间隔（毫秒）
   heartbeat_max_miss: 3                       # 最大心跳未响应次数
 
-# === 虚拟时钟配置 ===
+# === 虚拟时钟配置 (保留) ===
 virtual_clock:
   start_ns: 1718092800000000000               # 起始时间戳 (2024-06-11 08:00:00 UTC)
 
-# === 风险评分权重 ===
+# === 风险评分权重 (保留，维持 dimensions 嵌套结构) ===
 scoring:
   dimensions:
     rule_match:
@@ -32,23 +80,23 @@ scoring:
     low_max: 0.3
     medium_max: 0.6
 
-# === 阻断升级配置 ===
+# === 阻断升级配置 (保留) ===
 blocking:
   violation_window_ms: 300000                 # 违规升级滑动窗口（5分钟，虚拟时钟）
   tier1_to_tier2_threshold: 3                 # Tier1 累计次数 → 升级 Tier2
   tier2_to_tier3_threshold: 2                 # Tier2 累计次数 → 升级 Tier3
 
-# === 事件序列窗口 ===
+# === 事件序列窗口 (保留) ===
 monitoring:
   event_window_size: 10                       # 最近 N 个事件用于上下文分析
   process_window_ms: 60000                    # 进程关联时间窗口（毫秒）
 
-# === 基线配置 ===
+# === 基线配置 (保留) ===
 baseline:
   cold_start_deviation: 0.0                   # 冷启动期偏离分固定值
   min_events_for_baseline: 20                 # 最少事件数才激活偏离检测
 
-# === 输出配置 ===
+# === 输出配置 (保留) ===
 output:
   audit_dir: "output/audit"                   # 审计日志目录
   reports_dir: "output/reports"               # 风险分析报告目录
@@ -56,7 +104,7 @@ output:
   baselines_dir: "output/baselines"           # 基线快照目录
   audit_format: "jsonl"                       # 审计日志格式
 
-# === 场景配置（37个测试场景，按分类子目录组织） ===
+# === 场景配置 (保留，37个测试场景) ===
 scenarios:
   # --- Normal (N01-N08) ---
   - "scenarios/normal/n01_standard_development.yaml"
@@ -101,7 +149,7 @@ scenarios:
   - "scenarios/extreme/e03_pipe_disconnect_recovery.yaml"
   - "scenarios/extreme/e04_command_timeout_degradation.yaml"
 
-# === 日志配置 ===
+# === 日志配置 (保留) ===
 logging:
   level: "INFO"                               # DEBUG | INFO | WARNING | ERROR
   format: "[%(asctime)s] %(levelname)s %(name)s: %(message)s"
