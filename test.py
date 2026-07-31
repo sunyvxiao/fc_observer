@@ -52,7 +52,16 @@ class EnvCapabilities:
 
     def detect(self):
         self.python3 = sys.executable
-        self.is_root = os.geteuid() == 0
+        # Windows 兼容: os.geteuid() 仅 Linux 可用
+        if hasattr(os, 'geteuid'):
+            self.is_root = os.geteuid() == 0
+        else:
+            # Windows: 尝试检测管理员权限
+            try:
+                import ctypes
+                self.is_root = ctypes.windll.shell32.IsUserAnAdmin() != 0
+            except Exception:
+                self.is_root = False
         self.has_strace = shutil.which("strace") is not None
         self.has_btf = os.path.exists("/sys/kernel/btf/vmlinux")
         # 检测 libbpf
@@ -78,13 +87,17 @@ class EnvCapabilities:
 
     def summary(self) -> List[str]:
         lines = []
+        # Windows GBK 兼容: 使用 ASCII 符号替代 Unicode emoji
+        ok = "[OK]"
+        no = "[NO]"
+        warn = "[!!]"
         lines.append(f"  Python:    {self.python3}")
-        lines.append(f"  Root:      {'✅ 是' if self.is_root else '❌ 否（e2e 测试将跳过）'}")
-        lines.append(f"  strace:    {'✅ 可用' if self.has_strace else '❌ 未安装'}")
-        lines.append(f"  BTF:       {'✅ 支持' if self.has_btf else '❌ 不支持'}")
-        lines.append(f"  libbpf:    {'✅ 可用' if self.has_libbpf else '❌ 未安装'}")
-        lines.append(f"  eBPF:      {'✅ 完整可用' if self.has_ebpf else '⚠️  不可用（eBPF 测试将跳过）'}")
-        lines.append(f"  Web App:   {'✅ 运行中' if self.app_running else '❌ 未运行（web 测试将跳过）'}")
+        lines.append(f"  Root:      {ok + ' 是' if self.is_root else no + ' 否（e2e 测试将跳过）'}")
+        lines.append(f"  strace:    {ok + ' 可用' if self.has_strace else no + ' 未安装'}")
+        lines.append(f"  BTF:       {ok + ' 支持' if self.has_btf else no + ' 不支持'}")
+        lines.append(f"  libbpf:    {ok + ' 可用' if self.has_libbpf else no + ' 未安装'}")
+        lines.append(f"  eBPF:      {ok + ' 完整可用' if self.has_ebpf else warn + ' 不可用（eBPF 测试将跳过）'}")
+        lines.append(f"  Web App:   {ok + ' 运行中' if self.app_running else no + ' 未运行（web 测试将跳过）'}")
         return lines
 
 
@@ -202,8 +215,10 @@ def run_pytest(files: List[str], env: EnvCapabilities, extra_args: List[str] = N
 
     t0 = datetime.now()
     try:
+        # Windows 兼容: 显式指定 encoding='utf-8' 避免 GBK 解码错误
         result = subprocess.run(cmd, capture_output=True, text=True,
                                 cwd=OBSERVER_DIR, timeout=300,
+                                encoding='utf-8', errors='replace',
                                 env={**os.environ, "PYTHONUNBUFFERED": "1"})
         duration = (datetime.now() - t0).total_seconds()
         output = result.stdout + result.stderr
@@ -229,7 +244,7 @@ def run_pytest(files: List[str], env: EnvCapabilities, extra_args: List[str] = N
 
         if best_path:
             try:
-                with open(best_path) as jf:
+                with open(best_path, encoding='utf-8') as jf:
                     data = json.load(jf)
                 passed = data.get("passed", 0)
                 failed = data.get("failed", 0)
@@ -300,20 +315,21 @@ def run_scenario_tests(env: EnvCapabilities, scenario_filter: str = "") -> TestR
         try:
             result = subprocess.run(cmd, capture_output=True, text=True,
                                     cwd=OBSERVER_DIR, timeout=30,
+                                    encoding='utf-8', errors='replace',
                                     env={**os.environ, "PYTHONUNBUFFERED": "1"})
             if result.returncode == 0:
                 passed += 1
-                print(f"    ✅ {cat}/{sid}")
+                print(f"    [OK] {cat}/{sid}")
             else:
                 failed += 1
                 err_snippet = (result.stderr or result.stdout)[:100].strip()
-                print(f"    ❌ {cat}/{sid} — {err_snippet}")
+                print(f"    [NO] {cat}/{sid} -- {err_snippet}")
         except subprocess.TimeoutExpired:
             failed += 1
-            print(f"    ⏰ {cat}/{sid} — 超时")
+            print(f"    [TIMEOUT] {cat}/{sid} -- 超时")
         except Exception as e:
             failed += 1
-            print(f"    ❌ {cat}/{sid} — {e}")
+            print(f"    [NO] {cat}/{sid} -- {e}")
 
     duration = (datetime.now() - t0).total_seconds()
     return TestResult(category="scenario", passed=passed, failed=failed, duration_s=duration)
@@ -332,6 +348,7 @@ def run_e2e_tests(env: EnvCapabilities) -> TestResult:
     try:
         result = subprocess.run(["bash", script], capture_output=True, text=True,
                                 cwd=PROJECT_ROOT, timeout=600,
+                                encoding='utf-8', errors='replace',
                                 env={**os.environ, "PYTHONUNBUFFERED": "1"})
         duration = (datetime.now() - t0).total_seconds()
         output = result.stdout + result.stderr
@@ -365,7 +382,8 @@ def run_web_tests(env: EnvCapabilities) -> TestResult:
     for p in paths:
         try:
             result = subprocess.run([env.python3, p], capture_output=True, text=True,
-                                    cwd=OBSERVER_DIR, timeout=60)
+                                    cwd=OBSERVER_DIR, timeout=60,
+                                    encoding='utf-8', errors='replace')
             output = result.stdout + result.stderr
 
             # 优先从脚本的汇总行解析: "=== Results: N passed, M failed ==="
@@ -410,35 +428,35 @@ def write_report(results: List[TestResult]):
     # 文本报告
     lines = [
         f"{'=' * 70}",
-        f"  方寸观察者模拟学习系统 — 测试汇总报告",
+        f"  方寸观察者模拟学习系统 -- 测试汇总报告",
         f"  时间: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}",
         f"{'=' * 70}",
         "",
         f"  总计: {total_p + total_f + total_s} 项 | "
-        f"✅ 通过: {total_p} | ❌ 失败: {total_f} | ⏭️  跳过: {total_s} | ⚠️  错误: {total_e}",
+        f"[OK] 通过: {total_p} | [NO] 失败: {total_f} | [SKIP] 跳过: {total_s} | [ERR] 错误: {total_e}",
         "",
-        f"{'─' * 70}",
+        f"{'-' * 70}",
     ]
 
     for r in results:
         if r.error and r.skipped > 0:
-            status = "⏭️ "
-            lines.append(f"  {status} {r.category:20s} — {r.error}")
+            status = "[SKIP]"
+            lines.append(f"  {status} {r.category:20s} -- {r.error}")
         elif r.error:
-            status = "⚠️"
-            lines.append(f"  {status} {r.category:20s} — {r.error}")
+            status = "[!!]"
+            lines.append(f"  {status} {r.category:20s} -- {r.error}")
         else:
-            status = "✅" if r.failed == 0 else "❌"
+            status = "[OK]" if r.failed == 0 else "[NO]"
             dur = f"{r.duration_s:.1f}s" if r.duration_s else "-"
             lines.append(
                 f"  {status} {r.category:20s} | 通过: {r.passed:3d} | "
                 f"失败: {r.failed:3d} | 跳过: {r.skipped:3d} | {dur}")
 
-    lines.append(f"{'─' * 70}")
+    lines.append(f"{'-' * 70}")
     if total_f == 0 and total_e == 0:
-        lines.append("  🎉 全部通过！")
+        lines.append("  [PASS] 全部通过！")
     elif total_f > 0:
-        lines.append(f"  ⚠️  有 {total_f} 项失败，请检查上方详情。")
+        lines.append(f"  [!!] 有 {total_f} 项失败，请检查上方详情。")
     lines.append("")
 
     report_text = "\n".join(lines)
@@ -474,27 +492,27 @@ def write_report(results: List[TestResult]):
 def interactive_menu(env: EnvCapabilities, categories: List[TestCategory]):
     """交互式菜单选择"""
     print()
-    print("╔══════════════════════════════════════════════════════════╗")
-    print("║   方寸观察者模拟学习系统 — 统一测试入口                  ║")
-    print("╠══════════════════════════════════════════════════════════╣")
-    print("║                                                          ║")
-    print("║  环境能力:                                               ║")
+    print("+==========================================================+")
+    print("|   方寸观察者模拟学习系统 -- 统一测试入口                  |")
+    print("+==========================================================+")
+    print("|                                                          |")
+    print("|  环境能力:                                               |")
     for line in env.summary():
-        print(f"║    {line:<54s} ║")
-    print("║                                                          ║")
-    print("╠══════════════════════════════════════════════════════════╣")
-    print("║                                                          ║")
-    print("║  [1] 单元测试        — 核心模块独立验证                   ║")
-    print("║  [2] 采集器测试      — simulation/strace/ebpf/replay      ║")
-    print("║  [3] 集成测试        — 多模块协作 Pipeline 验证           ║")
-    print("║  [4] 场景测试        — 37 个 YAML 场景回放 (simulation)   ║")
-    print("║  [5] 端到端测试      — 真实 strace/eBPF (需 root)         ║")
-    print("║  [6] Web API 测试    — API + SSE 验证 (需启动 app.py)     ║")
-    print("║  [7] 全部运行        — 自动跳过不可用项                   ║")
-    print("║  [8] 环境检测        — 仅显示环境能力                     ║")
-    print("║  [0] 退出                                                  ║")
-    print("║                                                          ║")
-    print("╚══════════════════════════════════════════════════════════╝")
+        print(f"|    {line:<54s} |")
+    print("|                                                          |")
+    print("+----------------------------------------------------------+")
+    print("|                                                          |")
+    print("|  [1] 单元测试        -- 核心模块独立验证                   |")
+    print("|  [2] 采集器测试      -- simulation/strace/ebpf/replay      |")
+    print("|  [3] 集成测试        -- 多模块协作 Pipeline 验证           |")
+    print("|  [4] 场景测试        -- 37 个 YAML 场景回放 (simulation)   |")
+    print("|  [5] 端到端测试      -- 真实 strace/eBPF (需 root)         |")
+    print("|  [6] Web API 测试    -- API + SSE 验证 (需启动 app.py)     |")
+    print("|  [7] 全部运行        -- 自动跳过不可用项                   |")
+    print("|  [8] 环境检测        -- 仅显示环境能力                     |")
+    print("|  [0] 退出                                                  |")
+    print("|                                                          |")
+    print("+----------------------------------------------------------+")
     print()
 
     choice = input("请选择 [0-8]: ").strip()
@@ -517,21 +535,21 @@ def run_selected(names: List[str], env: EnvCapabilities, categories: List[TestCa
         if not cat:
             continue
 
-        print(f"\n{'─' * 60}")
-        print(f"  ▶ {cat.label} — {cat.description}")
-        print(f"{'─' * 60}")
+        print(f"\n{'-' * 60}")
+        print(f"  [SKIP] {cat.label} -- {cat.description}")
+        print(f"{'-' * 60}")
 
         # 检查前置条件
         if cat.requires_root and not env.is_root:
-            print(f"  ⏭️  跳过: 需要 root 权限")
+            print(f"  [SKIP] 跳过: 需要 root 权限")
             results.append(TestResult(category=cat.label, skipped=1, error="需要 root 权限"))
             continue
         if cat.requires_ebpf and not env.has_ebpf:
-            print(f"  ⏭️  跳过: 需要 eBPF 支持")
+            print(f"  [SKIP] 跳过: 需要 eBPF 支持")
             results.append(TestResult(category=cat.label, skipped=1, error="需要 eBPF 支持"))
             continue
         if cat.requires_web and not env.app_running:
-            print(f"  ⏭️  跳过: 需要先启动 app.py")
+            print(f"  [SKIP] 跳过: 需要先启动 app.py")
             results.append(TestResult(category=cat.label, skipped=1, error="app.py 未运行"))
             continue
 
@@ -574,7 +592,7 @@ def list_tests(env: EnvCapabilities, categories: List[TestCategory]):
             available = False
             skip_reason = " (需 eBPF)"
 
-        status = "✅ 可用" if available else f"⏭️  跳过{skip_reason}"
+        status = "[OK] 可用" if available else f"[SKIP] 跳过{skip_reason}"
         print(f"\n  [{cat.name:12s}] {cat.label} — {status}")
         print(f"    {cat.description}")
 
