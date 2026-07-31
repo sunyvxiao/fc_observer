@@ -1,0 +1,9 @@
+# test_data/whitebox/normal_dev.jsonl
+# 场景：开发者日常操作（编译、测试、提交）
+# 预期：正常行为，低风险评分
+# 数据格式：JSONL
+{"event_type": "exec", "pid": 10001, "ppid": 10000, "executable": "/usr/bin/gcc", "arguments": ["gcc", "-o", "main", "main.c"], "timestamp_ns": 1718092800000000000, "agent_id": "dev-agent", "agent_framework": "file_replay"}
+{"event_type": "file_open", "pid": 10001, "ppid": 10000, "file_path": "/home/dev/project/main.c", "file_op": "read", "timestamp_ns": 1718092800100000000, "agent_id": "dev-agent", "agent_framework": "file_replay"}
+{"event_type": "file_open", "pid": 10001, "ppid": 10000, "file_path": "/home/dev/project/main", "file_op": "write", "timestamp_ns": 1718092800200000000, "agent_id": "dev-agent", "agent_framework": "file_replay"}
+{"event_type": "exec", "pid": 10002, "ppid": 10000, "executable": "/usr/bin/git", "arguments": ["git", "commit", "-m", "fix bug"], "timestamp_ns": 1718092800300000000, "agent_id": "dev-agent", "agent_framework": "file_replay"}
+{"event_type": "net_conn", "pid": 10002, "ppid": 10000, "remote_addr": "140.82.121.4", "remote_port": 443, "protocol": "TCP", "timestamp_ns": 1718092800400000000, "agent_id": "dev-agent", "agent_framework": "file_replay"}

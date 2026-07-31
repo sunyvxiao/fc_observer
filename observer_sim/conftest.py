@@ -25,9 +25,16 @@ def _get_unit_test_dir() -> str:
 
 
 def _clear_unit_test_dir(unit_test_dir: str):
-    """清空 unit_test 目录中的旧结果"""
+    """清空 unit_test 目录中的旧结果（兼容 sudo 遗留的 root 权限文件）"""
     if os.path.exists(unit_test_dir):
-        shutil.rmtree(unit_test_dir)
+        def _on_error(func, path, exc_info):
+            """权限不足时尝试 chmod 后重试"""
+            try:
+                os.chmod(path, 0o777)
+                func(path)
+            except PermissionError:
+                pass  # 非 root 无法删除 root 文件，跳过
+        shutil.rmtree(unit_test_dir, onerror=_on_error)
     os.makedirs(unit_test_dir, exist_ok=True)
 
 
@@ -53,8 +60,6 @@ class UnitTestReportWriter:
         import json
         from datetime import datetime
 
-        # 写入测试结果 JSON
-        results_path = os.path.join(self._dir, "test_results.json")
         summary = {
             "session_time": datetime.now().isoformat(),
             "total": len(set(r["nodeid"] for r in self._results if r["when"] == "call")),
@@ -63,11 +68,23 @@ class UnitTestReportWriter:
             "skipped": sum(1 for r in self._results if r["when"] == "call" and r["outcome"] == "skipped"),
             "details": self._results,
         }
-        with open(results_path, "w", encoding="utf-8") as f:
-            json.dump(summary, f, ensure_ascii=False, indent=2)
+
+        # 写入测试结果 JSON
+        results_path = os.path.join(self._dir, "test_results.json")
+        try:
+            with open(results_path, "w", encoding="utf-8") as f:
+                json.dump(summary, f, ensure_ascii=False, indent=2)
+        except PermissionError:
+            # 目录可能由 root 创建，尝试临时目录
+            import tempfile
+            fallback = os.path.join(tempfile.gettempdir(), "observer_unit_test")
+            os.makedirs(fallback, exist_ok=True)
+            results_path = os.path.join(fallback, "test_results.json")
+            with open(results_path, "w", encoding="utf-8") as f:
+                json.dump(summary, f, ensure_ascii=False, indent=2)
 
         # 写入可读的文本摘要
-        txt_path = os.path.join(self._dir, "test_output.txt")
+        txt_path = results_path.replace(".json", ".txt")
         lines = [
             f"pytest 运行结果 — {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}",
             f"通过: {summary['passed']}  失败: {summary['failed']}  跳过: {summary['skipped']}",

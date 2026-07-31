@@ -40,11 +40,30 @@ def _load_libbpf():
     global _libbpf
     if _libbpf is not None:
         return _libbpf
-    try:
-        _libbpf = ctypes.CDLL("libbpf.so")
-    except OSError as e:
-        raise ImportError(f"无法加载 libbpf.so: {e}")
-    return _libbpf
+    # 按优先级尝试多个路径
+    search_paths = [
+        "libbpf.so",               # 系统默认（ldconfig）
+        "/usr/local/lib/libbpf.so",  # 手动编译安装
+        "libbpf.so.1",             # 带版本号
+    ]
+    for path in search_paths:
+        try:
+            _libbpf = ctypes.CDLL(path)
+            logger.info(f"libbpf 加载成功: {path}")
+            # 尝试获取版本信息
+            try:
+                _libbpf.libbpf_version_string.restype = ctypes.c_char_p
+                ver = _libbpf.libbpf_version_string()
+                if ver:
+                    logger.info(f"libbpf 版本: {ver.decode()}")
+            except (AttributeError, Exception):
+                pass
+            return _libbpf
+        except OSError:
+            continue
+    raise ImportError(
+        f"无法加载 libbpf.so，已尝试路径: {search_paths}。"
+        "请确认已安装 libbpf-dev 或手动编译 libbpf >= 1.4")
 
 
 # libbpf 函数签名定义
@@ -88,14 +107,42 @@ def _setup_libbpf_signatures(lib):
 
     # struct perf_buffer *perf_buffer__new(
     #     int map_fd, size_t page_cnt,
-    #     const struct perf_buffer_raw_opts *opts)
-    # 简化: 使用 perf_buffer__new_raw
-    lib.perf_buffer__new_raw.argtypes = [
-        ctypes.c_int,   # map_fd
-        ctypes.c_size_t,  # page_cnt
-        ctypes.c_void_p,  # opts (perf_buffer_raw_opts *)
+    #     perf_buffer_sample_fn sample_cb,
+    #     perf_buffer_lost_fn lost_cb,
+    #     void *ctx,
+    #     const struct perf_buffer_opts *opts)
+    lib.perf_buffer__new.argtypes = [
+        ctypes.c_int,       # map_fd
+        ctypes.c_size_t,    # page_cnt
+        ctypes.c_void_p,    # sample_cb (function pointer)
+        ctypes.c_void_p,    # lost_cb (function pointer)
+        ctypes.c_void_p,    # ctx
+        ctypes.c_void_p,    # opts (NULL ok)
     ]
-    lib.perf_buffer__new_raw.restype = ctypes.c_void_p
+    lib.perf_buffer__new.restype = ctypes.c_void_p
+
+    # 备用: perf_buffer__new_raw (某些旧版本)
+    try:
+        lib.perf_buffer__new_raw.argtypes = [
+            ctypes.c_int, ctypes.c_size_t, ctypes.c_void_p]
+        lib.perf_buffer__new_raw.restype = ctypes.c_void_p
+    except AttributeError:
+        pass
+
+    # int libbpf_get_error(void *ptr) — 用于获取 libbpf 内部 errno
+    try:
+        lib.libbpf_get_error.argtypes = [ctypes.c_void_p]
+        lib.libbpf_get_error.restype = ctypes.c_int
+    except AttributeError:
+        pass
+
+    # int libbpf_strerror(int err, char *buf, size_t size)
+    try:
+        lib.libbpf_strerror.argtypes = [
+            ctypes.c_int, ctypes.c_char_p, ctypes.c_size_t]
+        lib.libbpf_strerror.restype = ctypes.c_int
+    except AttributeError:
+        pass
 
     # int perf_buffer__poll(struct perf_buffer *pb, int timeout_ms)
     lib.perf_buffer__poll.argtypes = [ctypes.c_void_p, ctypes.c_int]
@@ -230,6 +277,15 @@ class EbpfCollector(ICollector):
             time_source="realtime_monotonic",
         )
 
+    def _libbpf_strerror(self, err: int) -> str:
+        """将 libbpf 错误码转换为可读字符串"""
+        buf = ctypes.create_string_buffer(256)
+        try:
+            self._lib.libbpf_strerror(err, buf, 256)
+            return buf.value.decode("utf-8", errors="replace")
+        except Exception:
+            return f"errno={err}"
+
     def attach(self, target_pid: int = 0, agent_id: str = "") -> bool:
         """
         加载 eBPF 程序并挂载到 tracepoint。
@@ -245,6 +301,10 @@ class EbpfCollector(ICollector):
         if agent_id:
             self.target_agent_id = agent_id
 
+        logger.info(f"[诊断] bpf_object_path = {os.path.abspath(self.bpf_object_path)}")
+        logger.info(f"[诊断] 文件存在: {os.path.isfile(self.bpf_object_path)}")
+        logger.info(f"[诊断] 文件大小: {os.path.getsize(self.bpf_object_path) if os.path.isfile(self.bpf_object_path) else 'N/A'} bytes")
+
         # 检查 .bpf.o 文件是否存在
         if not os.path.isfile(self.bpf_object_path):
             logger.error(f"eBPF 字节码文件不存在: {self.bpf_object_path}")
@@ -252,18 +312,23 @@ class EbpfCollector(ICollector):
 
         try:
             # 1. 打开 eBPF 对象
-            self._bpf_object = self._lib.bpf_object__open(
-                self.bpf_object_path.encode("utf-8"))
+            bpf_path_bytes = self.bpf_object_path.encode("utf-8")
+            logger.info(f"[诊断] 调用 bpf_object__open(\"{self.bpf_object_path}\")")
+            self._bpf_object = self._lib.bpf_object__open(bpf_path_bytes)
             if not self._bpf_object:
-                logger.error("bpf_object__open 失败")
+                logger.error(f"[诊断] bpf_object__open 返回 NULL (0x0)")
                 return False
+            logger.info(f"[诊断] bpf_object__open 成功: ptr=0x{self._bpf_object:x}")
 
             # 2. 加载 eBPF 程序到内核
+            logger.info("[诊断] 调用 bpf_object__load ...")
             ret = self._lib.bpf_object__load(self._bpf_object)
             if ret != 0:
-                logger.error(f"bpf_object__load 失败，返回值: {ret}")
+                err_str = self._libbpf_strerror(ret)
+                logger.error(f"[诊断] bpf_object__load 失败: ret={ret}, {err_str}")
                 self._cleanup()
                 return False
+            logger.info("[诊断] bpf_object__load 成功 (ret=0)")
 
             # 3. 挂载三个 tracepoint 探针
             probe_names = [
@@ -276,33 +341,39 @@ class EbpfCollector(ICollector):
                 prog = self._lib.bpf_object__find_program_by_name(
                     self._bpf_object, name)
                 if not prog:
-                    logger.error(f"找不到探针程序: {name.decode()}")
+                    logger.error(f"[诊断] bpf_object__find_program_by_name(\"{name.decode()}\") 返回 NULL")
                     self._cleanup()
                     return False
 
+                fd = self._lib.bpf_program__fd(prog)
+                logger.info(f"[诊断] 探针 {name.decode()}: prog=0x{prog:x}, fd={fd}")
+
                 link = self._lib.bpf_program__attach(prog)
                 if not link:
-                    logger.error(f"挂载探针失败: {name.decode()}")
+                    logger.error(f"[诊断] bpf_program__attach(\"{name.decode()}\") 返回 NULL")
                     self._cleanup()
                     return False
 
                 self._links.append(link)
-                logger.info(f"探针已挂载: {name.decode()}")
+                logger.info(f"[诊断] 探针已挂载: {name.decode()} (link=0x{link:x})")
 
             # 4. 设置 perf ring buffer
+            logger.info("[诊断] 调用 bpf_object__find_map_fd_by_name(\"events\")")
             events_map_fd = self._lib.bpf_object__find_map_fd_by_name(
                 self._bpf_object, b"events")
+            logger.info(f"[诊断] events map fd = {events_map_fd}")
             if events_map_fd < 0:
-                logger.error("找不到 events map")
+                logger.error(f"[诊断] events map 查找失败: fd={events_map_fd}")
                 self._cleanup()
                 return False
 
-            # 创建 perf buffer（使用简化的回调）
+            # 创建 perf buffer
             self._perf_buffer = self._setup_perf_buffer(events_map_fd)
             if not self._perf_buffer:
-                logger.error("perf buffer 创建失败")
+                logger.error("[诊断] perf buffer 创建失败 (返回 NULL/0)")
                 self._cleanup()
                 return False
+            logger.info(f"[诊断] perf_buffer 创建成功: ptr=0x{self._perf_buffer:x}")
 
             self._attached = True
             self._running = True
@@ -320,7 +391,9 @@ class EbpfCollector(ICollector):
             return True
 
         except Exception as e:
-            logger.error(f"EbpfCollector attach 异常: {e}")
+            logger.error(f"[诊断] EbpfCollector attach 异常: {type(e).__name__}: {e}")
+            import traceback
+            logger.error(traceback.format_exc())
             self._cleanup()
             return False
 
@@ -328,11 +401,14 @@ class EbpfCollector(ICollector):
         """
         创建 perf ring buffer。
 
-        使用 ctypes 回调函数接收事件数据。
+        使用 perf_buffer__new API（libbpf >= 0.8）直接传入回调函数。
         """
         # 定义回调类型
+        # typedef void (*perf_buffer_sample_fn)(void *ctx, int cpu,
+        #                                      void *data, __u32 size);
         SAMPLE_CB = ctypes.CFUNCTYPE(
-            None, ctypes.c_void_p, ctypes.c_int, ctypes.c_void_p, ctypes.c_int)
+            None, ctypes.c_void_p, ctypes.c_int, ctypes.c_void_p, ctypes.c_uint32)
+        # typedef void (*perf_buffer_lost_fn)(void *ctx, int cpu, __u64 cnt);
         LOST_CB = ctypes.CFUNCTYPE(
             None, ctypes.c_void_p, ctypes.c_int, ctypes.c_uint64)
 
@@ -350,22 +426,39 @@ class EbpfCollector(ICollector):
             """perf buffer 事件丢失回调"""
             logger.warning(f"CPU {cpu}: 丢失 {lost_cnt} 个事件")
 
-        # 保存回调引用防止被 GC 回收
+        # 保存回调引用防止被 GC 回收（关键！）
         self._sample_cb = SAMPLE_CB(sample_callback)
         self._lost_cb = LOST_CB(lost_callback)
 
-        # perf_buffer_raw_opts 结构体（简化）
-        # 在实际使用中需要正确填充，这里使用 NULL opts
-        # 注意: 某些 libbpf 版本可能需要不同的 API
+        logger.info(f"[诊断] perf_buffer__new: map_fd={map_fd}, "
+                     f"page_cnt={self.perf_buffer_pages}, "
+                     f"sample_cb=0x{ctypes.cast(self._sample_cb, ctypes.c_void_p).value:x}, "
+                     f"lost_cb=0x{ctypes.cast(self._lost_cb, ctypes.c_void_p).value:x}")
+
         try:
-            pb = self._lib.perf_buffer__new_raw(
+            # 优先使用 perf_buffer__new（libbpf >= 0.8）
+            pb = self._lib.perf_buffer__new(
                 map_fd,
                 self.perf_buffer_pages,
-                None  # opts (简化处理)
+                self._sample_cb,   # sample_cb
+                self._lost_cb,     # lost_cb
+                None,              # ctx
+                None               # opts (NULL = 默认)
             )
+            logger.info(f"[诊断] perf_buffer__new 返回: {pb:#x}" if pb else "[诊断] perf_buffer__new 返回 NULL")
             return pb
+        except AttributeError:
+            # perf_buffer__new 不存在，尝试旧版 perf_buffer__new_raw
+            logger.warning("[诊断] perf_buffer__new 不可用，尝试 perf_buffer__new_raw")
+            try:
+                pb = self._lib.perf_buffer__new_raw(
+                    map_fd, self.perf_buffer_pages, None)
+                return pb
+            except Exception as e2:
+                logger.error(f"[诊断] perf_buffer__new_raw 也失败: {e2}")
+                return None
         except Exception as e:
-            logger.error(f"perf_buffer__new_raw 失败: {e}")
+            logger.error(f"[诊断] perf_buffer__new 异常: {type(e).__name__}: {e}")
             return None
 
     def _poll_loop(self):

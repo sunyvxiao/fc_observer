@@ -1,0 +1,4 @@
+event_type,pid,ppid,executable,arguments,file_path,file_op,remote_addr,remote_port,protocol,timestamp_ns,agent_id,agent_framework
+exec,30001,30000,/usr/bin/python3,"python3,script.py",,,,1718092800000000000,test-agent,file_replay
+file_open,30001,30000,,,/etc/passwd,read,,,,1718092800100000000,test-agent,file_replay
+net_conn,30001,30000,,,,,8.8.8.8,53,TCP,1718092800200000000,test-agent,file_replay

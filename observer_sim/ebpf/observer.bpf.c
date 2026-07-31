@@ -134,26 +134,28 @@ int tracepoint__syscalls__sys_enter_execve(struct trace_event_raw_sys_enter *ctx
     const char *filename = (const char *)ctx->args[0];
     bpf_probe_read_user_str(e->exec.filename, sizeof(e->exec.filename), filename);
 
-    /* argv: 拼接为 \0 分隔的字符串，最多 20 个参数 */
+    /* argv: 拼接为 \0 分隔的字符串，最多 15 个参数
+     * 每参数最多读 24 字节，总量不超 ARGV_MAX。
+     * 不使用 #pragma unroll，避免验证器在多迭代后丢失范围追踪。
+     */
     const char *const *argv = (const char *const *)ctx->args[1];
     __u32 argv_offset = 0;
 
-    #pragma unroll
-    for (int i = 0; i < 20; i++) {
+    for (int i = 0; i < 15; i++) {
         const char *argp = NULL;
         bpf_probe_read_user(&argp, sizeof(argp), &argv[i]);
         if (!argp)
             break;
-        if (argv_offset < ARGV_MAX - 1) {
-            long len = bpf_probe_read_user_str(
-                &e->exec.argv[argv_offset],
-                ARGV_MAX - argv_offset,
-                argp);
-            if (len > 0)
-                argv_offset += len;
-            else
-                break;
-        }
+        if (argv_offset >= ARGV_MAX - 24)
+            break;
+        long len = bpf_probe_read_user_str(
+            &e->exec.argv[argv_offset],
+            24,
+            argp);
+        if (len > 0)
+            argv_offset += len;
+        else
+            break;
     }
 
     bpf_perf_event_output(ctx, &events, BPF_F_CURRENT_CPU, e, sizeof(*e));

@@ -5,7 +5,7 @@
 # 运行模式 (新增)
 # ============================================================
 mode: "auto"
-# 可选值: "auto" | "simulation" | "strace" | "ebpf"
+# 可选值: "auto" | "simulation" | "strace" | "ebpf" | "file_replay"
 
 # ============================================================
 # 管道配置 (新增，统一跨平台管道配置)
@@ -44,6 +44,15 @@ strace:
   strace_bin: "/usr/bin/strace"
   trace_syscalls: "execve,openat,connect,unlink,sendto"
   target_pid: null
+
+# ============================================================
+# 文件回放采集模式配置 (新增，白盒测试 / 外部数据接入)
+# ============================================================
+file_replay:
+  data_file: "test_data/whitebox/malicious_curl.jsonl"   # 默认回放文件（JSONL / CSV）
+  loop: false                      # 是否循环回放
+  time_scale: 1.0                  # 时间缩放因子（1.0 = 原始速度）
+  target_agent_id: "replay-agent"  # 默认 agent 标识
 
 # ============================================================
 # 以下为现有配置段，全部保留不做修改

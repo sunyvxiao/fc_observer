@@ -53,6 +53,7 @@ from observer_core.audit.audit_logger import AuditLogger
 from observer_core.audit.report_exporter import ReportExporter
 from observer_core.audit.output_path_manager import RunOutputManager, infer_category
 from collector.simulation_collector import SimulationCollector
+from adapter.platform_detect import detect_and_create_collector
 
 
 # ── ANSI 颜色码 ──────────────────────────────────────────────
@@ -110,7 +111,8 @@ def print_header(title: str):
 
 def print_event_header(event_num, total, event_type, description):
     print()
-    print(C(f"\u2500\u2500 \u4e8b\u4ef6 [{event_num}/{total}] {'\u2500' * 40}", Colors.BLUE + Colors.BOLD))
+    sep = '\u2500' * 40
+    print(C(f"\u2500\u2500 \u4e8b\u4ef6 [{event_num}/{total}] {sep}", Colors.BLUE + Colors.BOLD))
     print(C(f">> [\u8f93\u5165] {event_type}: {description}", Colors.WHITE))
 
 def print_pipeline_step(icon, label, content, color=Colors.WHITE):
@@ -140,17 +142,33 @@ class ScenarioRunner:
         'extreme': ('E', '极端场景', Colors.CYAN),
     }
 
-    def __init__(self, auto_mode=False, silent=False):
+    def __init__(self, auto_mode=False, silent=False, mode=None):
         self.auto_mode = auto_mode
         self.silent = silent
         self.base_dir = os.path.dirname(os.path.abspath(__file__))
         self.output_dir = os.path.join(self.base_dir, 'output')
-        # 统一架构: 使用 SimulationCollector 替代直接创建 VirtualClock
-        self.collector = SimulationCollector({
-            "virtual_clock": {"start_ns": 1718092800000000000}
-        })
-        self.clock = self.collector.clock  # 共享时钟引用
+        # 统一架构: 通过 --mode 参数创建对应 Collector
+        config = self._load_config()
+        if mode and mode != "simulation":
+            # 非模拟模式: 使用工厂函数创建对应采集器
+            try:
+                self.collector = detect_and_create_collector(config, mode_override=mode)
+                self.clock = (self.collector.clock
+                              if hasattr(self.collector, 'clock')
+                              else VirtualClock(start_ns=config.get(
+                                  'virtual_clock', {}).get('start_ns',
+                                  1718092800000000000)))
+            except RuntimeError as e:
+                if not self.silent:
+                    print(C(f"模式 '{mode}' 不可用: {e}，降级为 simulation", Colors.YELLOW))
+                self.collector = SimulationCollector(config)
+                self.clock = self.collector.clock
+        else:
+            # 模拟模式 (默认)
+            self.collector = SimulationCollector(config)
+            self.clock = self.collector.clock
         self.normalizer = EventNormalizer(clock=self.clock, window_size=10)
+        self._mode_name = self.collector.capabilities().name if hasattr(self.collector, 'capabilities') else "Simulation"
         self.engine = RuleEngine()
         self.engine.load_rules(os.path.join(self.base_dir, 'rules', 'default_policy.yaml'))
         self.baseline = BaselineChecker(min_warm_events=5)
@@ -166,6 +184,14 @@ class ScenarioRunner:
         self.report_exporter = ReportExporter(output_dir=self.output_dir)
         self._run_mgr: Optional[RunOutputManager] = None
         self.stats = self._empty_stats()
+
+    def _load_config(self):
+        """加载 config.yaml"""
+        config_path = os.path.join(self.base_dir, 'config.yaml')
+        if os.path.exists(config_path):
+            with open(config_path, 'r', encoding='utf-8') as f:
+                return yaml.safe_load(f)
+        return {"virtual_clock": {"start_ns": 1718092800000000000}}
 
     def _empty_stats(self):
         return {
@@ -326,9 +352,15 @@ class ScenarioRunner:
             print()
         events = scenario['event_sequence']
         total = len(events)
-        # 统一架构: 使用 Collector 提供事件
-        self.collector.load_scenario(scenario_file)
-        raw_events = list(self.collector.start())
+        # 统一架构: 场景回放始终使用 SimulationCollector
+        # 当 --mode 为 strace/ebpf 时，collector 不支持 load_scenario，
+        # 因此创建临时 SimulationCollector 用于场景事件生成
+        if hasattr(self.collector, 'load_scenario'):
+            scenario_collector = self.collector
+        else:
+            scenario_collector = SimulationCollector(self._load_config())
+        scenario_collector.load_scenario(scenario_file)
+        raw_events = list(scenario_collector.start())
         for i, raw in enumerate(raw_events, 1):
             self.run_event(raw, i, total)
         self.audit_logger.close()
@@ -906,14 +938,19 @@ def main():
     parser = argparse.ArgumentParser(description='\u65b9\u5bf8\u89c2\u5bdf\u8005\u6a21\u62df\u5b66\u4e60\u7cfb\u7edf - \u4ea4\u4e92\u5f0f\u6f14\u793a')
     parser.add_argument('--auto', action='store_true', help='\u81ea\u52a8\u64ad\u653e\u6a21\u5f0f\uff08\u4e0d\u6682\u505c\uff09')
     parser.add_argument('--scenario', type=str, help='\u6307\u5b9a\u573a\u666fID\uff08\u5982 n01, a01\uff09\u6216\u6587\u4ef6\u540d')
-    parser.add_argument('--category', type=str, help='\u6309\u5206\u7c7b\u8fd0\u884c (normal/anomalous/boundary/multi_agent/extreme)')
+    parser.add_argument('--category', type=str, help='按分类运行 (normal/anomalous/boundary/multi_agent/extreme)')
+    parser.add_argument('--mode', type=str, default=None,
+                        choices=['auto', 'simulation', 'strace', 'ebpf'],
+                        help='采集模式 (默认从 config.yaml 读取)')
     args = parser.parse_args()
 
     base_dir = os.path.dirname(os.path.abspath(__file__))
 
     # 命令行参数兼容
     if args.scenario:
-        runner = ScenarioRunner(auto_mode=args.auto)
+        runner = ScenarioRunner(auto_mode=args.auto, mode=args.mode)
+        if not runner.silent:
+            print(C(f"采集模式: {runner._mode_name}", Colors.DIM))
         all_files = _discover_all_scenarios(base_dir)
         matched = [f for f in all_files if args.scenario.lower() in os.path.basename(f).lower()]
         if not matched:
@@ -923,7 +960,7 @@ def main():
             runner.run_scenario(sf)
         return
     if args.category:
-        runner = ScenarioRunner(auto_mode=args.auto)
+        runner = ScenarioRunner(auto_mode=args.auto, mode=args.mode)
         files = _discover_category(base_dir, args.category.lower())
         if not files:
             print(C(f"\u672a\u627e\u5230\u5206\u7c7b: {args.category}", Colors.RED))
@@ -932,7 +969,9 @@ def main():
             runner.run_scenario(sf)
         return
     if args.auto:
-        runner = ScenarioRunner(auto_mode=True)
+        runner = ScenarioRunner(auto_mode=True, mode=args.mode)
+        if not runner.silent:
+            print(C(f"采集模式: {runner._mode_name}", Colors.DIM))
         for sf in _discover_all_scenarios(base_dir):
             runner.run_scenario(sf)
         return

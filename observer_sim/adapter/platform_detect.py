@@ -124,6 +124,13 @@ def detect_and_create_collector(config: dict, mode_override: str = None):
         except ImportError:
             raise RuntimeError("strace 采集器未实现")
 
+    elif mode == "file_replay":
+        try:
+            from collector.file_replay_collector import FileReplayCollector
+            return FileReplayCollector(config)
+        except ImportError:
+            raise RuntimeError("文件回放采集器未实现")
+
     else:  # auto
         if sys.platform == "win32":
             logger.info("检测到 Windows 平台，启用模拟模式")

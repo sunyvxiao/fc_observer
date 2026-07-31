@@ -6,6 +6,7 @@ collector/ — 采集层
 - simulation_collector:   模拟采集器（场景 YAML → RawEvent）
 - ebpf_collector:         eBPF 采集器（Linux，Phase 3 实现）
 - strace_collector:       strace 采集器（Linux 降级，Phase 3 实现）
+- file_replay_collector:  文件回放采集器（白盒测试 / 外部数据接入，Phase 5 实现）
 """
 
 from collector.base_collector import ICollector, CollectorCapabilities

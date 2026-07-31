@@ -36,27 +36,25 @@ except Exception as e:
     sys.exit(1)
 
 def read_sse_events(resp, timeout=30):
-    """Read SSE events from response until done/error or timeout"""
+    """Read SSE events from response until done/error or timeout.
+    Uses readline() instead of read(N) to avoid blocking on small payloads."""
     import time
     events = []
-    buf = b""
     deadline = time.time() + timeout
     while time.time() < deadline:
         try:
-            chunk = resp.read(4096)
-            if not chunk:
+            line = resp.readline()
+            if not line or line == b"":
                 break
-            buf += chunk
-            while b"\n\n" in buf:
-                event_text, buf = buf.split(b"\n\n", 1)
-                for line in event_text.decode("utf-8", errors="replace").split("\n"):
-                    if line.startswith("data: "):
-                        try:
-                            events.append(json.loads(line[6:]))
-                        except json.JSONDecodeError:
-                            pass
-                if events and events[-1].get("type") in ("done", "error"):
-                    return events
+            decoded = line.decode("utf-8", errors="replace").strip()
+            if decoded.startswith("data: "):
+                try:
+                    evt = json.loads(decoded[6:])
+                    events.append(evt)
+                    if evt.get("type") in ("done", "error"):
+                        return events
+                except json.JSONDecodeError:
+                    pass
         except Exception:
             break
     return events

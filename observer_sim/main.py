@@ -309,7 +309,8 @@ def main():
 
         # 绑定 Collector 到当前场景（统一架构，复用同一实例）
         collector.attach(agent_id=scenario_id)
-        collector.load_scenario(scenario_path)
+        if hasattr(collector, 'load_scenario'):
+            collector.load_scenario(scenario_path)
 
         # 初始化/重置核心组件（使用 collector 的时钟）
         clock = collector.clock if hasattr(collector, 'clock') else VirtualClock()
@@ -352,14 +353,18 @@ def main():
         audit_logger.close()
 
         # 导出报告 → run_dir
-        report_path = report_exporter.export_scenario_report(
-            scenario_id=scenario_id,
-            scenario_name=scenario["name"],
-            audit_logger=audit_logger,
-            behavior_graph=behavior_graph,
-            scenario_description=scenario.get("description", ""),
-            expected_result=scenario.get("expected_result", ""),
-        )
+        try:
+            report_path = report_exporter.export_scenario_report(
+                scenario_id=scenario_id,
+                scenario_name=scenario["name"],
+                audit_logger=audit_logger,
+                behavior_graph=behavior_graph,
+                scenario_description=scenario.get("description", ""),
+                expected_result=scenario.get("expected_result", ""),
+            )
+        except Exception as e:
+            logger.warning(f"报告导出失败（可能是无事件数据）: {e}")
+            report_path = None
 
         # 保存行为图谱 → run_dir/graphs/
         graph_path = run_mgr.graph_filepath(f"graph_{scenario_id}.json")
