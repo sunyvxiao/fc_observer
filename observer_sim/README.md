@@ -16,7 +16,7 @@
 - **Python 业务逻辑层**：事件归一化、规则匹配、四维风险评分、三级梯度阻断、审计输出
 - **核心零改动**：`observer_core/`、`models/`、`scenarios/`、`rules/` 全程不变
 - **37 个测试场景**：覆盖正常/异常/边界/多Agent/极端 5 大分类
-- **295 个单元测试**：覆盖全部模块（130 原有 + 51 adapter/collector + 114 ebpf/strace/integration）
+- **367 个单元测试**：覆盖全部模块（130 原有 + 51 adapter/collector + 114 ebpf/strace/integration + 72 规则/报告优化）
 
 **技术栈**：Python 3.10+ / C++17 / CMake 3.15+ / eBPF (libbpf + clang) / strace
 **设计目标**：教学演示 > 生产性能，代码可读性优先，全链路透明可追踪
@@ -67,6 +67,15 @@
 | `SimulationCollector` | 通用 | 观测 + Tier2/3 模拟阻断 | VirtualClock (虚拟) |
 | `StraceCollector` | Linux | 仅观测（can_block = False） | time.time_ns() |
 | `EbpfCollector` | Linux | 仅观测（第一版，can_block = False） | bpf_ktime_get_ns() |
+| `FileReplayCollector` | 通用 | 录制文件回放（JSONL → RawEvent） | 录制时的时间戳 |
+| `DeepAgentCollector` | Linux | DeepAgent 框架集成采集 | time.time_ns() |
+
+### 录制-回放功能
+
+`event_recorder.py` 提供事件录制能力，`FileReplayCollector` 支持回放：
+- **录制**：任意 ICollector 输出可保存为 JSONL 录制文件，便于事后审计和外部数据接入
+- **回放**：`--mode file_replay --replay-file <PATH>` 从录制文件重放事件流
+- **用途**：跨环境测试数据迁移、外部测试数据导入、历史行为回溯分析
 
 ### 传统架构（保留兼容）
 
@@ -95,7 +104,7 @@
 ### 监测机制 (Phase 2)
 - **EventNormalizer**：进程树维护、Agent 上下文追踪、事件窗口管理
 - **RuleEngine**：YAML 策略加载、四类模式匹配（pattern/regex/exact/path_glob）
-- **15 条初始安全策略**：覆盖命令执行（6）、文件操作（5）、网络（4）三大类
+- **21 条安全策略规则（v2.0）**：覆盖命令执行（9）、文件操作（7）、网络（5）三大类
 
 ### 评判机制 (Phase 3)
 - **RiskScorer**：四维加权评分（规则命中 40% + 基线偏离 25% + 上下文 20% + 序列异常 15%）
@@ -106,7 +115,7 @@
 
 ### 阻断机制 (Phase 4)
 - **BlockingCoordinator**：三级路由 + CommandSender 反向管道联动
-- **AgentViolationTracker**：虚拟时钟滑动窗口违规升级（Tier1x3→Tier2, Tier2x2→Tier3）
+- **AgentViolationTracker**：虚拟时钟滑动窗口违规升级（Tier1x5→Tier2, Tier2x3→Tier3）
 - **三级处理器**：
   - Tier1 SoftReport：放行 + 告警 + allow 指令
   - Tier2 BlockAccess：阻止访问 + 返回 EPERM + block_event 指令
@@ -120,6 +129,35 @@
 
 ### 自优化接口预留 (Phase 6)
 - **ITraceStore / IPatternMiner / IStrategyGenerator**：为后续迭代预留的自进化接口
+
+### 风险评判规则体系 v2.0
+
+规则库已从 15 条初始规则升级到 **21 条安全策略规则（v2.0）**，分类统计：
+
+| 类别 | 规则数 | 规则 ID | 覆盖范围 |
+|------|:---:|------|------|
+| 命令执行（command） | 9 | R001, R002, R003, R004, R005, R016, R017, R018, R019 | 高危命令、权限提升、反弹Shell、持久化、痕迹清除 |
+| 文件操作（file） | 7 | R006, R007, R007b, R008, R009, R010, R011 | 敏感文件读写、凭据访问、关键系统文件保护 |
+| 网络（network） | 5 | R012, R013, R014, R015, R020 | 外部数据外传、可疑端口、恶意IP、非标准出站 |
+
+新增核心规则（6 条 v1.0→v2.0）：
+- **R007b**（block）：阻断凭据/密钥文件访问，优先级 100
+- **R016**（alert）：告警 shell 脚本执行
+- **R017**（alert）：告警 crontab/systemctl 持久化操作
+- **R018**（alert）：告警 history -c/shred 等痕迹清除
+- **R019**（alert）：告警读取 .sql/.dump/.bak 大数据文件
+- **R020**（alert）：告警非标准出站端口（RDP/Redis/MongoDB）
+
+规则配置文件：`rules/default_policy.yaml`（规则定义）、`rules/judgment_pipeline.yaml`（研判阈值与升级规则）、`rules/scoring_dimensions.yaml`（四维评分权重）。
+
+### 报告一致性规范
+
+所有报告模块（时间线、明细表、Agent 摘要、行为图谱）统一以 `BlockingResult` 为唯一数据源：
+- **阻断判定**：以 `blocking_result.blocked` 为准（含 ViolationTracker 升级后的结果）
+- **最终等级**：以 `blocking_result.tier` 为准（Tier1/Tier2/Tier3）
+- **阻断原因**：以 `blocking_result.reason` 为准
+
+四模块输出保证同一事件的状态标记一致，消除 Pre/Post-escalation 数据源不一致导致的自相矛盾。
 
 ---
 
@@ -149,6 +187,29 @@
 | pyyaml + pytest | 最新版 | Python 依赖 |
 
 > 详细环境搭建步骤请参考 [迁移方案.md](../杂项文档/迁移方案.md)（从虚拟机创建到完整工具链安装）。
+
+### API 密钥配置
+
+项目使用 `.env` 文件集中管理所有 API 密钥（LLM 密钥 + 演示场景密钥），脚本自动加载，无需修改任何代码：
+
+```bash
+# 1. 复制配置模板
+cp .env.example .env
+
+# 2. 编辑 .env 填入真实密钥（模拟模式可跳过，使用内置安全占位符）
+#    OPENAI_API_KEY=YOUR_KEY_HERE    # LLM API 密钥（live 模式必填）
+#    MARKET_DATA_API_KEY=...       # 演示场景密钥（可选）
+#    STRIPE_SECRET_KEY=...         # 演示场景密钥（可选）
+#    ...
+
+# 3. .env 已被 .gitignore 排除，不会被提交到 GitHub
+```
+
+**密钥加载机制**：
+- `setup_workspace.sh`：执行时 `source .env`，将密钥注入生成的配置文件
+- `run_agent.py`：启动时 `load_dotenv()` 自动读取
+- `deep_agent_monitor.py`：通过 `env_config.load_env_config()` 加载
+- 默认值均为安全占位符（全大写英文如 `STRIPE_PLACEHOLDER_KEY`），不会触发 GitHub 推送保护
 
 ### 快速环境检查
 
@@ -250,7 +311,7 @@ python demo.py
 │              方寸观察者模拟学习系统 — 主菜单               │
 ├──────────────────────────────────────────────────────────┤
 │  1. 运行全部单元测试                                      │
-│     调用 pytest 运行 130 个单元测试用例，显示结果摘要       │
+│     调用 pytest 运行 367 个单元测试用例，显示结果摘要       │
 │                                                          │
 │  2. 运行全量模拟环境测试                                   │
 │     静默运行 37 个场景，显示全局数据统计面板               │
@@ -316,13 +377,15 @@ python main.py --scenario a01 --output output
 ### 运行测试
 
 ```bash
-# 运行全部测试（130 个）
-python -m pytest -v
+# 运行全部测试（367 个）
+python -m pytest tests/ -v
 
 # 运行特定模块测试
 python -m pytest tests/test_blocking.py -v    # Phase 4 阻断机制
 python -m pytest tests/test_audit.py -v       # Phase 5 审计输出
 python -m pytest tests/test_integration.py -v # Phase 6 集成测试
+python -m pytest tests/test_adapter.py -v     # 平台适配层
+python -m pytest tests/test_collector_integration.py -v  # 采集层集成
 ```
 
 测试结果同时输出到 `output/unit_test/` 目录（`test_results.json` + `test_output.txt`），始终只保留最新一次。
@@ -444,7 +507,10 @@ observer_sim/
 │   ├── base_collector.py           # ICollector 抽象接口 + CollectorCapabilities 数据类
 │   ├── simulation_collector.py     # 模拟采集器（封装场景 YAML + VirtualClock）
 │   ├── ebpf_collector.py           # eBPF 采集器（libbpf ctypes + perf ring buffer）
-│   └── strace_collector.py         # strace 采集器（subprocess + 行解析）
+│   ├── strace_collector.py         # strace 采集器（subprocess + 行解析）
+│   ├── file_replay_collector.py    # 文件回放采集器（JSONL 录制文件回放）
+│   ├── deep_agent_collector.py     # DeepAgent 采集器（Agent 框架集成）
+│   └── event_recorder.py           # 事件录制器（ICollector 输出 → JSONL）
 │
 ├── ebpf/                           # eBPF 探针 [新增，仅 Linux]
 │   ├── observer.bpf.c              # eBPF 内核态 C 程序（3 个 tracepoint，仅观测）
@@ -462,8 +528,11 @@ observer_sim/
 │   ├── multi_agent/                # 多Agent协作 (M01-M05)
 │   └── extreme/                    # 极端场景 (E01-E04)
 │
-├── rules/                          # 安全策略规则库 [零改动]
-│   └── default_policy.yaml         # 15 条初始规则（命令6/文件5/网络4）
+├── rules/                          # 安全策略规则库（v2.0）
+│   ├── default_policy.yaml         # 21 条安全策略规则（命令9/文件7/网络5）
+│   ├── judgment_pipeline.yaml      # 研判流水线配置（评分阈值 + 升级规则 + 全局参数）
+│   ├── scoring_dimensions.yaml     # 四维评分权重与偏离分配置
+│   └── evolution_interface.yaml    # 自优化接口配置（预留）
 │
 ├── cpp_probe/                      # C++ 探针模拟层（保留兼容）
 │   ├── CMakeLists.txt
@@ -488,7 +557,7 @@ observer_sim/
 │   ├── command.py                  # Command（反向管道指令）
 │   └── virtual_clock.py            # VirtualClock 虚拟时钟
 │
-├── tests/                          # 测试套件（295 个测试）
+├── tests/                          # 测试套件（367 个测试）
 │   ├── test_virtual_clock.py       # 虚拟时钟（16）
 │   ├── test_pipe_communication.py  # 管道通信（26）
 │   ├── test_monitoring.py          # 监测机制（18）
@@ -513,7 +582,7 @@ observer_sim/
 
 ## 测试说明
 
-项目测试体系共 **295 个测试用例**（Windows 端 295 passed + 2 skipped Linux-only），覆盖全部模块：
+项目测试体系共 **367 个测试用例**（Windows 端 367 passed, 0 failed），覆盖全部模块：
 
 | 模块 | 测试文件 | 数量 | 覆盖内容 |
 |------|---------|:---:|--------|
@@ -529,9 +598,9 @@ observer_sim/
 | 采集 | test_ebpf_collector.py | 30 | event_t→RawEvent 映射、capabilities |
 | 采集 | test_strace_collector.py | 45 | strace 行解析、正则表达式、生命周期 |
 | 采集 | test_collector_integration.py | 39 | 模式切换、降级逻辑、接口一致性 |
-| **合计** | | **295** | **Windows: 295 passed, 2 skipped** |
+| **合计** | | **367** | **全平台: 367 passed, 0 failed** |
 
-> 在 Linux 上运行时应为 **297 passed, 0 failed**（2 个 skipped 的测试在 Linux 上正常执行）。
+> 测试覆盖双平台，模拟模式在 Windows/Linux 均可全量通过。
 
 ```bash
 # 运行全部测试
@@ -559,7 +628,7 @@ Web 模式（`app.py`）提供 14 个 REST/SSE 端点：
 | GET | `/api/scenario/run-all?category={name}` | SSE 批量运行全部场景 | SSE |
 | GET | `/api/scenario/run-all/progress` | 全量运行进度查询 | JSON |
 | GET | `/api/scenario/result/{run_id}` | 场景运行结果 + 分析面板 | JSON |
-| POST | `/api/tests/run` | 同步运行 130 个单元测试 | JSON |
+│ POST | `/api/tests/run` | 同步运行 367 个单元测试 | JSON |
 | GET | `/api/reports/list` | 报告文件列表（三级树结构） | JSON |
 | GET | `/api/reports/view?path=...` | 报告内容（含路径安全校验） | text |
 | POST | `/api/reports/delete` | 删除记录（全部/按分类/按场景） | JSON |
@@ -628,7 +697,7 @@ es.onmessage = (e) => {
 | Phase | 内容 | 状态 | 测试 |
 |-------|------|:---:|:---:|
 | Phase 1 | 数据通道：C++ 探针 + 双向管道 + VirtualClock | ✅ 已完成 | 42 |
-| Phase 2 | 监测机制：EventNormalizer + RuleEngine + 15 条规则 | ✅ 已完成 | 18 |
+| Phase 2 | 监测机制：EventNormalizer + RuleEngine + 21 条规则（v2.0） | ✅ 已完成 | 18 |
 | Phase 3 | 评判机制：四维评分 + 基线 + 决策 + 链式报告 | ✅ 已完成 | 21 |
 | Phase 4 | 阻断机制：三级阻断 + 违规升级 + 反向管道联动 | ✅ 已完成 | 16 |
 | Phase 5 | 审计输出：行为图谱 + 审计日志 + Markdown 报告 | ✅ 已完成 | 16 |

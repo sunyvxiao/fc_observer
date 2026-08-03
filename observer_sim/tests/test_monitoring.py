@@ -158,9 +158,9 @@ class TestRuleEngine(unittest.TestCase):
         return norm
 
     def test_rules_loaded(self):
-        """规则加载: 15 条规则"""
-        self.assertEqual(self.engine.rule_count, 15)
-        self.assertEqual(self.engine.enabled_rule_count, 15)
+        """规则加载: 21 条规则"""
+        self.assertEqual(self.engine.rule_count, 21)
+        self.assertEqual(self.engine.enabled_rule_count, 21)
 
     def test_rm_rf_matches_R001(self):
         """rm -rf / 命中 R001 (block-dangerous-commands)"""

@@ -131,6 +131,13 @@ def detect_and_create_collector(config: dict, mode_override: str = None):
         except ImportError:
             raise RuntimeError("文件回放采集器未实现")
 
+    elif mode == "deep_agent":
+        try:
+            from collector.deep_agent_collector import DeepAgentCollector
+            return DeepAgentCollector(config)
+        except ImportError:
+            raise RuntimeError("DeepAgent 采集器未实现")
+
     else:  # auto
         if sys.platform == "win32":
             logger.info("检测到 Windows 平台，启用模拟模式")

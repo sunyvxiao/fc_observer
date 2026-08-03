@@ -64,8 +64,8 @@ class AgentViolationTracker:
     WINDOW_SIZE_NS = 5 * 60 * 1_000_000_000  # 300,000,000,000 ns
 
     # 升级阈值
-    TIER1_ESCALATE_THRESHOLD = 3  # Tier1 累计 3 次 → Tier2
-    TIER2_ESCALATE_THRESHOLD = 2  # Tier2 累计 2 次 → Tier3
+    TIER1_ESCALATE_THRESHOLD = 5  # Tier1 累计 5 次 → Tier2
+    TIER2_ESCALATE_THRESHOLD = 3  # Tier2 累计 3 次 → Tier3
 
     def __init__(self, clock: VirtualClock, window_size_ns: int = None):
         """

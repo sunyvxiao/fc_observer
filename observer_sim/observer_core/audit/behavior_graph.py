@@ -201,7 +201,7 @@ class BehaviorGraph:
         self._nodes[event_id] = node
 
         # 更新 Agent 摘要
-        self._update_agent_summary(agent_id, node, assessment, decision)
+        self._update_agent_summary(agent_id, node, assessment, decision, blocking_result)
 
         # 建立顺序因果边（同 Agent 的前一个事件 → 当前事件）
         if agent_id in self._agent_last_node:
@@ -264,7 +264,8 @@ class BehaviorGraph:
         return meta
 
     def _update_agent_summary(self, agent_id: str, node: BehaviorNode,
-                              assessment: RiskAssessment, decision: Decision):
+                              assessment: RiskAssessment, decision: Decision,
+                              blocking_result: BlockingResult = None):
         """更新 Agent 摘要统计"""
         if agent_id not in self._agent_summaries:
             self._agent_summaries[agent_id] = AgentSummary(
@@ -277,7 +278,10 @@ class BehaviorGraph:
         summary.total_events += 1
         summary.last_event_ns = node.timestamp_ns
 
-        if decision:
+        # 统一以 BlockingResult 为最终判定源：升级后的 blocked 优先于原始 decision
+        if blocking_result and blocking_result.blocked:
+            summary.blocked += 1
+        elif decision:
             if decision.action == DecisionAction.ALLOW:
                 summary.allowed += 1
             elif decision.action == DecisionAction.ALERT:

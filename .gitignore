@@ -1,18 +1,32 @@
 # ============================================================
-# 项目根目录 .gitignore — projact3
+# 项目根目录 .gitignore — 方寸观察者模拟学习系统
+# 整合根目录 + observer_sim/ 双 .gitignore，以本文件为唯一主文件
 # ============================================================
 
 # === IDE / 编辑器 ===
 .qoder/
 .vscode/
 .idea/
+*.swp
+*.swo
+*~
 
 # === Python 全局 ===
 __pycache__/
 *.py[cod]
+*$py.class
 *.egg-info/
 *.pyo
 .pytest_cache/
+.pytest_cache/**
+dist/
+build/
+.eggs/
+
+# === 虚拟环境 ===
+.venv/
+venv/
+env/
 
 # === 操作系统 ===
 .DS_Store
@@ -22,6 +36,25 @@ desktop.ini
 # === 运行时输出 ===
 observer_sim/output/
 *.log
+demo_output.txt
+mode_test.txt
+
+# === eBPF 编译产物 ===
+observer_sim/ebpf/vmlinux.h
+observer_sim/ebpf/*.o
+observer_sim/ebpf/*.llc
+
+# === C++ 构建产物 ===
+observer_sim/cpp_probe/build/
+
+# === 录制数据（运行时产物） ===
+records/
+
+# === 环境配置文件（含敏感信息） ===
+.env
+
+# === Agent 演示工作目录（含生成的模拟数据） ===
+deep-agents-demo/workspace/
 
 # === 高权限测试脚本和日志 ===
 sudo_test/
@@ -29,29 +62,13 @@ sudo_test/
 # === 截图文件 ===
 测试图片/
 
-# === C++ 构建产物 ===
-observer_sim/cpp_probe/build/
-
 # === 临时文件 ===
 *.tmp
 *.bak
-*.swp
-*~
-# ============================================================
-# 项目根目录 .gitignore — projact3
-# ============================================================
 
-# === IDE / 编辑器 ===
-.qoder/
-.vscode/
-.idea/
-
-# === Python 全局 ===
-__pycache__/
-*.py[cod]
-*.egg-info/
-
-# === 操作系统 ===
-.DS_Store
-Thumbs.db
-desktop.ini
+# === SSH 密钥（严禁提交） ===
+*.pem
+*_rsa
+*_ed25519
+fco
+fco.pub

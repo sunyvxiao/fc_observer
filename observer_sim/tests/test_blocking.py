@@ -43,23 +43,23 @@ class TestAgentViolationTracker(unittest.TestCase):
         self.assertEqual(tier, ActionTier.TIER1)
         self.assertEqual(self.tracker.get_violation_count("agent-1"), 1)
 
-    def test_three_tier1_escalate_to_tier2(self):
-        """连续 3 次 Tier1 告警 → 升级到 Tier2"""
-        for i in range(3):
+    def test_five_tier1_escalate_to_tier2(self):
+        """连续 5 次 Tier1 告警 → 升级到 Tier2"""
+        for i in range(5):
             self.clock.advance(100)
             tier = self.tracker.record_violation("agent-1", ActionTier.TIER1, f"evt_{i}")
 
-        # 第 3 次应该升级到 Tier2
+        # 第 5 次应该升级到 Tier2
         self.assertEqual(tier, ActionTier.TIER2)
 
-    def test_two_tier2_escalate_to_tier3(self):
-        """连续 2 次 Tier2 阻断 → 升级到 Tier3"""
-        # 先记录 2 次 Tier2
+    def test_three_tier2_escalate_to_tier3(self):
+        """连续 3 次 Tier2 阻断 → 升级到 Tier3"""
+        # 先记录 2 次 Tier2（不升级）
         for i in range(2):
             self.clock.advance(100)
             self.tracker.record_violation("agent-1", ActionTier.TIER2, f"evt_t2_{i}")
 
-        # 第 2 次应该升级到 Tier3
+        # 第 3 次应该升级到 Tier3
         self.clock.advance(100)
         tier = self.tracker.record_violation("agent-1", ActionTier.TIER2, "evt_t2_2")
         self.assertEqual(tier, ActionTier.TIER3)
@@ -185,13 +185,13 @@ class TestBlockingCoordinator(unittest.TestCase):
         self.assertTrue(self.coordinator.tracker.is_terminated("test-agent"))
 
     def test_escalation_tier1_to_tier2(self):
-        """升级测试: 3 次 Tier1 → Tier2"""
-        for i in range(3):
+        """升级测试: 5 次 Tier1 → Tier2"""
+        for i in range(5):
             event = self._make_event(agent_id="escalate-agent")
             decision = self._make_decision(DecisionAction.ALERT, ActionTier.TIER1)
             result = self.coordinator.execute(event, decision)
 
-        # 第 3 次应该升级到 Tier2
+        # 第 5 次应该升级到 Tier2
         self.assertTrue(result.blocked)
         self.assertEqual(result.tier, ActionTier.TIER2)
 

@@ -5,7 +5,7 @@
 # 运行模式 (新增)
 # ============================================================
 mode: "auto"
-# 可选值: "auto" | "simulation" | "strace" | "ebpf" | "file_replay"
+# 可选值: "auto" | "simulation" | "strace" | "ebpf" | "file_replay" | "deep_agent"
 
 # ============================================================
 # 管道配置 (新增，统一跨平台管道配置)
@@ -55,6 +55,16 @@ file_replay:
   target_agent_id: "replay-agent"  # 默认 agent 标识
 
 # ============================================================
+# Pydantic-DeepAgents 采集模式配置
+# ============================================================
+deep_agent:
+  mode: "simulation"               # simulation (无需 API Key) | live (需 ANTHROPIC_API_KEY)
+  scenarios_dir: "scenarios/deep_agent/"  # Agent 行为场景目录
+  target_agent_id: "deep-agent"    # 默认 Agent 标识
+  task: "分析数据并生成报告"          # live 模式下发给 Agent 的指令
+  duration_s: 60                   # live 模式最大监控时长 (秒)
+
+# ============================================================
 # 以下为现有配置段，全部保留不做修改
 # ============================================================
 
@@ -92,8 +102,8 @@ scoring:
 # === 阻断升级配置 (保留) ===
 blocking:
   violation_window_ms: 300000                 # 违规升级滑动窗口（5分钟，虚拟时钟）
-  tier1_to_tier2_threshold: 3                 # Tier1 累计次数 → 升级 Tier2
-  tier2_to_tier3_threshold: 2                 # Tier2 累计次数 → 升级 Tier3
+  tier1_to_tier2_threshold: 5                 # Tier1 累计次数 → 升级 Tier2
+  tier2_to_tier3_threshold: 3                 # Tier2 累计次数 → 升级 Tier3
 
 # === 事件序列窗口 (保留) ===
 monitoring:

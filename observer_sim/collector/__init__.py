@@ -7,7 +7,8 @@ collector/ — 采集层
 - ebpf_collector:         eBPF 采集器（Linux，Phase 3 实现）
 - strace_collector:       strace 采集器（Linux 降级，Phase 3 实现）
 - file_replay_collector:  文件回放采集器（白盒测试 / 外部数据接入，Phase 5 实现）
-- event_recorder:         事件录制器（录制-回放工作流，实时录制 RawEvent 到 JSONL）
+- deep_agent_collector:   Pydantic-DeepAgents 采集器（真实 AI Agent 行为接入）
+- event_recorder:         事件录制器（透明中间件，录制 RawEvent 为 JSONL）
 """
 
 from collector.base_collector import ICollector, CollectorCapabilities

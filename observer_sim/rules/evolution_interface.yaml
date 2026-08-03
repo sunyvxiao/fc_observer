@@ -1,0 +1,632 @@
+# =============================================================================
+# 方寸观察者 — 自进化接口声明 (Evolution Interface)
+# =============================================================================
+#
+# 本文件定义系统规则自进化的 **预留接口和加载机制**。
+# 当前版本不实现自进化逻辑，仅提供接口规范，为后续系统通过
+# 训练自我优化做好准备。
+#
+# 文件结构:
+#   § 1  进化策略文件加载机制 (Evolved Policy Loader)
+#   § 2  评分维度可替换接口 (IRiskDimension Registry)
+#   § 3  规则热加载/热更新接口 (Hot-Reload Interface)
+#   § 4  追踪数据存储接口 (ITraceStore)
+#   § 5  序列模式挖掘接口 (IPatternMiner)
+#   § 6  策略自动生成接口 (IStrategyGenerator)
+#   § 7  进化闭环流程 (Evolution Loop)
+#
+# 代码位置: evolution/interfaces.py
+# 依赖: observer_core/monitoring/rule_engine.py (RuleEngine)
+#       observer_core/judgment/risk_scorer.py (IRiskDimension, RiskScorer)
+#
+# 版本: 1.0
+# 创建: 2026-08-02
+# =============================================================================
+
+version: "1.0"
+metadata:
+  title: "自进化接口声明"
+  description: |
+    定义规则文件自进化所需的接口规范、加载机制和进化闭环流程。
+    当前版本为接口桩（不实现），为后续系统通过训练自我优化预留扩展点。
+  related_files:
+    - "rules/judgment_pipeline.yaml — 评判流水线配置（进化目标）"
+    - "rules/scoring_dimensions.yaml — 评分维度定义（可替换维度）"
+    - "rules/default_policy.yaml — 基础规则（进化基准）"
+    - "evolution/interfaces.py — 接口桩代码实现"
+    - "observer_core/monitoring/rule_engine.py — 规则引擎（热加载目标）"
+
+
+# =============================================================================
+# § 1  进化策略文件加载机制 (Evolved Policy Loader)
+# =============================================================================
+#
+# 定义 evolved_policy.yaml 的文件格式和加载优先级。
+# 进化后的规则文件与 default_policy.yaml 格式兼容，
+# 通过优先级合并策略叠加到基础规则之上。
+
+evolved_policy:
+  description: |
+    进化策略文件（evolved_policy.yaml）是由 IStrategyGenerator 自动生成的
+    规则文件，格式与 default_policy.yaml 完全兼容。
+    加载时与基础规则合并，进化规则可覆盖或新增基础规则。
+
+  file_location: "rules/evolved_policy.yaml"
+  file_format: "与 default_policy.yaml 完全兼容（version + metadata + rules）"
+
+  loading_mechanism:
+    description: |
+      规则加载优先级（从高到低）:
+      1. evolved_policy.yaml（进化策略，自动生成）
+      2. default_policy.yaml（基础策略，人工定义）
+
+      合并策略:
+      - 同 rule_id 的规则: 进化策略覆盖基础策略
+      - 不同 rule_id 的规则: 两者均保留
+      - enabled: false 的规则: 标记为禁用，不参与匹配
+
+    load_order:
+      - step: 1
+        file: "rules/default_policy.yaml"
+        description: "加载基础策略规则"
+      - step: 2
+        file: "rules/evolved_policy.yaml"
+        description: "加载进化策略规则（可选，文件不存在则跳过）"
+        optional: true
+      - step: 3
+        action: "merge"
+        description: |
+          合并规则:
+          - 同 rule_id → 进化策略覆盖
+          - 新 rule_id → 追加
+          - 保持优先级排序
+
+  evolved_rule_format:
+    description: "进化规则与基础规则格式一致，额外标注自动生成元数据"
+    example: |
+      version: "1.0"
+      metadata:
+        created: "2026-08-02"
+        generator: "IStrategyGenerator"
+        description: "自动进化策略 — 由模式挖掘生成"
+        parent_policy: "default_policy.yaml"
+
+      rules:
+        - rule_id: "E001"
+          name: "evolved-curl-exfil-pattern"
+          category: "command"
+          priority: 88
+          enabled: true
+          action: block
+          description: "进化发现: curl 外传敏感数据的新型模式"
+          auto_generated: true
+          generation_metadata:
+            source_pattern: "SP-003"
+            confidence: 0.85
+            support_count: 42
+            false_positive_rate: 0.02
+          conditions:
+            event_type: "exec"
+            match_mode: "regex"
+            patterns:
+              - "curl.*--upload-file.*\\.(env|pem|key|secret)"
+
+  validation_requirements:
+    description: "进化规则在生效前必须通过的验证"
+    checks:
+      - name: "误报率检查"
+        threshold: 0.05
+        description: "在历史追踪数据上测试，误报率必须 < 5%"
+      - name: "漏报率检查"
+        threshold: 0.10
+        description: "在已知异常场景上测试，漏报率必须 < 10%"
+      - name: "冲突检测"
+        description: "检查新规则是否与现有规则存在逻辑冲突"
+      - name: "性能影响评估"
+        description: "评估新增规则对匹配性能的影响"
+
+
+# =============================================================================
+# § 2  评分维度可替换接口 (IRiskDimension Registry)
+# =============================================================================
+#
+# 定义评分维度的替换机制。通过实现 IRiskDimension 接口，
+# 可以用更先进的算法替换默认维度实现。
+
+dimension_registry:
+  description: |
+    RiskScorer 的维度注册机制允许运行时替换任意评分维度。
+    替换时只需保持 name() 返回值一致，register_dimension() 会自动替换同名维度。
+
+  interface:
+    name: "IRiskDimension"
+    source_file: "observer_core/judgment/risk_scorer.py"
+    abstract_methods:
+      - "score(event, match, context, baseline) -> float"
+      - "name() -> str"
+      - "weight -> float (property)"
+
+  current_dimensions:
+    - id: "D1"
+      name: "规则命中分"
+      class: "BasicRuleScore"
+      weight: 0.40
+      replaceable: true
+    - id: "D2"
+      name: "基线偏离分"
+      class: "BasicBaselineScore"
+      weight: 0.25
+      replaceable: true
+    - id: "D3"
+      name: "上下文风险分"
+      class: "BasicContextScore"
+      weight: 0.20
+      replaceable: true
+    - id: "D4"
+      name: "序列异常分"
+      class: "BasicSequenceScore"
+      weight: 0.15
+      replaceable: true
+
+  replacement_protocol:
+    description: |
+      替换维度的标准流程:
+      1. 新类实现 IRiskDimension 接口
+      2. name() 返回与被替换维度相同的名称
+      3. weight 可调整但建议保持初始值以维持评分平衡
+      4. 调用 scorer.register_dimension(new_dim) 注册
+      5. 在历史数据上验证新维度的评分分布合理性
+
+    validation:
+      - "评分分布检查: 新维度在正常场景上的评分应 < 0.3"
+      - "异常检出检查: 新维度在已知异常场景上的评分应 > 0.6"
+      - "权重归一化: 所有维度权重之和应为 1.0"
+
+  planned_replacements:
+    - target: "D4 (序列异常分)"
+      replacement: "马尔可夫链序列评分器"
+      description: |
+        使用马尔可夫链建模事件类型转移概率矩阵，
+        低概率转移路径视为异常。
+      status: "planned"
+
+    - target: "D3 (上下文风险分)"
+      replacement: "图神经网络上下文评分器"
+      description: |
+        使用 GNN 分析行为图谱中的子图特征，
+        识别复杂的攻击链模式。
+      status: "planned"
+
+    - target: "D2 (基线偏离分)"
+      replacement: "自适应在线学习基线"
+      description: |
+        使用增量学习算法（如 Online SVM）动态建模
+        Agent 行为基线，自动适应行为漂移。
+      status: "planned"
+
+
+# =============================================================================
+# § 3  规则热加载/热更新接口 (Hot-Reload Interface)
+# =============================================================================
+#
+# 定义规则文件在不重启系统的情况下动态加载和更新的机制。
+
+hot_reload:
+  description: |
+    规则热加载允许在系统运行时动态添加、修改或禁用规则，
+    无需重启服务。适用于进化策略生效、紧急规则推送等场景。
+
+  interface:
+    name: "IHotReloadableRuleEngine"
+    description: "扩展 RuleEngine 的热加载接口（预留）"
+
+    methods:
+      - name: "reload_rules"
+        signature: "reload_rules(yaml_path: str) -> ReloadResult"
+        description: |
+          重新加载指定规则文件，替换当前规则集。
+          保证加载过程中不中断正在处理的事件。
+        atomic: true
+
+      - name: "add_rule_hot"
+        signature: "add_rule_hot(rule: PolicyRule) -> bool"
+        description: "热添加单条规则到当前规则集"
+
+      - name: "disable_rule"
+        signature: "disable_rule(rule_id: str) -> bool"
+        description: "热禁用指定规则（enabled = false）"
+
+      - name: "enable_rule"
+        signature: "enable_rule(rule_id: str) -> bool"
+        description: "热启用指定规则（enabled = true）"
+
+      - name: "get_rule_status"
+        signature: "get_rule_status() -> Dict[str, RuleStatus]"
+        description: "获取所有规则的当前状态"
+
+  reload_result:
+    description: "热加载操作的结果"
+    fields:
+      success: "bool — 是否成功"
+      rules_added: "int — 新增规则数"
+      rules_updated: "int — 更新规则数"
+      rules_removed: "int — 移除规则数"
+      errors: "List[str] — 加载错误列表"
+
+  file_watching:
+    description: |
+      文件监听机制（预留）:
+      监听 rules/ 目录下的文件变更事件，自动触发 reload_rules()。
+      可用 watchdog 库或 inotify 实现。
+    watch_paths:
+      - "rules/default_policy.yaml"
+      - "rules/evolved_policy.yaml"
+    debounce_ms: 1000
+    description: "文件变更后等待 1 秒再触发加载，避免频繁写入导致多次加载"
+
+  safety_mechanisms:
+    - name: "原子加载"
+      description: |
+        新规则加载完成后一次性替换旧规则集，
+        加载过程中事件处理使用旧规则集，不会中断。
+    - name: "回滚机制"
+      description: |
+        如果新规则加载失败（YAML 解析错误、规则格式错误），
+        自动回滚到上一版本的规则集。
+    - name: "版本标记"
+      description: |
+        每次加载记录版本号和时间戳，便于审计和回滚。
+
+
+# =============================================================================
+# § 4  追踪数据存储接口 (ITraceStore)
+# =============================================================================
+#
+# 定义事件处理追踪数据的存储和查询接口。
+# 追踪数据是模式挖掘和策略生成的数据基础。
+
+trace_store:
+  description: |
+    存储每个事件的完整处理链路数据（TraceRecord），
+    支持按条件查询和批量导出。
+    当前为接口桩，后续可接入 SQLite/PostgreSQL/向量数据库。
+
+  interface:
+    name: "ITraceStore"
+    source_file: "evolution/interfaces.py"
+
+    methods:
+      - name: "store"
+        signature: "store(record: TraceRecord) -> None"
+        description: "存储单条追踪记录"
+
+      - name: "store_batch"
+        signature: "store_batch(records: List[TraceRecord]) -> None"
+        description: "批量存储追踪记录"
+
+      - name: "query"
+        signature: "query(filters: TraceQuery) -> List[TraceRecord]"
+        description: "按条件查询追踪记录"
+
+      - name: "export"
+        signature: "export(from_ts: int, to_ts: int) -> Iterator[TraceRecord]"
+        description: "导出时间范围内的追踪记录"
+
+      - name: "count"
+        signature: "count(filters: TraceQuery = None) -> int"
+        description: "统计追踪记录数量"
+
+      - name: "clear"
+        signature: "clear() -> None"
+        description: "清空所有追踪记录"
+
+  trace_record_fields:
+    - name: "event_id"
+      type: "str"
+      description: "事件唯一标识"
+    - name: "agent_id"
+      type: "str"
+      description: "Agent 标识"
+    - name: "timestamp_ns"
+      type: "int"
+      description: "虚拟时钟时间戳（纳秒）"
+    - name: "event_type"
+      type: "str"
+      description: "事件类型 (exec/file_open/net_conn)"
+    - name: "risk_score"
+      type: "float"
+      description: "综合风险评分 (0.0~1.0)"
+    - name: "risk_level"
+      type: "str"
+      description: "风险等级 (LOW/MEDIUM/HIGH/CRITICAL)"
+    - name: "matched_rules"
+      type: "List[str]"
+      description: "命中的规则 ID 列表"
+    - name: "decision"
+      type: "str"
+      description: "处置决策 (ALLOW/ALERT/BLOCK)"
+    - name: "blocked"
+      type: "bool"
+      description: "是否被阻断"
+    - name: "metadata"
+      type: "Dict"
+      description: "扩展元数据（维度评分明细等）"
+
+  planned_implementations:
+    - name: "SQLiteTraceStore"
+      description: "使用 SQLite 实现本地追踪数据存储"
+      status: "planned"
+    - name: "PostgreSQLTraceStore"
+      description: "使用 PostgreSQL 实现分布式追踪数据存储"
+      status: "planned"
+    - name: "VectorDBTraceStore"
+      description: "使用向量数据库实现语义搜索能力"
+      status: "planned"
+
+
+# =============================================================================
+# § 5  序列模式挖掘接口 (IPatternMiner)
+# =============================================================================
+#
+# 定义从历史追踪数据中发现行为模式和异常的接口。
+
+pattern_miner:
+  description: |
+    从 ITraceStore 中的历史数据中挖掘行为模式，
+    为 IStrategyGenerator 提供生成规则的输入。
+    当前为接口桩，后续可实现 Apriori/PrefixSpan/马尔可夫链等算法。
+
+  interface:
+    name: "IPatternMiner"
+    source_file: "evolution/interfaces.py"
+
+    methods:
+      - name: "mine_sequence_patterns"
+        signature: "mine_sequence_patterns(traces: List[TraceRecord]) -> List[SequencePattern]"
+        description: |
+          挖掘序列模式:
+          从追踪数据中发现频繁出现的事件序列模式。
+          例如: [file_open(敏感文件) → net_conn(外部地址)] 频繁出现。
+
+      - name: "mine_frequency_anomalies"
+        signature: "mine_frequency_anomalies(traces: List[TraceRecord]) -> List[FreqAnomaly]"
+        description: |
+          挖掘频率异常:
+          检测 Agent 的事件类型频率是否偏离正常分布。
+          例如: 某 Agent 突然大量出现 net_conn 事件。
+
+  output_types:
+    sequence_pattern:
+      fields:
+        - name: "pattern_id"
+          type: "str"
+          description: "模式唯一标识"
+        - name: "description"
+          type: "str"
+          description: "模式描述"
+        - name: "event_sequence"
+          type: "List[str]"
+          description: "事件类型序列"
+        - name: "support_count"
+          type: "int"
+          description: "支持度（出现次数）"
+        - name: "confidence"
+          type: "float"
+          description: "置信度"
+        - name: "is_anomalous"
+          type: "bool"
+          description: "是否为异常模式"
+
+    frequency_anomaly:
+      fields:
+        - name: "event_type"
+          type: "str"
+          description: "异常事件类型"
+        - name: "agent_id"
+          type: "str"
+          description: "关联 Agent"
+        - name: "expected_freq"
+          type: "float"
+          description: "期望频率"
+        - name: "actual_freq"
+          type: "float"
+          description: "实际频率"
+        - name: "deviation_ratio"
+          type: "float"
+          description: "偏差比率"
+        - name: "severity"
+          type: "str"
+          description: "严重程度 (LOW/MEDIUM/HIGH)"
+
+  planned_algorithms:
+    - name: "Apriori"
+      description: "频繁项集挖掘，发现事件类型的共现模式"
+      status: "planned"
+    - name: "PrefixSpan"
+      description: "序列模式挖掘，发现有序事件序列模式"
+      status: "planned"
+    - name: "马尔可夫链"
+      description: "事件类型转移概率建模，发现低概率异常转移"
+      status: "planned"
+
+
+# =============================================================================
+# § 6  策略自动生成接口 (IStrategyGenerator)
+# =============================================================================
+#
+# 定义根据挖掘结果自动生成防护规则的接口。
+
+strategy_generator:
+  description: |
+    将 IPatternMiner 挖掘出的异常模式转化为可执行的防护规则，
+    输出格式与 default_policy.yaml 兼容的 YAML 文件。
+    当前为接口桩，后续可实现基于 LLM 或统计的方法。
+
+  interface:
+    name: "IStrategyGenerator"
+    source_file: "evolution/interfaces.py"
+
+    methods:
+      - name: "generate"
+        signature: "generate(patterns: List[SequencePattern]) -> List[PolicyRule]"
+        description: |
+          根据异常模式生成规则:
+          将挖掘出的异常模式转化为可执行的防护规则。
+
+      - name: "validate"
+        signature: "validate(rule: PolicyRule, traces: List[TraceRecord]) -> ValidationResult"
+        description: |
+          验证规则有效性:
+          在历史数据上测试规则，计算误报率和漏报率。
+
+      - name: "export_to_yaml"
+        signature: "export_to_yaml(rules: List[PolicyRule], path: str) -> str"
+        description: |
+          导出规则为 YAML:
+          生成的 YAML 文件可直接被 RuleEngine 加载。
+
+  validation_result_fields:
+    - name: "is_valid"
+      type: "bool"
+      description: "规则是否通过验证"
+    - name: "false_positive_rate"
+      type: "float"
+      description: "误报率 (正常场景被错误拦截的比例)"
+    - name: "false_negative_rate"
+      type: "float"
+      description: "漏报率 (异常场景未被检测到的比例)"
+    - name: "tested_traces"
+      type: "int"
+      description: "测试使用的追踪记录数"
+    - name: "details"
+      type: "str"
+      description: "验证详情说明"
+
+  generation_pipeline:
+    description: "从模式挖掘到规则生效的完整流程"
+    steps:
+      - step: 1
+        name: "模式挖掘"
+        component: "IPatternMiner"
+        input: "ITraceStore 中的历史追踪数据"
+        output: "List[SequencePattern] + List[FreqAnomaly]"
+      - step: 2
+        name: "规则生成"
+        component: "IStrategyGenerator.generate"
+        input: "异常模式列表"
+        output: "List[PolicyRule]"
+      - step: 3
+        name: "规则验证"
+        component: "IStrategyGenerator.validate"
+        input: "生成的规则 + 历史追踪数据"
+        output: "ValidationResult"
+        pass_condition: "is_valid == true && false_positive_rate < 0.05"
+      - step: 4
+        name: "规则导出"
+        component: "IStrategyGenerator.export_to_yaml"
+        input: "验证通过的规则"
+        output: "rules/evolved_policy.yaml"
+      - step: 5
+        name: "热加载生效"
+        component: "IHotReloadableRuleEngine.reload_rules"
+        input: "rules/evolved_policy.yaml"
+        output: "新规则在运行时生效"
+
+  planned_implementations:
+    - name: "LLM-based Generator"
+      description: "使用大语言模型根据模式描述自动生成规则条件和正则表达式"
+      status: "planned"
+    - name: "Statistical Generator"
+      description: "基于统计分析自动生成阈值和匹配模式"
+      status: "planned"
+
+
+# =============================================================================
+# § 7  进化闭环流程 (Evolution Loop)
+# =============================================================================
+#
+# 定义从数据收集到规则进化的完整闭环流程。
+# 这是系统"自我学习"的顶层设计。
+
+evolution_loop:
+  description: |
+    方寸观察者的规则自进化闭环:
+
+    ┌─────────────┐     ┌─────────────┐     ┌─────────────┐
+    │  事件处理    │────→│  追踪存储    │────→│  模式挖掘    │
+    │  (在线)      │     │  (ITraceStore)│    │ (IPatternMiner)│
+    └─────────────┘     └─────────────┘     └─────────────┘
+           ↑                                         │
+           │                                         ↓
+    ┌─────────────┐     ┌─────────────┐     ┌─────────────┐
+    │  热加载生效  │←────│  规则验证    │←────│  策略生成    │
+    │  (Hot-Reload)│     │  (Validate)  │     │(IStrategyGen)│
+    └─────────────┘     └─────────────┘     └─────────────┘
+
+  phases:
+    - phase: 1
+      name: "数据收集 (在线)"
+      description: |
+        事件处理流水线将每个事件的完整处理结果
+        （评分、决策、阻断结果）写入 ITraceStore。
+      component: "AuditLogger → ITraceStore.store()"
+      status: "接口已定义，未实现"
+
+    - phase: 2
+      name: "模式挖掘 (离线)"
+      description: |
+        定期（如每日/每周）从 ITraceStore 中导出追踪数据，
+        运行 IPatternMiner 发现新的行为模式和异常。
+      component: "IPatternMiner.mine_sequence_patterns() + mine_frequency_anomalies()"
+      status: "接口已定义，未实现"
+      trigger: "定时任务 或 手动触发"
+
+    - phase: 3
+      name: "策略生成 (离线)"
+      description: |
+        将挖掘出的异常模式输入 IStrategyGenerator，
+        自动生成防护规则。
+      component: "IStrategyGenerator.generate()"
+      status: "接口已定义，未实现"
+
+    - phase: 4
+      name: "规则验证 (离线)"
+      description: |
+        在历史追踪数据上验证新生成的规则，
+        确保误报率和漏报率在可接受范围内。
+      component: "IStrategyGenerator.validate()"
+      status: "接口已定义，未实现"
+      pass_criteria:
+        - "false_positive_rate < 0.05"
+        - "false_negative_rate < 0.10"
+
+    - phase: 5
+      name: "规则导出 + 热加载 (在线)"
+      description: |
+        验证通过的规则导出为 evolved_policy.yaml，
+        通过热加载机制动态生效。
+      component: "IStrategyGenerator.export_to_yaml() → HotReload.reload_rules()"
+      status: "接口已定义，未实现"
+
+  human_in_the_loop:
+    description: |
+      进化闭环中的人工审核环节（可选）:
+      - 高风险规则（action: block）需要人工确认后才生效
+      - 系统自动生成规则审核报告，包含:
+        - 规则条件和匹配模式
+        - 在历史数据上的验证结果
+        - 与现有规则的冲突检测
+        - 预期影响范围（受影响的 Agent 和事件类型）
+    status: "设计阶段"
+
+  metrics:
+    description: "进化效果评估指标"
+    metrics:
+      - name: "异常检出率提升"
+        description: "进化后异常场景的检出率 vs 进化前"
+      - name: "误报率变化"
+        description: "进化后正常场景的误报率变化趋势"
+      - name: "规则覆盖率"
+        description: "已覆盖的异常模式数 / 已知异常模式总数"
+      - name: "进化收敛速度"
+        description: "从数据收集到规则生效的平均时间"

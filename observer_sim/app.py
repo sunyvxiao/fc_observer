@@ -59,9 +59,12 @@ from collector.simulation_collector import SimulationCollector
 
 # ── 全局常量 ──────────────────────────────────────────────────
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+PROJECT_DIR = os.path.dirname(BASE_DIR)          # ~/projects/observer_sim
 SCENARIOS_DIR = os.path.join(BASE_DIR, "scenarios")
 REPORTS_DIR = os.path.realpath(os.path.join(BASE_DIR, "output", "reports"))
 STATIC_DIR = os.path.join(BASE_DIR, "static")
+DEMO_DIR = os.path.join(PROJECT_DIR, "deep-agents-demo")
+RECORDS_DIR = os.path.join(PROJECT_DIR, "records")
 
 CATEGORY_DIRS = ["normal", "anomalous", "boundary", "multi_agent", "extreme"]
 CATEGORY_META = {
@@ -303,6 +306,23 @@ class ObserverHTTPHandler(BaseHTTPRequestHandler):
         elif path == "/api/reports/view":
             file_path = params.get("path", [None])[0]
             self._serve_report_file(file_path)
+        elif path == "/api/demo/workspace-tree":
+            self._send_json(self._get_workspace_tree())
+        elif path == "/api/demo/task-instruction":
+            self._send_json(self._get_task_instruction())
+        elif path == "/api/demo/recordings":
+            self._send_json(self._get_recordings())
+        elif path == "/api/demo/recording-detail":
+            session_id = params.get("session_id", [None])[0]
+            self._send_json(self._get_recording_detail(session_id))
+        elif path == "/api/demo/file-content":
+            file_path = params.get("path", [None])[0]
+            self._serve_demo_file(file_path)
+        elif path.startswith("/api/demo/run-record"):
+            self._handle_sse_run_record()
+        elif path.startswith("/api/demo/replay"):
+            session_id = params.get("session_id", [None])[0]
+            self._handle_sse_replay(session_id)
         else:
             self._send_error(404, "Not Found")
 
@@ -320,6 +340,10 @@ class ObserverHTTPHandler(BaseHTTPRequestHandler):
             self._handle_reports_delete(body)
         elif path == "/api/server/stop":
             self._handle_server_stop()
+        elif path == "/api/demo/delete-recordings":
+            self._handle_delete_recordings(body)
+        elif path == "/api/demo/delete-replay-output":
+            self._handle_delete_replay_output(body)
         else:
             self._send_error(404, "Not Found")
 
@@ -875,6 +899,567 @@ class ObserverHTTPHandler(BaseHTTPRequestHandler):
     # ══════════════════════════════════════════════════════════
     #  辅助方法
     # ══════════════════════════════════════════════════════════
+
+    # ══════════════════════════════════════════════════════════
+    #  录制-回放 Demo API
+    # ══════════════════════════════════════════════════════════
+
+    def _get_workspace_tree(self):
+        """GET /api/demo/workspace-tree — 返回 Agent 工作目录文件树"""
+        ws_dir = os.path.join(DEMO_DIR, "workspace")
+        if not os.path.isdir(ws_dir):
+            return {"tree": [], "base_path": ""}
+        tree = self._build_file_tree(ws_dir, ws_dir)
+        return {"tree": tree, "base_path": ws_dir}
+
+    def _build_file_tree(self, root_dir, base_dir, max_depth=4, _depth=0):
+        """递归构建文件树结构"""
+        if _depth >= max_depth:
+            return []
+        items = []
+        try:
+            entries = sorted(os.listdir(root_dir))
+        except PermissionError:
+            return items
+        # 目录先，然后文件
+        dirs = [e for e in entries if os.path.isdir(os.path.join(root_dir, e)) and not e.startswith('.')]
+        files = [e for e in entries if os.path.isfile(os.path.join(root_dir, e))]
+        # 包含隐藏文件（如 .env、.db_credentials）
+        hidden_files = [e for e in entries if os.path.isfile(os.path.join(root_dir, e)) and e.startswith('.')]
+        hidden_dirs = [e for e in entries if os.path.isdir(os.path.join(root_dir, e)) and e.startswith('.') and e not in ('__pycache__', '.git')]
+        dirs = sorted(dirs + hidden_dirs)
+        files = sorted(files + hidden_files)
+        for d in dirs:
+            dpath = os.path.join(root_dir, d)
+            rel = os.path.relpath(dpath, base_dir)
+            children = self._build_file_tree(dpath, base_dir, max_depth, _depth + 1)
+            items.append({"name": d, "type": "dir", "path": rel, "children": children})
+        for f in files:
+            fpath = os.path.join(root_dir, f)
+            rel = os.path.relpath(fpath, base_dir)
+            try:
+                size = os.path.getsize(fpath)
+            except OSError:
+                size = 0
+            items.append({"name": f, "type": "file", "path": rel, "size": size})
+        return items
+
+    def _get_task_instruction(self):
+        """GET /api/demo/task-instruction — 返回任务提示词内容"""
+        ti_path = os.path.join(DEMO_DIR, "task_instruction.txt")
+        if not os.path.isfile(ti_path):
+            return {"content": "", "error": "task_instruction.txt not found"}
+        with open(ti_path, "r", encoding="utf-8") as f:
+            content = f.read()
+        return {"content": content}
+
+    def _get_recordings(self):
+        """GET /api/demo/recordings — 列出所有录制会话"""
+        if not os.path.isdir(RECORDS_DIR):
+            return {"recordings": []}
+        recordings = []
+        for session_dir in sorted(os.listdir(RECORDS_DIR), reverse=True):
+            session_path = os.path.join(RECORDS_DIR, session_dir)
+            if not os.path.isdir(session_path):
+                continue
+            meta = self._read_session_meta(session_path)
+            meta["session_id"] = session_dir
+            # 统计回放产物目录数量
+            replay_runs = self._list_replay_runs(session_path)
+            meta["has_replay"] = len(replay_runs) > 0
+            meta["replay_count"] = len(replay_runs)
+            meta["replay_runs"] = replay_runs
+            recordings.append(meta)
+        return {"recordings": recordings}
+
+    def _read_session_meta(self, session_path):
+        """读取录制会话的 meta.yaml"""
+        meta_path = os.path.join(session_path, "meta.yaml")
+        meta = {"event_count": 0, "duration_seconds": 0, "collect_mode": "unknown",
+                "agent_id": "", "start_time": "", "end_time": ""}
+        if not os.path.isfile(meta_path):
+            return meta
+        try:
+            with open(meta_path, "r", encoding="utf-8") as f:
+                for line in f:
+                    line = line.strip()
+                    if ":" not in line or line.startswith("#"):
+                        continue
+                    key, _, val = line.partition(":")
+                    key = key.strip()
+                    val = val.strip().strip('"').strip("'")
+                    if "_" in val:
+                        meta[key] = val
+                    else:
+                        try:
+                            if "." in val:
+                                meta[key] = float(val)
+                            else:
+                                meta[key] = int(val)
+                        except ValueError:
+                            meta[key] = val
+        except Exception:
+            pass
+        return meta
+
+    def _list_replay_runs(self, session_path):
+        """列出会话目录下的所有回放产物目录"""
+        runs = []
+        if not os.path.isdir(session_path):
+            return runs
+        for entry in sorted(os.listdir(session_path), reverse=True):
+            if entry.startswith("replay_output") and os.path.isdir(os.path.join(session_path, entry)):
+                replay_dir = os.path.join(session_path, entry)
+                # 从目录名提取时间戳
+                ts = entry.replace("replay_output_", "").replace("replay_output", "")
+                # 统计文件数
+                file_count = sum(len(f) for _, _, f in os.walk(replay_dir))
+                # 查找回放摘要
+                summary_path = os.path.join(replay_dir, "replay_summary.json")
+                summary = {}
+                if os.path.isfile(summary_path):
+                    try:
+                        with open(summary_path, "r", encoding="utf-8") as f:
+                            summary = json.load(f)
+                    except Exception:
+                        pass
+                runs.append({
+                    "replay_dir": entry,
+                    "replay_id": ts or "original",
+                    "file_count": file_count,
+                    "total": summary.get("total", 0),
+                    "allow": summary.get("allow", 0),
+                    "alert": summary.get("alert", 0),
+                    "block": summary.get("block", 0),
+                    "replay_time": summary.get("replay_time", ts),
+                })
+        return runs
+
+    def _get_recording_detail(self, session_id):
+        """GET /api/demo/recording-detail?session_id=xxx — 获取录制详情及多次回放产物"""
+        if not session_id:
+            return {"error": "Missing session_id"}
+        session_path = os.path.join(RECORDS_DIR, session_id)
+        if not os.path.isdir(session_path):
+            return {"error": f"Session not found: {session_id}"}
+        meta = self._read_session_meta(session_path)
+        meta["session_id"] = session_id
+        # 列出所有回放产物目录
+        replay_runs = self._list_replay_runs(session_path)
+        # 每个回放目录的文件列表
+        for run in replay_runs:
+            replay_dir_path = os.path.join(session_path, run["replay_dir"])
+            files = []
+            for root, dirs, fnames in os.walk(replay_dir_path):
+                dirs.sort()
+                for fname in sorted(fnames):
+                    fpath = os.path.join(root, fname)
+                    rel = os.path.relpath(fpath, session_path)
+                    try:
+                        size = os.path.getsize(fpath)
+                    except OSError:
+                        size = 0
+                    files.append({"name": fname, "path": rel, "size": size})
+            run["files"] = files
+        # 录制文件
+        events_path = os.path.join(session_path, "events.jsonl")
+        recorded_files = []
+        if os.path.isfile(events_path):
+            recorded_files.append({
+                "name": "events.jsonl",
+                "path": "events.jsonl",
+                "size": os.path.getsize(events_path),
+            })
+        meta_path = os.path.join(session_path, "meta.yaml")
+        if os.path.isfile(meta_path):
+            recorded_files.append({
+                "name": "meta.yaml",
+                "path": "meta.yaml",
+                "size": os.path.getsize(meta_path),
+            })
+        return {
+            "meta": meta,
+            "recorded_files": recorded_files,
+            "replay_runs": replay_runs,
+            "base_path": session_path,
+        }
+
+    def _serve_demo_file(self, file_path):
+        """GET /api/demo/file-content?path=... — 安全读取 demo 相关文件"""
+        if not file_path:
+            self._send_error(400, "Missing 'path' parameter")
+            return
+        # 允许访问: deep-agents-demo/ (含 workspace) 和 records/ 目录下的文件
+        # 安全校验: 防路径遍历
+        ws_dir = os.path.join(DEMO_DIR, "workspace")
+        allowed_bases = [ws_dir, DEMO_DIR, RECORDS_DIR]
+        resolved = None
+        for base in allowed_bases:
+            candidate = os.path.realpath(os.path.join(base, file_path))
+            if (candidate.startswith(base + os.sep) or candidate == base) and os.path.isfile(candidate):
+                resolved = candidate
+                break
+        if not resolved:
+            self._send_error(403, "Access denied")
+            return
+        if not os.path.isfile(resolved):
+            self._send_error(404, f"File not found: {file_path}")
+            return
+        try:
+            with open(resolved, "r", encoding="utf-8") as f:
+                content = f.read(200000)  # 限制 200KB
+        except UnicodeDecodeError:
+            self._send_error(415, "Binary file cannot be previewed")
+            return
+        ext = os.path.splitext(resolved)[1].lower()
+        ct_map = {
+            ".md": "text/markdown; charset=utf-8",
+            ".json": "application/json; charset=utf-8",
+            ".jsonl": "application/json; charset=utf-8",
+            ".yaml": "text/yaml; charset=utf-8",
+            ".txt": "text/plain; charset=utf-8",
+            ".csv": "text/csv; charset=utf-8",
+            ".sh": "text/plain; charset=utf-8",
+            ".py": "text/plain; charset=utf-8",
+        }
+        content_type = ct_map.get(ext, "text/plain; charset=utf-8")
+        self._send_text(content, content_type=content_type)
+
+    def _handle_sse_run_record(self):
+        """GET /api/demo/run-record — SSE: 运行 da04 场景并录制"""
+        from recorder.session_recorder import SessionRecorder
+
+        # 加载 da04 场景
+        scenario_path = os.path.join(SCENARIOS_DIR, "deep_agent", "da04_production_demo.yaml")
+        if not os.path.isfile(scenario_path):
+            self._send_error(404, "da04_production_demo.yaml not found")
+            return
+
+        self.send_response(200)
+        self.send_header("Content-Type", "text/event-stream")
+        self.send_header("Cache-Control", "no-cache")
+        self.send_header("Connection", "keep-alive")
+        self._send_cors_headers()
+        self.end_headers()
+
+        try:
+            # 初始化录制器
+            recorder = SessionRecorder(
+                records_dir=RECORDS_DIR,
+                agent_id="deep-agent-fintech-analyst",
+                collect_mode="simulation",
+            )
+            recorder.start()
+            session_id = recorder.session_id
+
+            # 发送开始事件
+            self._sse_send({"type": "recording_start", "session_id": session_id})
+
+            # 加载场景并转换事件
+            tool_calls, base_ts, scenario = self._load_da04_scenario()
+            raw_events = self._tool_calls_to_events(
+                tool_calls, base_ts, "deep-agent-fintech-analyst", "da04")
+
+            # 初始化 observer_core pipeline
+            runner = StreamScenarioRunner(
+                BASE_DIR, os.path.join(BASE_DIR, "output"),
+                "deep_agent", "da04")
+
+            total = len(raw_events)
+            stats = {"total": 0, "allow": 0, "alert": 0, "block": 0}
+            start_time = time.time()
+
+            for i, raw in enumerate(raw_events, 1):
+                # 录制原始事件
+                recorder.write_event(raw)
+                # 处理事件
+                step_data = runner._process_one_event(raw, scenario, i, total)
+                step_data["type"] = "step"
+                self._sse_send(step_data)
+                # 统计
+                stats["total"] += 1
+                action = step_data.get("decision_action", "ALLOW")
+                if action == "BLOCK":
+                    stats["block"] += 1
+                elif action == "ALERT":
+                    stats["alert"] += 1
+                else:
+                    stats["allow"] += 1
+                time.sleep(0.15)  # 演示用延迟
+
+            # 停止录制
+            recorder.stop()
+
+            # 发送完成事件
+            self._sse_send({
+                "type": "recording_done",
+                "session_id": session_id,
+                "event_count": stats["total"],
+                "stats": stats,
+                "duration_seconds": round(time.time() - start_time, 2),
+            })
+
+        except (BrokenPipeError, ConnectionResetError, OSError):
+            pass
+        except Exception as e:
+            try:
+                self._sse_send({"type": "error", "message": str(e)})
+            except (BrokenPipeError, ConnectionResetError, OSError):
+                pass
+
+    def _load_da04_scenario(self):
+        """加载 da04 场景 YAML 并返回 (tool_calls, base_ts, scenario_dict)"""
+        scenario_path = os.path.join(SCENARIOS_DIR, "deep_agent", "da04_production_demo.yaml")
+        with open(scenario_path, "r", encoding="utf-8") as f:
+            data = yaml.safe_load(f)
+        tool_calls = data.get("tool_calls", [])
+        scenario_meta = data.get("scenario", {})
+        base_ts = scenario_meta.get("base_timestamp_ns", 1718092800000000000)
+        # 构建兼容 StreamScenarioRunner 的 scenario 字典
+        scenario = {
+            "id": scenario_meta.get("id", "da04"),
+            "name": scenario_meta.get("name", "Q3 商业报表分析"),
+            "description": scenario_meta.get("description", ""),
+            "expected_result": scenario_meta.get("expected_result", ""),
+        }
+        return tool_calls, base_ts, scenario
+
+    def _tool_calls_to_events(self, tool_calls, base_ts, agent_id, scenario_id):
+        """将 DeepAgent YAML tool_calls 转换为 RawEvent 列表"""
+        _EXEC_TOOLS = {"execute", "execute_command", "run_command", "shell", "bash"}
+        _READ_TOOLS = {"read_file", "read", "cat", "list_files", "grep", "glob"}
+        _WRITE_TOOLS = {"write_file", "write", "edit_file", "edit", "patch"}
+        _NET_TOOLS = {"web_fetch", "fetch", "web_search", "browse", "curl"}
+        events = []
+        ts = base_ts
+        pid = 10000
+        for i, tc in enumerate(tool_calls):
+            tool_name = tc.get("tool", "").lower().strip()
+            tool_input = tc.get("input", {})
+            delay_ms = tc.get("delay_ms", 100)
+            ts += int(delay_ms * 1_000_000)
+            eid = f"evt-{agent_id}-{i+1:04d}"
+            pid += 1
+            base_kwargs = dict(
+                event_id=eid, timestamp_ns=ts, pid=pid, ppid=1,
+                agent_id=agent_id, agent_framework="deep-agent",
+            )
+            if tool_name in _EXEC_TOOLS:
+                cmd = tool_input.get("command", "echo hello")
+                parts = cmd.split()
+                events.append(RawEvent(
+                    event_type="exec",
+                    executable=parts[0] if parts else cmd,
+                    arguments=parts[1:] if len(parts) > 1 else [],
+                    **base_kwargs,
+                ))
+            elif tool_name in _READ_TOOLS:
+                fpath = tool_input.get("path", "/tmp/unknown")
+                events.append(RawEvent(
+                    event_type="file_open",
+                    file_path=fpath, file_op="read",
+                    **base_kwargs,
+                ))
+            elif tool_name in _WRITE_TOOLS:
+                fpath = tool_input.get("path", "/tmp/unknown")
+                events.append(RawEvent(
+                    event_type="file_open",
+                    file_path=fpath, file_op="write",
+                    **base_kwargs,
+                ))
+            elif tool_name in _NET_TOOLS:
+                url = tool_input.get("url", "https://example.com")
+                host, port = self._extract_host_port(url)
+                events.append(RawEvent(
+                    event_type="net_conn",
+                    remote_addr=host, remote_port=port,
+                    **base_kwargs,
+                ))
+            else:
+                events.append(RawEvent(
+                    event_type="exec",
+                    executable=tool_name, arguments=[],
+                    **base_kwargs,
+                ))
+        return events
+
+    def _extract_host_port(self, url):
+        """从 URL 提取 host 和 port"""
+        import re
+        m = re.match(r'(\w+)://([^:/]+)(?::(\d+))?', url)
+        if m:
+            host = m.group(2)
+            port = int(m.group(3)) if m.group(3) else (443 if url.startswith("https") else 80)
+            return host, port
+        return "unknown.host", 443
+
+    def _sse_send(self, data):
+        """SSE 发送单条消息"""
+        json_data = json.dumps(data, ensure_ascii=False, default=str)
+        self.wfile.write(f"data: {json_data}\n\n".encode("utf-8"))
+        self.wfile.flush()
+
+    def _handle_delete_recordings(self, body):
+        """POST /api/demo/delete-recordings — 删除录制会话"""
+        scope = body.get("scope", "")
+        session_id = body.get("session_id", "")
+        deleted_dirs = 0
+        deleted_files = 0
+        if scope == "all":
+            if os.path.isdir(RECORDS_DIR):
+                for d in os.listdir(RECORDS_DIR):
+                    dpath = os.path.join(RECORDS_DIR, d)
+                    if os.path.isdir(dpath):
+                        count = sum(len(f) for _, _, f in os.walk(dpath))
+                        deleted_files += count
+                        deleted_dirs += 1
+                        shutil.rmtree(dpath, ignore_errors=True)
+        elif scope == "session" and session_id:
+            session_path = os.path.join(RECORDS_DIR, session_id)
+            if os.path.isdir(session_path):
+                count = sum(len(f) for _, _, f in os.walk(session_path))
+                deleted_files += count
+                deleted_dirs += 1
+                shutil.rmtree(session_path, ignore_errors=True)
+        else:
+            self._send_error(400, f"Invalid scope or missing session_id")
+            return
+        self._send_json({
+            "success": True,
+            "deleted": {"directories": deleted_dirs, "files": deleted_files},
+        })
+
+    def _handle_sse_replay(self, session_id):
+        """GET /api/demo/replay?session_id=xxx — SSE: 回放指定录制会话"""
+        if not session_id:
+            self._send_error(400, "Missing session_id")
+            return
+        session_path = os.path.join(RECORDS_DIR, session_id)
+        if not os.path.isdir(session_path):
+            self._send_error(404, f"Session not found: {session_id}")
+            return
+        events_path = os.path.join(session_path, "events.jsonl")
+        if not os.path.isfile(events_path):
+            self._send_error(404, "events.jsonl not found in session")
+            return
+
+        self.send_response(200)
+        self.send_header("Content-Type", "text/event-stream")
+        self.send_header("Cache-Control", "no-cache")
+        self.send_header("Connection", "keep-alive")
+        self._send_cors_headers()
+        self.end_headers()
+
+        try:
+            from recorder.replay_engine import ReplayEngine
+            from collector.file_replay_collector import FileReplayCollector
+
+            # 生成带时间戳的回放输出目录名
+            replay_ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+            replay_dir_name = f"replay_output_{replay_ts}"
+            replay_output_dir = os.path.join(session_path, replay_dir_name)
+
+            self._sse_send({
+                "type": "replay_start",
+                "session_id": session_id,
+                "replay_id": replay_ts,
+                "message": f"开始回放会话 {session_id}"
+            })
+
+            # 加载事件文件统计行数
+            with open(events_path, "r", encoding="utf-8") as f:
+                total_lines = sum(1 for line in f if line.strip())
+
+            self._sse_send({
+                "type": "replay_info",
+                "total_events": total_lines,
+                "replay_dir": replay_dir_name,
+            })
+
+            # 配置 ReplayEngine 使用自定义输出目录
+            config = {"virtual_clock": {"start_ns": 1718092800000000000}}
+            engine = ReplayEngine(config)
+
+            # 调用 replay() 获取结果
+            result = engine.replay(session_path, agent_id=session_id)
+
+            # 将默认的 replay_output/ 重命名为带时间戳的目录
+            default_output = os.path.join(session_path, "replay_output")
+            if os.path.isdir(default_output) and default_output != replay_output_dir:
+                if os.path.isdir(replay_output_dir):
+                    shutil.rmtree(replay_output_dir, ignore_errors=True)
+                os.rename(default_output, replay_output_dir)
+
+            # 发送逐事件回放步骤（从摘要中获取统计）
+            stats = {
+                "total": result.get("total", 0),
+                "allow": result.get("allow", 0),
+                "alert": result.get("alert", 0),
+                "block": result.get("block", 0),
+            }
+
+            # 列出回放产物文件
+            replay_files = []
+            if os.path.isdir(replay_output_dir):
+                for root, dirs, files in os.walk(replay_output_dir):
+                    dirs.sort()
+                    for fname in sorted(files):
+                        fpath = os.path.join(root, fname)
+                        rel = os.path.relpath(fpath, session_path)
+                        try:
+                            size = os.path.getsize(fpath)
+                        except OSError:
+                            size = 0
+                        replay_files.append({"name": fname, "path": rel, "size": size})
+
+            self._sse_send({
+                "type": "replay_done",
+                "session_id": session_id,
+                "replay_id": replay_ts,
+                "replay_dir": replay_dir_name,
+                "stats": stats,
+                "event_count": stats["total"],
+                "replay_files": replay_files,
+                "output_dir": os.path.relpath(replay_output_dir, session_path),
+            })
+
+        except (BrokenPipeError, ConnectionResetError, OSError):
+            pass
+        except Exception as e:
+            try:
+                self._sse_send({"type": "error", "message": str(e)})
+            except (BrokenPipeError, ConnectionResetError, OSError):
+                pass
+
+    def _handle_delete_replay_output(self, body):
+        """POST /api/demo/delete-replay-output — 删除指定回放产物"""
+        session_id = body.get("session_id", "")
+        replay_dir = body.get("replay_dir", "")
+        if not session_id or not replay_dir:
+            self._send_error(400, "Missing session_id or replay_dir")
+            return
+        # 安全校验：replay_dir 必须是 replay_output 开头
+        if not replay_dir.startswith("replay_output"):
+            self._send_error(400, "Invalid replay_dir name")
+            return
+        session_path = os.path.join(RECORDS_DIR, session_id)
+        replay_path = os.path.join(session_path, replay_dir)
+        # 路径安全检查
+        real_path = os.path.realpath(replay_path)
+        real_session = os.path.realpath(session_path)
+        if not real_path.startswith(real_session + os.sep):
+            self._send_error(403, "Path traversal detected")
+            return
+        if not os.path.isdir(replay_path):
+            self._send_error(404, f"Replay dir not found: {replay_dir}")
+            return
+        count = sum(len(f) for _, _, f in os.walk(replay_path))
+        shutil.rmtree(replay_path, ignore_errors=True)
+        self._send_json({
+            "success": True,
+            "deleted": {"directories": 1, "files": count},
+            "replay_dir": replay_dir,
+        })
 
     def _find_scenario(self, scenario_id, category=None):
         """查找场景 YAML 文件路径"""

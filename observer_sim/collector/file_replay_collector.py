@@ -46,8 +46,7 @@ class FileReplayCollector(ICollector):
         self.config = config
         self.replay_config = config.get("file_replay", {})
         self.target_agent_id = self.replay_config.get(
-            "target_agent_id",
-            self.replay_config.get("default_agent_id", "replay-agent"))
+            "default_agent_id", "replay-agent")
 
         # 内部状态
         self._events: List[RawEvent] = []

@@ -113,19 +113,20 @@ class ReportExporter:
             lines.append(f"| {level} | {count} | {pct} {bar} |")
         lines.append("")
 
-        # 阻断事件明细
-        blocked_entries = [e for e in entries if e.blocked]
+        # 阻断事件明细 — 统一使用 blocking_tier 判断是否实际执行了阻断
+        blocked_entries = [e for e in entries if e.blocking_tier in ("TIER2", "TIER3")]
         if blocked_entries:
-            lines.append("## 3. 阻断事件明细")
+            lines.append("## 3. 阻断/升级事件明细")
             lines.append("")
-            lines.append("| 事件ID | Agent | 类型 | 风险评分 | 决策 | 阻断等级 | 原因 |")
-            lines.append("|--------|-------|------|---------|------|---------|------|")
+            lines.append("| 事件ID | Agent | 类型 | 风险评分 | 研判决策 | 执行等级 | 原因 | 备注 |")
+            lines.append("|--------|-------|------|---------|---------|---------|------|------|")
             for e in blocked_entries:
                 desc = e.description[:30] + "..." if len(e.description) > 30 else e.description
+                is_escalated = "升级阻断" if e.decision_action != "BLOCK" else ""
                 lines.append(
                     f"| {e.event_id} | {e.agent_id} | {e.event_type} | "
                     f"{e.risk_score:.2f} | {e.decision_action} | {e.blocking_tier} | "
-                    f"{e.decision_reason[:20]} |"
+                    f"{e.decision_reason[:20]} | {is_escalated} |"
                 )
             lines.append("")
 
@@ -174,9 +175,16 @@ class ReportExporter:
         lines.append("")
         lines.append("```")
         for e in entries:
-            status = "BLOCK" if e.blocked else ("ALERT" if e.decision_action == "ALERT" else "PASS")
-            marker = "[X]" if e.blocked else "[ ]"
-            lines.append(f"  {marker} [{status:5s}] t={e.timestamp_ns:>12d}ns  {e.description[:50]}")
+            # 统一以 BlockingResult 为数据源：blocked=True → [X] BLOCK，升级事件标 (upgraded)
+            if e.blocked:
+                marker = "[X]"
+                status = "BLOCK"
+                escalated_note = " (upgraded)" if e.decision_action != "BLOCK" else ""
+            else:
+                marker = "[ ]"
+                status = e.decision_action if e.decision_action in ("BLOCK", "ALERT") else "PASS"
+                escalated_note = ""
+            lines.append(f"  {marker} [{status:5s}] t={e.timestamp_ns:>12d}ns  {e.description[:50]}{escalated_note}")
         lines.append("```")
         lines.append("")
 

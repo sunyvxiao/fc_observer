@@ -473,6 +473,192 @@
             .category-grid { grid-template-columns: 1fr; }
             .analysis-grid { grid-template-columns: 1fr; }
         }
+
+        /* ── 录制-回放页面 ── */
+        .demo-step {
+            background: var(--bg-card);
+            border: 1px solid var(--border-color);
+            border-radius: 10px;
+            padding: 20px 24px;
+            margin-bottom: 20px;
+            position: relative;
+        }
+        .demo-step .step-header {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            margin-bottom: 14px;
+        }
+        .demo-step .step-number {
+            width: 32px;
+            height: 32px;
+            border-radius: 50%;
+            background: var(--accent-blue);
+            color: #fff;
+            font-weight: bold;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 14px;
+            flex-shrink: 0;
+        }
+        .demo-step .step-title {
+            font-size: 16px;
+            font-weight: bold;
+            color: var(--accent-cyan);
+        }
+        .demo-step .step-desc {
+            font-size: 13px;
+            color: var(--text-secondary);
+            margin-bottom: 12px;
+        }
+        .file-tree-widget {
+            font-size: 13px;
+            font-family: 'Consolas', 'Courier New', monospace;
+            background: #0d0d1a;
+            border: 1px solid var(--border-color);
+            border-radius: 6px;
+            padding: 12px;
+            max-height: 320px;
+            overflow-y: auto;
+        }
+        .ft-dir { color: var(--accent-blue); cursor: pointer; user-select: none; padding: 3px 0; }
+        .ft-dir:hover { color: var(--accent-cyan); }
+        .ft-file { color: var(--text-primary); cursor: pointer; padding: 3px 0; }
+        .ft-file:hover { color: var(--accent-green); }
+        .ft-indent { padding-left: 20px; }
+        .code-block {
+            background: #0d0d1a;
+            border: 1px solid var(--border-color);
+            border-radius: 6px;
+            padding: 16px;
+            font-family: 'Consolas', 'Courier New', monospace;
+            font-size: 13px;
+            line-height: 1.6;
+            white-space: pre-wrap;
+            max-height: 400px;
+            overflow-y: auto;
+            color: var(--text-primary);
+        }
+        .recording-summary {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+            gap: 12px;
+            margin-top: 12px;
+        }
+        .summary-card {
+            background: var(--bg-secondary);
+            border: 1px solid var(--border-color);
+            border-radius: 6px;
+            padding: 12px;
+            text-align: center;
+        }
+        .summary-card .sc-value {
+            font-size: 24px;
+            font-weight: bold;
+            margin-bottom: 4px;
+        }
+        .summary-card .sc-label {
+            font-size: 12px;
+            color: var(--text-secondary);
+        }
+        .session-list-item {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 12px 16px;
+            background: var(--bg-secondary);
+            border: 1px solid var(--border-color);
+            border-radius: 6px;
+            margin-bottom: 8px;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+        .session-list-item:hover {
+            border-color: var(--accent-blue);
+            background: rgba(68, 153, 255, 0.08);
+        }
+        .session-list-item .sl-info { flex: 1; }
+        .session-list-item .sl-name { font-weight: bold; font-size: 14px; margin-bottom: 2px; }
+        .session-list-item .sl-meta { font-size: 12px; color: var(--text-secondary); }
+        .detail-two-col {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 20px;
+        }
+        @media (max-width: 900px) {
+            .detail-two-col { grid-template-columns: 1fr; }
+        }
+        .tab-bar {
+            display: flex;
+            gap: 0;
+            border-bottom: 2px solid var(--border-color);
+            margin-bottom: 16px;
+        }
+        .tab-item {
+            padding: 10px 20px;
+            font-size: 14px;
+            cursor: pointer;
+            color: var(--text-secondary);
+            border-bottom: 2px solid transparent;
+            margin-bottom: -2px;
+            transition: all 0.2s;
+        }
+        .tab-item:hover { color: var(--text-primary); }
+        .tab-item.active-tab {
+            color: var(--accent-blue);
+            border-bottom-color: var(--accent-blue);
+        }
+        .btn-run-all-big {
+            background: linear-gradient(135deg, var(--accent-green), #00cc66);
+            color: #1a1a2e;
+            padding: 12px 28px;
+            font-size: 15px;
+            font-weight: bold;
+            border-radius: 6px;
+            border: none;
+            cursor: pointer;
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+            margin-bottom: 16px;
+        }
+        .btn-run-all-big:hover { background: linear-gradient(135deg, #00cc66, #00aa55); }
+        .file-preview-modal {
+            position: fixed;
+            top: 0; left: 0; right: 0; bottom: 0;
+            background: rgba(0,0,0,0.7);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            z-index: 2000;
+        }
+        .file-preview-content {
+            background: var(--bg-primary);
+            border: 1px solid var(--border-color);
+            border-radius: 10px;
+            padding: 20px;
+            max-width: 700px;
+            width: 90%;
+            max-height: 80vh;
+            overflow-y: auto;
+        }
+        .file-preview-content .fp-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 12px;
+            padding-bottom: 8px;
+            border-bottom: 1px solid var(--border-color);
+        }
+        .file-preview-content .fp-title { font-weight: bold; color: var(--accent-cyan); }
+        .file-preview-content .fp-close {
+            cursor: pointer;
+            color: var(--text-secondary);
+            font-size: 18px;
+            padding: 4px 8px;
+        }
+        .file-preview-content .fp-close:hover { color: var(--accent-red); }
     </style>
 </head>
 <body>
@@ -484,17 +670,13 @@
                 <h2>方寸观察者</h2>
             </div>
             <nav>
-                <div class="nav-item active" data-view="scenarios" onclick="showView('scenarios')">
+                <div class="nav-item active" data-view="all-scenarios" onclick="showView('all-scenarios')">
                     <span class="nav-icon">&#x1F4CB;</span>
-                    <span>按分类浏览场景</span>
+                    <span>全面场景模拟</span>
                 </div>
-                <div class="nav-item" data-view="tests" onclick="showView('tests')">
-                    <span class="nav-icon">&#x2705;</span>
-                    <span>运行单元测试</span>
-                </div>
-                <div class="nav-item" data-view="run-all" onclick="showView('run-all')">
-                    <span class="nav-icon">&#x1F680;</span>
-                    <span>全量模拟测试</span>
+                <div class="nav-item" data-view="record-replay" onclick="showView('record-replay')">
+                    <span class="nav-icon">&#x1F3AC;</span>
+                    <span>录制-回放</span>
                 </div>
                 <div class="nav-item" data-view="reports" onclick="showView('reports')">
                     <span class="nav-icon">&#x1F4C4;</span>
@@ -513,10 +695,20 @@
 
         <!-- 主内容区 -->
         <div id="main-content">
-            <!-- 视图: 分类浏览场景 -->
-            <div id="view-scenarios" class="view active-view">
-                <h1 class="view-title">&#x1F4CB; 场景分类浏览</h1>
-                <div id="categories-container" class="category-grid">
+            <!-- 视图: 全面场景模拟 -->
+            <div id="view-all-scenarios" class="view active-view">
+                <h1 class="view-title">&#x1F4CB; 全面场景模拟</h1>
+                <button class="btn-run-all-big" onclick="runAllScenarios()">&#x1F680; 全量运行（全部 37 个场景）</button>
+                <button class="btn btn-danger" onclick="stopCurrentRun()" style="margin-left:8px;">&#x23F9; 停止</button>
+                <div id="run-all-progress" style="display:none;">
+                    <div class="progress-bar"><div class="progress-fill" id="progress-fill" style="width:0%"></div></div>
+                    <div id="progress-text" style="font-size:13px; color:var(--text-secondary);"></div>
+                </div>
+                <div id="run-all-log" style="margin-top:12px;">
+                    <div id="event-log-all"></div>
+                </div>
+                <div id="run-all-stats"></div>
+                <div id="categories-container" class="category-grid" style="margin-top:20px;">
                     <div class="card" style="color: var(--text-secondary);">加载中...</div>
                 </div>
                 <div id="scenarios-container" style="display:none; margin-top:20px;">
@@ -544,53 +736,146 @@
                 <div id="analysis-panel"></div>
             </div>
 
-            <!-- 视图: 单元测试 -->
-            <div id="view-tests" class="view">
-                <h1 class="view-title">&#x2705; 运行单元测试</h1>
-                <div class="card" style="text-align:center;">
-                    <p style="margin-bottom:16px; color: var(--text-secondary);">
-                        运行全部 130 个单元测试（约需 10-30 秒）
-                    </p>
-                    <button class="btn btn-primary" onclick="runUnitTests()">&#x25B6; 开始测试</button>
-                    <div id="test-spinner" class="spinner"></div>
-                    <div id="test-result"></div>
+            <!-- 视图: 录制-回放 -->
+            <div id="view-record-replay" class="view">
+                <h1 class="view-title">&#x1F3AC; 录制-回放演示</h1>
+                <p style="color:var(--text-secondary); margin-bottom:20px;">
+                    模拟真实生产环境中的旁路监控场景：Agent 独立执行任务，监控系统旁路捕获并分析。
+                </p>
+                <!-- 场景选择 -->
+                <div class="card" style="margin-bottom:20px;">
+                    <div class="card-title">&#x1F4C1; 演示场景</div>
+                    <div id="demo-scene-selector" style="margin-top:8px;">
+                        <div class="scenario-item" style="cursor:pointer; border-color:var(--accent-blue);" onclick="selectDemoScenario('da04')">
+                            <div class="sc-info">
+                                <div class="sc-name">Q3 商业报表分析 (da04)</div>
+                                <div class="sc-desc">金融科技公司 AI Agent 执行市场分析，过程中逐步越权访问敏感资源</div>
+                            </div>
+                            <div class="sc-events">17 事件</div>
+                        </div>
+                    </div>
                 </div>
-            </div>
-
-            <!-- 视图: 全量运行 -->
-            <div id="view-run-all" class="view">
-                <h1 class="view-title">&#x1F680; 全量模拟测试</h1>
-                <div class="card" style="margin-bottom:16px;">
-                    <p style="margin-bottom:12px; color: var(--text-secondary);">
-                        运行全部 37 个场景（5 大分类）
-                    </p>
-                    <button class="btn btn-primary" onclick="runAllScenarios()">&#x25B6; 开始全量运行</button>
-                    <button class="btn btn-danger" onclick="stopCurrentRun()" style="margin-left:8px;">&#x23F9; 停止</button>
+                <!-- Step 1: Agent 数据输入 -->
+                <div class="demo-step">
+                    <div class="step-header">
+                        <div class="step-number">1</div>
+                        <div class="step-title">Agent 数据输入</div>
+                    </div>
+                    <div class="step-desc">Agent 工作目录文件树结构，点击文件可预览内容</div>
+                    <div id="demo-workspace-tree" class="file-tree-widget">
+                        <span style="color:var(--text-secondary);">加载中...</span>
+                    </div>
                 </div>
-                <div id="run-all-progress" style="display:none;">
-                    <div class="progress-bar"><div class="progress-fill" id="progress-fill" style="width:0%"></div></div>
-                    <div id="progress-text" style="font-size:13px; color:var(--text-secondary);"></div>
+                <!-- Step 2: 任务提示词 -->
+                <div class="demo-step">
+                    <div class="step-header">
+                        <div class="step-number">2</div>
+                        <div class="step-title">任务提示词</div>
+                    </div>
+                    <div class="step-desc">AI Agent 接收的任务指令原文</div>
+                    <div id="demo-task-instruction" class="code-block">
+                        <span style="color:var(--text-secondary);">加载中...</span>
+                    </div>
                 </div>
-                <div id="run-all-log" style="margin-top:16px;">
-                    <div id="event-log-all"></div>
+                <!-- Step 3: 运行 Agent -->
+                <div class="demo-step">
+                    <div class="step-header">
+                        <div class="step-number">3</div>
+                        <div class="step-title">运行 Agent 并录制</div>
+                    </div>
+                    <div class="step-desc">启动 Agent 执行任务，监控系统同时开始录制事件流</div>
+                    <button class="btn btn-primary" id="btn-run-agent" onclick="runDemoRecord()" style="font-size:14px; padding:10px 24px;">&#x25B6; 运行 Agent，同时开始录制</button>
+                    <div id="demo-event-log" style="margin-top:12px;"></div>
                 </div>
-                <div id="run-all-stats"></div>
+                <!-- Step 4: 完成录制 -->
+                <div class="demo-step">
+                    <div class="step-header">
+                        <div class="step-number">4</div>
+                        <div class="step-title">录制摘要</div>
+                    </div>
+                    <div id="demo-recording-summary" style="color:var(--text-secondary);">等待运行完成...</div>
+                </div>
+                <!-- Step 5: 输出成果 -->
+                <div class="demo-step">
+                    <div class="step-header">
+                        <div class="step-number">5</div>
+                        <div class="step-title">输出成果</div>
+                    </div>
+                    <div class="step-desc">Agent 工作成果和系统录制的文件</div>
+                    <div id="demo-output-files" style="color:var(--text-secondary);">运行完成后可用...</div>
+                </div>
+                <!-- Step 6: 回放录制 -->
+                <div class="demo-step">
+                    <div class="step-header">
+                        <div class="step-number" style="background:var(--accent-green);">6</div>
+                        <div class="step-title">回放录制</div>
+                    </div>
+                    <div class="step-desc">选择已录制的会话，执行 observer_core 全链路分析，一次录制可多次回放</div>
+                    <div id="replay-session-selector" style="margin-top:12px;">
+                        <label style="color:var(--text-secondary); font-size:13px;">选择录制会话：</label>
+                        <select id="replay-session-select" style="padding:8px; margin:8px 8px 8px 0; background:var(--bg-secondary); color:var(--text-primary); border:1px solid var(--border-color); border-radius:4px; min-width:320px;">
+                            <option value="">-- 请选择 --</option>
+                        </select>
+                        <button class="btn btn-success" id="btn-start-replay" onclick="startReplay()" style="font-size:14px; padding:10px 24px;">&#x25B6; 开始回放</button>
+                    </div>
+                    <div id="replay-event-log" style="margin-top:12px;"></div>
+                    <div id="replay-summary" style="margin-top:12px;"></div>
+                </div>
+                <!-- Step 7: 历史回放记录 -->
+                <div class="demo-step">
+                    <div class="step-header">
+                        <div class="step-number">7</div>
+                        <div class="step-title">历史回放记录</div>
+                    </div>
+                    <div class="step-desc">查看所有历史录制会话及其多次回放产物，点击可查看详情</div>
+                    <div id="demo-session-list">
+                        <span style="color:var(--text-secondary);">加载中...</span>
+                    </div>
+                </div>
+                <!-- 录制详情视图 -->
+                <div id="demo-session-detail" style="display:none;">
+                    <div class="report-back-btn" onclick="backToSessionList()">&#x2190; 返回会话列表</div>
+                    <h3 style="margin:12px 0; color:var(--accent-cyan);" id="detail-session-title">会话详情</h3>
+                    <div class="detail-two-col">
+                        <div>
+                            <h4 style="color:var(--accent-green); margin-bottom:8px;">Agent 输出</h4>
+                            <div id="detail-agent-output" class="file-tree-widget"></div>
+                        </div>
+                        <div>
+                            <h4 style="color:var(--accent-yellow); margin-bottom:8px;">监测系统输出</h4>
+                            <div id="detail-monitor-output" class="file-tree-widget"></div>
+                        </div>
+                    </div>
+                    <div id="detail-file-preview" style="margin-top:16px;"></div>
+                </div>
             </div>
 
             <!-- 视图: 历史报告查看 -->
             <div id="view-reports" class="view">
                 <h1 class="view-title">&#x1F4C4; 查看历史报告</h1>
-                <div id="report-tree" class="report-tree">
-                    <div class="card" style="color: var(--text-secondary);">加载中...</div>
+                <div class="tab-bar">
+                    <div class="tab-item active-tab" onclick="switchReportTab('run')">场景运行报告</div>
+                    <div class="tab-item" onclick="switchReportTab('replay')">场景回放</div>
                 </div>
-                <div id="report-content" class="report-content" style="display:none;"></div>
+                <div id="report-tab-run">
+                    <div id="report-tree" class="report-tree">
+                        <div class="card" style="color: var(--text-secondary);">加载中...</div>
+                    </div>
+                    <div id="report-content" class="report-content" style="display:none;"></div>
+                </div>
+                <div id="report-tab-replay" style="display:none;">
+                    <div id="replay-report-list">
+                        <span style="color:var(--text-secondary);">加载中...</span>
+                    </div>
+                    <div id="replay-report-content" class="report-content" style="display:none;"></div>
+                </div>
             </div>
 
             <!-- 视图: 删除记录 -->
             <div id="view-delete" class="view">
                 <h1 class="view-title">&#x1F5D1; 删除测试记录</h1>
                 <div class="delete-section">
-                    <h3>&#x26A0; 删除全部记录</h3>
+                    <h3>&#x26A0; 删除全部场景运行记录</h3>
                     <p style="font-size:13px; color:var(--text-secondary); margin-bottom:12px;">
                         删除所有场景的运行报告、审计日志和证据文件
                     </p>
@@ -609,6 +894,14 @@
                         <option value="extreme">Extreme 极端场景</option>
                     </select>
                     <button class="btn btn-danger" onclick="deleteCategory()">删除该分类</button>
+                </div>
+                <div class="delete-section">
+                    <h3>&#x1F3AC; 删除场景回放录制</h3>
+                    <p style="font-size:13px; color:var(--text-secondary); margin-bottom:12px;">
+                        删除录制-回放功能生成的录制会话
+                    </p>
+                    <button class="btn btn-danger" onclick="deleteAllRecordings()">&#x1F5D1; 删除全部录制</button>
+                    <div id="delete-recording-list" style="margin-top:12px;"></div>
                 </div>
                 <div id="delete-result" style="margin-top:16px;"></div>
             </div>
@@ -631,14 +924,15 @@
         };
 
         const state = {
-            currentView: "scenarios",
+            currentView: "all-scenarios",
             sseConnection: null,
             sseActive: false,
             logBuffer: [],
             analysisPanel: null,
             progressData: null,
-            previousView: "scenarios",
-            lastRunReportPath: null,  // 最近一次运行生成的报告路径
+            previousView: "all-scenarios",
+            lastRunReportPath: null,
+            demoSessionId: null,
         };
 
         // ══════════════════════════════════════════════════════
@@ -681,8 +975,10 @@
             if (viewId === "scenario-run" && state.logBuffer.length > 0) {
                 restoreLogFromBuffer();
             }
-            if (viewId === "scenarios") showCategories();
+            if (viewId === "all-scenarios") showCategories();
             if (viewId === "reports") loadReportList();
+            if (viewId === "record-replay") initDemoPage();
+            if (viewId === "delete") loadDeleteRecordingList();
         }
 
         // ══════════════════════════════════════════════════════
@@ -929,36 +1225,7 @@
         }
 
         // ══════════════════════════════════════════════════════
-        //  8. 单元测试
-        // ══════════════════════════════════════════════════════
-        async function runUnitTests() {
-            const spinner = document.getElementById("test-spinner");
-            const resultEl = document.getElementById("test-result");
-            spinner.style.display = "block";
-            resultEl.innerHTML = "";
-            try {
-                const result = await apiPost("/api/tests/run", {});
-                spinner.style.display = "none";
-                const color = result.failed > 0 ? "test-failed" : "test-passed";
-                resultEl.innerHTML = `
-                    <div class="test-result">
-                        <div class="big-number ${color}">${result.passed} / ${result.total}</div>
-                        <p style="margin-top:8px; color:var(--text-secondary);">
-                            通过: ${result.passed} | 失败: ${result.failed} | 耗时: ${result.duration_seconds}s
-                        </p>
-                        ${result.failed_names.length > 0 ? `<div style="text-align:left; margin-top:12px; color:var(--accent-red); font-size:13px;">
-                            失败用例:<br>${result.failed_names.join("<br>")}
-                        </div>` : ""}
-                    </div>
-                `;
-            } catch (e) {
-                spinner.style.display = "none";
-                resultEl.innerHTML = `<div style="color:var(--accent-red);">测试失败: ${e.message}</div>`;
-            }
-        }
-
-        // ══════════════════════════════════════════════════════
-        //  9. 全量运行
+        //  8. 全量运行
         // ══════════════════════════════════════════════════════
         function runAllScenarios(category) {
             const progressEl = document.getElementById("run-all-progress");
@@ -1182,7 +1449,604 @@
         }
 
         // ══════════════════════════════════════════════════════
-        //  12. 工具函数
+        //  11. 录制-回放 Demo
+        // ══════════════════════════════════════════════════════
+        let demoInitialized = false;
+
+        async function initDemoPage() {
+            if (demoInitialized) {
+                loadSessionList();
+                loadReplaySessionSelector();
+                return;
+            }
+            demoInitialized = true;
+            try {
+                const [treeData, instrData] = await Promise.all([
+                    apiGet("/api/demo/workspace-tree"),
+                    apiGet("/api/demo/task-instruction"),
+                ]);
+                renderWorkspaceTree(treeData.tree, "demo-workspace-tree");
+                document.getElementById("demo-task-instruction").textContent = instrData.content || "未找到任务提示词文件";
+            } catch (e) {
+                document.getElementById("demo-workspace-tree").innerHTML = `<span style="color:var(--accent-red);">加载失败: ${e.message}</span>`;
+                document.getElementById("demo-task-instruction").textContent = "加载失败";
+            }
+            loadSessionList();
+            loadReplaySessionSelector();
+        }
+
+        async function loadReplaySessionSelector() {
+            const select = document.getElementById("replay-session-select");
+            try {
+                const data = await apiGet("/api/demo/recordings");
+                select.innerHTML = '<option value="">-- 请选择 --</option>';
+                (data.recordings || []).forEach(rec => {
+                    const opt = document.createElement("option");
+                    opt.value = rec.session_id;
+                    const evtCount = rec.event_count || 0;
+                    const replayBadge = rec.replay_count ? ` [${rec.replay_count}次回放]` : '';
+                    opt.textContent = `${rec.session_id} (${evtCount}事件)${replayBadge}`;
+                    select.appendChild(opt);
+                });
+            } catch (e) {
+                /* ignore */
+            }
+        }
+
+        function startReplay() {
+            const select = document.getElementById("replay-session-select");
+            const sessionId = select.value;
+            if (!sessionId) {
+                showNotification("请先选择一个录制会话");
+                return;
+            }
+            const btn = document.getElementById("btn-start-replay");
+            btn.disabled = true;
+            btn.textContent = "回放中...";
+            const logEl = document.getElementById("replay-event-log");
+            logEl.innerHTML = '<div id="replay-event-stream" style="font-family:Consolas,monospace;font-size:13px;background:#0d0d1a;border:1px solid var(--border-color);border-radius:6px;padding:12px;max-height:400px;overflow-y:auto;"></div>';
+            const stream = document.getElementById("replay-event-stream");
+            document.getElementById("replay-summary").innerHTML = '';
+
+            const es = new EventSource(`/api/demo/replay?session_id=${encodeURIComponent(sessionId)}`);
+            es.onmessage = (e) => {
+                const data = JSON.parse(e.data);
+                if (data.type === "replay_start") {
+                    const d = document.createElement("div");
+                    d.style.color = "var(--accent-cyan)";
+                    d.textContent = `\u25B6 回放开始  Session: ${data.session_id}  Replay ID: ${data.replay_id}`;
+                    stream.appendChild(d);
+                    stream.scrollTop = stream.scrollHeight;
+                } else if (data.type === "replay_info") {
+                    const d = document.createElement("div");
+                    d.style.color = "var(--text-secondary)";
+                    d.textContent = `\u{1F4CA} 事件总数: ${data.total_events}  输出目录: ${data.replay_dir}`;
+                    stream.appendChild(d);
+                    stream.scrollTop = stream.scrollHeight;
+                } else if (data.type === "replay_done") {
+                    es.close();
+                    btn.disabled = false;
+                    btn.innerHTML = "\u25B6 开始回放";
+                    renderReplaySummary(data);
+                    loadSessionList();
+                    loadReplaySessionSelector();
+                    showNotification("回放完成");
+                } else if (data.type === "error") {
+                    es.close();
+                    btn.disabled = false;
+                    btn.innerHTML = "\u25B6 开始回放";
+                    showNotification("回放错误: " + data.message);
+                }
+            };
+            es.onerror = () => {
+                es.close();
+                btn.disabled = false;
+                btn.innerHTML = "\u25B6 开始回放";
+                showNotification("回放连接中断");
+            };
+        }
+
+        function renderReplaySummary(data) {
+            const el = document.getElementById("replay-summary");
+            const s = data.stats || {};
+            const filesHtml = (data.replay_files || []).map(f =>
+                `<div class="ft-file" onclick="previewSessionFile('${data.session_id}/${f.path}')" style="padding:3px 0;">&#x1F4C4; ${f.name} <span style="color:var(--text-secondary);font-size:11px;">(${f.size < 1024 ? f.size + 'B' : (f.size/1024).toFixed(1) + 'KB'})</span></div>`
+            ).join('');
+            el.innerHTML = `
+                <div class="recording-summary" style="margin-bottom:12px;">
+                    <div class="summary-card"><div class="sc-value" style="color:var(--accent-cyan);">${data.replay_id || ''}</div><div class="sc-label">回放 ID</div></div>
+                    <div class="summary-card"><div class="sc-value">${data.event_count || 0}</div><div class="sc-label">事件数</div></div>
+                    <div class="summary-card"><div class="sc-value" style="color:var(--accent-green);">${s.allow || 0}</div><div class="sc-label">Allow</div></div>
+                    <div class="summary-card"><div class="sc-value" style="color:var(--accent-yellow);">${s.alert || 0}</div><div class="sc-label">Alert</div></div>
+                    <div class="summary-card"><div class="sc-value" style="color:var(--accent-red);">${s.block || 0}</div><div class="sc-label">Block</div></div>
+                </div>
+                <div style="margin-top:8px;">
+                    <div style="color:var(--text-secondary); font-size:13px; margin-bottom:6px;">回放产物文件 (点击预览):</div>
+                    <div class="file-tree-widget" style="padding:10px;">${filesHtml || '<span style="color:var(--text-secondary);">无产物文件</span>'}</div>
+                </div>
+            `;
+        }
+
+        function renderWorkspaceTree(tree, containerId) {
+            const container = document.getElementById(containerId);
+            container.innerHTML = "";
+            if (!tree || !tree.length) {
+                container.innerHTML = '<span style="color:var(--text-secondary);">目录为空</span>';
+                return;
+            }
+            tree.forEach(item => container.appendChild(renderTreeNode(item, 0)));
+        }
+
+        function renderTreeNode(item, depth) {
+            const wrapper = document.createElement("div");
+            wrapper.style.paddingLeft = (depth * 18) + "px";
+            if (item.type === "dir") {
+                const dirEl = document.createElement("div");
+                dirEl.className = "ft-dir";
+                dirEl.innerHTML = `&#x1F4C1; ${item.name}`;
+                const childrenDiv = document.createElement("div");
+                childrenDiv.style.display = "block";
+                if (item.children) {
+                    item.children.forEach(c => childrenDiv.appendChild(renderTreeNode(c, depth + 1)));
+                }
+                dirEl.onclick = () => {
+                    const open = childrenDiv.style.display !== "none";
+                    childrenDiv.style.display = open ? "none" : "block";
+                    dirEl.innerHTML = (open ? "&#x1F4C1; " : "&#x1F4C2; ") + item.name;
+                };
+                wrapper.appendChild(dirEl);
+                wrapper.appendChild(childrenDiv);
+            } else {
+                const fileEl = document.createElement("div");
+                fileEl.className = "ft-file";
+                const sizeStr = item.size < 1024 ? `${item.size}B` : `${(item.size/1024).toFixed(1)}KB`;
+                fileEl.innerHTML = `&#x1F4C4; ${item.name} <span style="color:var(--text-secondary); font-size:11px;">(${sizeStr})</span>`;
+                fileEl.onclick = () => previewDemoFile(item.path);
+                wrapper.appendChild(fileEl);
+            }
+            return wrapper;
+        }
+
+        async function previewDemoFile(path) {
+            const existing = document.querySelector('.file-preview-modal');
+            if (existing) existing.remove();
+            const modal = document.createElement("div");
+            modal.className = "file-preview-modal";
+            modal.onclick = (e) => { if (e.target === modal) modal.remove(); };
+            const content = document.createElement("div");
+            content.className = "file-preview-content";
+            content.innerHTML = `<div class="fp-header"><span class="fp-title">${path.split('/').pop()}</span><span class="fp-close" onclick="this.closest('.file-preview-modal').remove()">&times;</span></div><div style="color:var(--text-secondary);">加载中...</div>`;
+            modal.appendChild(content);
+            document.body.appendChild(modal);
+            try {
+                const resp = await fetch(`/api/demo/file-content?path=${encodeURIComponent(path)}`);
+                if (!resp.ok) throw new Error(await resp.text());
+                const text = await resp.text();
+                const ct = resp.headers.get('content-type') || '';
+                let body;
+                if (path.endsWith('.md')) {
+                    body = renderMarkdown(text);
+                } else if (path.endsWith('.json') || path.endsWith('.jsonl')) {
+                    try { body = `<pre style="white-space:pre-wrap;font-family:Consolas,monospace;font-size:12px;">${JSON.stringify(JSON.parse(text),null,2).replace(/</g,'&lt;')}</pre>`; }
+                    catch { body = `<pre style="white-space:pre-wrap;">${text.replace(/</g,'&lt;')}</pre>`; }
+                } else {
+                    body = `<pre style="white-space:pre-wrap;">${text.replace(/</g,'&lt;').replace(/>/g,'&gt;')}</pre>`;
+                }
+                content.innerHTML = `<div class="fp-header"><span class="fp-title">${path}</span><span class="fp-close" onclick="this.closest('.file-preview-modal').remove()">&times;</span></div>${body}`;
+            } catch (e) {
+                content.innerHTML = `<div class="fp-header"><span class="fp-title">${path}</span><span class="fp-close" onclick="this.closest('.file-preview-modal').remove()">&times;</span></div><div style="color:var(--accent-red);">加载失败: ${e.message}</div>`;
+            }
+        }
+
+        function selectDemoScenario(id) {
+            showNotification(`已选择场景: ${id}`);
+        }
+
+        function runDemoRecord() {
+            const btn = document.getElementById("btn-run-agent");
+            btn.disabled = true;
+            btn.textContent = "运行中...";
+            const logEl = document.getElementById("demo-event-log");
+            logEl.innerHTML = '<div id="demo-event-stream" style="font-family:Consolas,monospace;font-size:13px;background:#0d0d1a;border:1px solid var(--border-color);border-radius:6px;padding:12px;max-height:400px;overflow-y:auto;"></div>';
+            const stream = document.getElementById("demo-event-stream");
+            document.getElementById("demo-recording-summary").innerHTML = '<span style="color:var(--text-secondary);">运行中...</span>';
+            const es = new EventSource("/api/demo/run-record");
+            state.sseConnection = es;
+            state.sseActive = true;
+            es.onmessage = (e) => {
+                const data = JSON.parse(e.data);
+                if (data.type === "recording_start") {
+                    state.demoSessionId = data.session_id;
+                    const d = document.createElement("div");
+                    d.style.color = "var(--accent-cyan)";
+                    d.textContent = `▶ 录制开始  Session: ${data.session_id}`;
+                    stream.appendChild(d);
+                    stream.scrollTop = stream.scrollHeight;
+                } else if (data.type === "step") {
+                    const entry = renderLogEntry(data);
+                    stream.appendChild(entry);
+                    stream.scrollTop = stream.scrollHeight;
+                } else if (data.type === "recording_done") {
+                    es.close();
+                    state.sseConnection = null;
+                    state.sseActive = false;
+                    btn.disabled = false;
+                    btn.innerHTML = "&#x25B6; 运行 Agent，同时开始录制";
+                    renderRecordingSummary(data);
+                    loadSessionList();
+                    showNotification("录制完成");
+                } else if (data.type === "error") {
+                    es.close();
+                    state.sseConnection = null;
+                    state.sseActive = false;
+                    btn.disabled = false;
+                    btn.innerHTML = "&#x25B6; 运行 Agent，同时开始录制";
+                    showNotification("错误: " + data.message);
+                }
+            };
+            es.onerror = () => {
+                es.close();
+                state.sseConnection = null;
+                state.sseActive = false;
+                btn.disabled = false;
+                btn.innerHTML = "&#x25B6; 运行 Agent，同时开始录制";
+                showNotification("连接中断");
+            };
+        }
+
+        function renderRecordingSummary(data) {
+            const el = document.getElementById("demo-recording-summary");
+            const s = data.stats || {};
+            el.innerHTML = `
+                <div class="recording-summary">
+                    <div class="summary-card"><div class="sc-value" style="color:var(--accent-cyan);">${data.session_id || ''}</div><div class="sc-label">会话 ID</div></div>
+                    <div class="summary-card"><div class="sc-value">${data.event_count || 0}</div><div class="sc-label">事件数</div></div>
+                    <div class="summary-card"><div class="sc-value" style="color:var(--accent-green);">${s.allow || 0}</div><div class="sc-label">Allow</div></div>
+                    <div class="summary-card"><div class="sc-value" style="color:var(--accent-yellow);">${s.alert || 0}</div><div class="sc-label">Alert</div></div>
+                    <div class="summary-card"><div class="sc-value" style="color:var(--accent-red);">${s.block || 0}</div><div class="sc-label">Block</div></div>
+                </div>
+            `;
+            // 更新 Step 5 输出成果
+            const outEl = document.getElementById("demo-output-files");
+            outEl.innerHTML = `<div style="color:var(--accent-green);">\u2713 录制已保存到 records/${data.session_id}/events.jsonl</div>`;
+        }
+
+        async function loadSessionList() {
+            const listEl = document.getElementById("demo-session-list");
+            try {
+                const data = await apiGet("/api/demo/recordings");
+                if (!data.recordings || !data.recordings.length) {
+                    listEl.innerHTML = '<div style="color:var(--text-secondary);">暂无录制会话</div>';
+                    return;
+                }
+                listEl.innerHTML = "";
+                data.recordings.forEach(rec => {
+                    const item = document.createElement("div");
+                    item.className = "session-list-item";
+                    const mode = rec.collect_mode || "unknown";
+                    const evtCount = rec.event_count || 0;
+                    const dur = rec.duration_seconds ? `${parseFloat(rec.duration_seconds).toFixed(1)}s` : "-";
+                    const replayCount = rec.replay_count || 0;
+                    let replayBadge = '';
+                    if (replayCount > 0) {
+                        replayBadge = `<span style="color:var(--accent-green);font-size:11px;margin-left:8px;">\u2713 ${replayCount}次回放</span>`;
+                    }
+                    item.innerHTML = `
+                        <div class="sl-info">
+                            <div class="sl-name">${rec.session_id} ${replayBadge}</div>
+                            <div class="sl-meta">Agent: ${rec.agent_id || '-'} | ${evtCount} 事件 | ${dur} | ${mode}</div>
+                        </div>
+                        <span style="color:var(--accent-blue); font-size:13px;">查看详情 \u2192</span>
+                    `;
+                    item.onclick = () => showSessionDetail(rec.session_id);
+                    listEl.appendChild(item);
+                });
+            } catch (e) {
+                listEl.innerHTML = `<div style="color:var(--accent-red);">加载失败: ${e.message}</div>`;
+            }
+        }
+
+        async function showSessionDetail(sessionId) {
+            const detailEl = document.getElementById("demo-session-detail");
+            const listEl = document.getElementById("demo-session-list");
+            listEl.style.display = "none";
+            detailEl.style.display = "block";
+            document.getElementById("detail-session-title").textContent = `会话详情 — ${sessionId}`;
+            document.getElementById("detail-agent-output").innerHTML = '<span style="color:var(--text-secondary);">加载中...</span>';
+            document.getElementById("detail-monitor-output").innerHTML = '<span style="color:var(--text-secondary);">加载中...</span>';
+            try {
+                const data = await apiGet(`/api/demo/recording-detail?session_id=${sessionId}`);
+                // Agent 输出: 录制文件
+                const agentFiles = data.recorded_files || [];
+                const agentDiv = document.getElementById("detail-agent-output");
+                agentDiv.innerHTML = "";
+                if (!agentFiles.length) {
+                    agentDiv.innerHTML = '<span style="color:var(--text-secondary);">无 Agent 输出文件</span>';
+                } else {
+                    agentFiles.forEach(f => {
+                        const el = document.createElement("div");
+                        el.className = "ft-file";
+                        el.innerHTML = `&#x1F4C4; ${f.name}`;
+                        el.onclick = () => previewSessionFile(`${sessionId}/${f.path}`);
+                        agentDiv.appendChild(el);
+                    });
+                }
+                // 监测系统输出: 多次回放产物
+                const replayRuns = data.replay_runs || [];
+                const monDiv = document.getElementById("detail-monitor-output");
+                monDiv.innerHTML = "";
+                if (!replayRuns.length) {
+                    monDiv.innerHTML = '<span style="color:var(--text-secondary);">无回放产物（尚未回放）</span>';
+                } else {
+                    replayRuns.forEach((run, idx) => {
+                        // 回放运行标题
+                        const runHeader = document.createElement("div");
+                        runHeader.style.cssText = "color:var(--accent-cyan); font-weight:bold; padding:8px 0 4px; border-bottom:1px solid var(--border-color); margin-bottom:4px;";
+                        const stats = `${run.total || 0}事件 A:${run.allow||0} W:${run.alert||0} B:${run.block||0}`;
+                        runHeader.innerHTML = `&#x1F504; 回放 #${idx+1} [${run.replay_id}] <span style="font-size:11px;color:var(--text-secondary);font-weight:normal;">${stats} | ${run.file_count}文件</span>`;
+                        monDiv.appendChild(runHeader);
+                        // 回放文件
+                        (run.files || []).forEach(f => {
+                            const el = document.createElement("div");
+                            el.className = "ft-file";
+                            el.style.paddingLeft = "12px";
+                            el.innerHTML = `&#x1F4C4; ${f.name}`;
+                            el.onclick = () => previewSessionFile(`${sessionId}/${f.path}`);
+                            monDiv.appendChild(el);
+                        });
+                    });
+                }
+            } catch (e) {
+                document.getElementById("detail-agent-output").innerHTML = `<span style="color:var(--accent-red);">${e.message}</span>`;
+            }
+        }
+
+        async function previewSessionFile(apiPath) {
+            const previewEl = document.getElementById("detail-file-preview");
+            previewEl.innerHTML = '<div class="report-content" style="display:block;"><span style="color:var(--text-secondary);">加载中...</span></div>';
+            try {
+                const resp = await fetch(`/api/demo/file-content?path=${encodeURIComponent(apiPath)}`);
+                if (!resp.ok) throw new Error(await resp.text());
+                const text = await resp.text();
+                let body;
+                if (apiPath.endsWith('.md')) {
+                    body = renderMarkdown(text);
+                } else if (apiPath.endsWith('.json') || apiPath.endsWith('.jsonl')) {
+                    try { body = `<pre style="white-space:pre-wrap;font-family:Consolas,monospace;font-size:12px;">${JSON.stringify(JSON.parse(text),null,2).replace(/</g,'&lt;')}</pre>`; }
+                    catch { body = `<pre style="white-space:pre-wrap;">${text.replace(/</g,'&lt;')}</pre>`; }
+                } else {
+                    body = `<pre style="white-space:pre-wrap;">${text.replace(/</g,'&lt;').replace(/>/g,'&gt;')}</pre>`;
+                }
+                previewEl.innerHTML = `<div class="report-content" style="display:block;">${body}</div>`;
+            } catch (e) {
+                previewEl.innerHTML = `<div class="report-content" style="display:block;color:var(--accent-red);">加载失败: ${e.message}</div>`;
+            }
+        }
+
+        function backToSessionList() {
+            document.getElementById("demo-session-detail").style.display = "none";
+            document.getElementById("demo-session-list").style.display = "block";
+        }
+
+        // ══════════════════════════════════════════════════════
+        //  12. 报告 Tab 切换
+        // ══════════════════════════════════════════════════════
+        function switchReportTab(tab) {
+            document.querySelectorAll('#view-reports .tab-item').forEach(t => t.classList.remove('active-tab'));
+            event.target.classList.add('active-tab');
+            document.getElementById('report-tab-run').style.display = tab === 'run' ? '' : 'none';
+            document.getElementById('report-tab-replay').style.display = tab === 'replay' ? '' : 'none';
+            if (tab === 'replay') loadReplayReports();
+        }
+
+        async function loadReplayReports() {
+            const listEl = document.getElementById('replay-report-list');
+            try {
+                const data = await apiGet("/api/demo/recordings");
+                const withReplay = (data.recordings || []).filter(r => r.replay_count > 0);
+                if (!withReplay.length) {
+                    listEl.innerHTML = '<div class="card" style="color:var(--text-secondary);">暂无回放报告。请先在录制-回放页面运行场景并回放。</div>';
+                    return;
+                }
+                listEl.innerHTML = "";
+                withReplay.forEach(rec => {
+                    const wrapper = document.createElement("div");
+                    wrapper.className = "session-list-item";
+                    wrapper.style.flexWrap = "wrap";
+                    wrapper.innerHTML = `
+                        <div class="sl-info">
+                            <div class="sl-name">${rec.session_id}</div>
+                            <div class="sl-meta">${rec.event_count || 0} 事件 | ${rec.replay_count} 次回放 | ${rec.agent_id || '-'}</div>
+                        </div>
+                        <span style="color:var(--accent-blue); font-size:13px;">展开 \u2192</span>
+                    `;
+                    const expandDiv = document.createElement("div");
+                    expandDiv.style.cssText = "width:100%; display:none; padding:8px 0 4px 16px;";
+                    // 展开每次回放
+                    (rec.replay_runs || []).forEach((run, idx) => {
+                        const runItem = document.createElement("div");
+                        runItem.style.cssText = "display:flex; justify-content:space-between; align-items:center; padding:6px 10px; margin:4px 0; background:var(--bg-secondary); border:1px solid var(--border-color); border-radius:4px; cursor:pointer;";
+                        const stats = `A:${run.allow||0} W:${run.alert||0} B:${run.block||0}`;
+                        runItem.innerHTML = `
+                            <div>
+                                <span style="color:var(--accent-cyan); font-weight:bold;">\u{1F504} 回放 #${idx+1}</span>
+                                <span style="color:var(--text-secondary); font-size:12px; margin-left:8px;">[${run.replay_id}] ${run.total||0}事件 ${stats} ${run.file_count}文件</span>
+                            </div>
+                            <span style="color:var(--accent-blue); font-size:12px;">查看报告 \u2192</span>
+                        `;
+                        runItem.onclick = (e) => {
+                            e.stopPropagation();
+                            viewReplayReportRun(rec.session_id, run.replay_dir);
+                        };
+                        expandDiv.appendChild(runItem);
+                    });
+                    let expanded = false;
+                    wrapper.onclick = () => {
+                        expanded = !expanded;
+                        expandDiv.style.display = expanded ? "block" : "none";
+                        wrapper.querySelector('span:last-child').textContent = expanded ? '收起 \u2191' : '展开 \u2192';
+                    };
+                    wrapper.appendChild(expandDiv);
+                    listEl.appendChild(wrapper);
+                });
+            } catch (e) {
+                listEl.innerHTML = `<div style="color:var(--accent-red);">${e.message}</div>`;
+            }
+        }
+
+        async function viewReplayReportRun(sessionId, replayDir) {
+            const contentEl = document.getElementById('replay-report-content');
+            const listEl = document.getElementById('replay-report-list');
+            listEl.style.display = 'none';
+            contentEl.style.display = 'block';
+            contentEl.innerHTML = '<span style="color:var(--text-secondary);">加载中...</span>';
+            try {
+                const data = await apiGet(`/api/demo/recording-detail?session_id=${sessionId}`);
+                const run = (data.replay_runs || []).find(r => r.replay_dir === replayDir);
+                if (!run) {
+                    contentEl.innerHTML = `<div class="report-back-btn" onclick="backToReplayList()">\u2190 返回列表</div><div style="color:var(--text-secondary);">未找到回放产物</div>`;
+                    return;
+                }
+                const reportFile = (run.files || []).find(f => f.name.endsWith('.md'));
+                if (!reportFile) {
+                    contentEl.innerHTML = `<div class="report-back-btn" onclick="backToReplayList()">\u2190 返回列表</div><div style="color:var(--text-secondary);">无 Markdown 报告</div>`;
+                    return;
+                }
+                const apiPath = `${sessionId}/${reportFile.path}`;
+                const resp = await fetch(`/api/demo/file-content?path=${encodeURIComponent(apiPath)}`);
+                const text = await resp.text();
+                contentEl.innerHTML = `<div class="report-back-btn" onclick="backToReplayList()">\u2190 返回列表</div>${renderMarkdown(text)}`;
+            } catch (e) {
+                contentEl.innerHTML = `<div class="report-back-btn" onclick="backToReplayList()">\u2190 返回列表</div><div style="color:var(--accent-red);">${e.message}</div>`;
+            }
+        }
+
+        async function viewReplayReport(sessionId) {
+            // 兼容旧接口 - 查找最新的回放产物
+            const contentEl = document.getElementById('replay-report-content');
+            const listEl = document.getElementById('replay-report-list');
+            listEl.style.display = 'none';
+            contentEl.style.display = 'block';
+            contentEl.innerHTML = '<span style="color:var(--text-secondary);">加载中...</span>';
+            try {
+                const data = await apiGet(`/api/demo/recording-detail?session_id=${sessionId}`);
+                const runs = data.replay_runs || [];
+                if (!runs.length) {
+                    contentEl.innerHTML = `<div class="report-back-btn" onclick="backToReplayList()">\u2190 返回列表</div><div style="color:var(--text-secondary);">无回放产物</div>`;
+                    return;
+                }
+                // 使用最新的回放
+                const latestRun = runs[0];
+                const reportFile = (latestRun.files || []).find(f => f.name.endsWith('.md'));
+                if (!reportFile) {
+                    contentEl.innerHTML = `<div class="report-back-btn" onclick="backToReplayList()">\u2190 返回列表</div><div style="color:var(--text-secondary);">无 Markdown 报告</div>`;
+                    return;
+                }
+                const apiPath = `${sessionId}/${reportFile.path}`;
+                const resp = await fetch(`/api/demo/file-content?path=${encodeURIComponent(apiPath)}`);
+                const text = await resp.text();
+                contentEl.innerHTML = `<div class="report-back-btn" onclick="backToReplayList()">\u2190 返回列表</div>${renderMarkdown(text)}`;
+            } catch (e) {
+                contentEl.innerHTML = `<div class="report-back-btn" onclick="backToReplayList()">\u2190 返回列表</div><div style="color:var(--accent-red);">${e.message}</div>`;
+            }
+        }
+
+        function backToReplayList() {
+            document.getElementById('replay-report-content').style.display = 'none';
+            document.getElementById('replay-report-list').style.display = '';
+        }
+
+        // ══════════════════════════════════════════════════════
+        //  13. 删除录制
+        // ══════════════════════════════════════════════════════
+        async function deleteAllRecordings() {
+            if (!confirm("确定要删除所有录制-回放会话吗？此操作不可恢复。")) return;
+            try {
+                const result = await apiPost("/api/demo/delete-recordings", { scope: "all" });
+                showNotification(`已删除 ${result.deleted.directories} 个录制会话, ${result.deleted.files} 个文件`);
+                loadDeleteRecordingList();
+            } catch (e) { showNotification("删除失败: " + e.message); }
+        }
+
+        async function loadDeleteRecordingList() {
+            const listEl = document.getElementById("delete-recording-list");
+            if (!listEl) return;
+            try {
+                const data = await apiGet("/api/demo/recordings");
+                if (!data.recordings || !data.recordings.length) {
+                    listEl.innerHTML = '<div style="color:var(--text-secondary);">暂无录制会话</div>';
+                    return;
+                }
+                listEl.innerHTML = "";
+                data.recordings.forEach(rec => {
+                    const wrapper = document.createElement("div");
+                    wrapper.style.cssText = "margin-bottom:8px;";
+                    const item = document.createElement("div");
+                    item.className = "session-list-item";
+                    item.style.flexWrap = "wrap";
+                    const replayCount = rec.replay_count || 0;
+                    item.innerHTML = `
+                        <div class="sl-info">
+                            <div class="sl-name">${rec.session_id} ${replayCount > 0 ? '<span style="color:var(--accent-green);font-size:11px;">(' + replayCount + '次回放)</span>' : ''}</div>
+                            <div class="sl-meta">${rec.event_count || 0} 事件 | ${rec.agent_id || '-'}</div>
+                        </div>
+                        <button class="btn btn-danger" onclick="event.stopPropagation(); deleteSingleRecording('${rec.session_id}')">删除整个会话</button>
+                    `;
+                    // 展开回放产物区域
+                    const expandArea = document.createElement("div");
+                    expandArea.style.cssText = "width:100%; display:none; padding:8px 0 4px 16px;";
+                    if (replayCount > 0) {
+                        (rec.replay_runs || []).forEach((run, idx) => {
+                            const runItem = document.createElement("div");
+                            runItem.style.cssText = "display:flex; justify-content:space-between; align-items:center; padding:6px 10px; margin:4px 0; background:var(--bg-secondary); border:1px solid var(--border-color); border-radius:4px;";
+                            const stats = `A:${run.allow||0} W:${run.alert||0} B:${run.block||0}`;
+                            runItem.innerHTML = `
+                                <div>
+                                    <span style="color:var(--accent-cyan); font-size:12px;">\u{1F504} 回放 #${idx+1} [${run.replay_id}]</span>
+                                    <span style="color:var(--text-secondary); font-size:11px; margin-left:6px;">${run.total||0}事件 ${stats} ${run.file_count}文件</span>
+                                </div>
+                                <button class="btn btn-danger" style="font-size:11px; padding:4px 10px;" onclick="event.stopPropagation(); deleteReplayOutput('${rec.session_id}', '${run.replay_dir}')">删除此回放</button>
+                            `;
+                            expandArea.appendChild(runItem);
+                        });
+                    } else {
+                        expandArea.innerHTML = '<div style="color:var(--text-secondary); font-size:12px; padding:4px;">无回放产物</div>';
+                    }
+                    let expanded = false;
+                    item.addEventListener("click", (e) => {
+                        if (e.target.tagName === 'BUTTON') return;
+                        expanded = !expanded;
+                        expandArea.style.display = expanded ? "block" : "none";
+                    });
+                    wrapper.appendChild(item);
+                    wrapper.appendChild(expandArea);
+                    listEl.appendChild(wrapper);
+                });
+            } catch (e) {
+                listEl.innerHTML = `<div style="color:var(--accent-red);">${e.message}</div>`;
+            }
+        }
+
+        async function deleteReplayOutput(sessionId, replayDir) {
+            if (!confirm(`确定删除会话 ${sessionId} 的回放产物 ${replayDir} 吗？`)) return;
+            try {
+                const result = await apiPost("/api/demo/delete-replay-output", { session_id: sessionId, replay_dir: replayDir });
+                showNotification(`已删除回放产物: ${result.deleted.files} 个文件`);
+                loadDeleteRecordingList();
+            } catch (e) { showNotification("删除失败: " + e.message); }
+        }
+
+        async function deleteSingleRecording(sessionId) {
+            if (!confirm(`确定删除录制 ${sessionId} 吗？`)) return;
+            try {
+                const result = await apiPost("/api/demo/delete-recordings", { scope: "session", session_id: sessionId });
+                showNotification(`已删除 ${result.deleted.files} 个文件`);
+                loadDeleteRecordingList();
+            } catch (e) { showNotification("删除失败: " + e.message); }
+        }
+
+        // ══════════════════════════════════════════════════════
+        //  14. 工具函数
         // ══════════════════════════════════════════════════════
         function showNotification(msg) {
             const area = document.getElementById("notification-area");
@@ -1211,7 +2075,7 @@
         }
 
         // ══════════════════════════════════════════════════════
-        //  13. 初始化
+        //  15. 初始化
         // ══════════════════════════════════════════════════════
         document.addEventListener("DOMContentLoaded", () => {
             showCategories();

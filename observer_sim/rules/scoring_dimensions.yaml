@@ -1,0 +1,636 @@
+# =============================================================================
+# 方寸观察者 — 四维评分体系详细定义 (Scoring Dimensions)
+# =============================================================================
+#
+# 本文件是 RiskScorer 四维评分体系的 **详细规范文件**。
+# 与 judgment_pipeline.yaml § 3 配合使用：
+#   - judgment_pipeline.yaml 定义"概览"（权重、公式）
+#   - 本文件定义"每个维度的完整算法细节、参数、扩展接口"
+#
+# 文件结构:
+#   § 1  维度 D1: 规则命中分 (BasicRuleScore)
+#   § 2  维度 D2: 基线偏离分 (BasicBaselineScore)
+#   § 3  维度 D3: 上下文风险分 (BasicContextScore)
+#   § 4  维度 D4: 序列异常分 (BasicSequenceScore)
+#   § 5  维度替换接口 (IRiskDimension)
+#   § 6  评分参数速查表
+#
+# 代码位置: observer_core/judgment/risk_scorer.py
+# 依赖: observer_core/monitoring/rule_engine.py (MatchResult)
+#       models/event.py (NormalizedEvent, AgentContext)
+#       models/risk.py (RiskAssessment, DimensionScore)
+#
+# 版本: 1.0
+# 创建: 2026-08-02
+# =============================================================================
+
+version: "1.0"
+metadata:
+  title: "四维评分体系详细定义"
+  description: |
+    定义 RiskScorer 的四个评分维度的完整算法、参数、数据依赖和扩展接口。
+    每个维度实现 IRiskDimension 接口，可独立替换。
+  related_files:
+    - "rules/judgment_pipeline.yaml — 评分概览（§ 3）"
+    - "rules/default_policy.yaml — 规则定义（D1 依赖）"
+    - "config.yaml — scoring.dimensions 段"
+    - "observer_core/judgment/risk_scorer.py — 代码实现"
+
+
+# =============================================================================
+# § 1  维度 D1: 规则命中分 (BasicRuleScore)
+# =============================================================================
+#
+# 核心思路:
+#   根据 RuleEngine 的匹配结果 (MatchResult)，将命中规则的优先级映射为
+#   0.0~1.0 的分数。多条规则命中时额外加分，鼓励"规则叠加"的高风险识别。
+#
+# 数据依赖:
+#   - MatchResult.has_match: 是否有规则命中
+#   - MatchResult.highest_priority: 命中规则中的最高优先级 (0~100)
+#   - MatchResult.matched_rules: 所有命中规则的列表
+#
+# 代码位置: risk_scorer.py → BasicRuleScore.score()
+
+D1_rule_match:
+  id: "D1"
+  name: "规则命中分"
+  class_name: "BasicRuleScore"
+  weight: 0.40
+  implements: "IRiskDimension"
+
+  algorithm:
+    description: |
+      1. 若无规则命中 (has_match == False) → 返回 0.0
+      2. 基础分 = highest_priority / 100.0
+      3. 多条规则命中加分:
+         score = min(基础分 + multi_rule_bonus × (命中数 - 1), 1.0)
+      4. 最终分 clamp 到 [0.0, 1.0]
+
+    pseudocode: |
+      if not match.has_match:
+          return 0.0
+      s = match.highest_priority / 100.0
+      if len(match.matched_rules) > 1:
+          s = min(s + 0.1 * (len(match.matched_rules) - 1), 1.0)
+      return min(s, 1.0)
+
+  parameters:
+    multi_rule_bonus:
+      value: 0.1
+      description: "多条规则命中时，每增加一条规则额外加分"
+      tunable: true
+      range: [0.0, 0.5]
+
+  examples:
+    - scenario: "单条规则命中，priority=95"
+      calculation: "95/100 = 0.95"
+      result: 0.95
+
+    - scenario: "两条规则命中，最高 priority=80"
+      calculation: "80/100 + 0.1×(2-1) = 0.8 + 0.1 = 0.9"
+      result: 0.9
+
+    - scenario: "无规则命中"
+      calculation: "has_match == False"
+      result: 0.0
+
+    - scenario: "三条规则命中，最高 priority=100"
+      calculation: "100/100 + 0.1×(3-1) = 1.0 + 0.2 → clamp = 1.0"
+      result: 1.0
+
+  dependency:
+    - "rules/default_policy.yaml — 规则优先级定义"
+    - "observer_core/monitoring/rule_engine.py — MatchResult 数据结构"
+
+
+# =============================================================================
+# § 2  维度 D2: 基线偏离分 (BasicBaselineScore)
+# =============================================================================
+#
+# 核心思路:
+#   检测事件是否偏离 Agent 的正常行为基线。
+#   冷启动期（基线未预热）固定返回 0.0，避免误报。
+#   预热后，从三个子维度检测异常：文件路径、网络目标、命令名称。
+#
+# 数据依赖:
+#   - baseline.is_warm: 基线是否已预热
+#   - NormalizedEvent.event_type: 事件类型
+#   - NormalizedEvent.get_match_target(): 匹配目标（文件路径/命令/地址）
+#   - NormalizedEvent.raw.remote_addr: 网络目标地址
+#   - NormalizedEvent.raw.executable: 可执行文件路径
+#
+# 代码位置: risk_scorer.py → BasicBaselineScore.score()
+
+D2_baseline_deviation:
+  id: "D2"
+  name: "基线偏离分"
+  class_name: "BasicBaselineScore"
+  weight: 0.25
+  implements: "IRiskDimension"
+
+  algorithm:
+    description: |
+      1. 冷启动检查: baseline.is_warm == False → 返回 0.0
+      2. 文件路径异常检测 (event_type == "file_open"):
+         - match_target 不在 safe_dirs 列表中 → +0.3
+      3. 网络目标异常检测 (event_type == "net_conn"):
+         - remote_addr 不是内网 IP → +0.3
+      4. 命令异常检测 (event_type == "exec"):
+         - 命令名不在 safe_commands 列表中 → +0.2
+      5. 最终分 clamp 到 [0.0, 1.0]
+
+    pseudocode: |
+      if not baseline.get("is_warm", False):
+          return 0.0
+      s = 0.0
+      if event.event_type == "file_open":
+          target = event.get_match_target()
+          if target and not any(target.startswith(d) for d in SAFE_DIRS):
+              s += 0.3
+      if event.event_type == "net_conn":
+          addr = event.raw.remote_addr or ""
+          if addr and not is_private_ip(addr):
+              s += 0.3
+      if event.event_type == "exec":
+          exe = event.raw.executable or ""
+          cmd_name = exe.split("/")[-1]
+          if cmd_name and not any(cmd_name.startswith(c) for c in SAFE_COMMANDS):
+              s += 0.2
+      return min(s, 1.0)
+
+  parameters:
+    safe_dirs:
+      value:
+        - "/home/"
+        - "/project/"
+        - "/tmp/"
+        - "/var/log/"
+        - "/usr/bin/git"
+        - "/usr/bin/python"
+        - "C:\\Users\\"
+        - "C:\\Projects\\"
+      description: "正常 Agent 通常访问的安全目录前缀列表"
+      tunable: true
+
+    safe_commands:
+      value:
+        - "git"
+        - "python"
+        - "pytest"
+        - "pip"
+        - "npm"
+        - "node"
+        - "make"
+        - "cmake"
+        - "gcc"
+        - "javac"
+        - "docker"
+      description: "正常 Agent 通常使用的安全命令列表"
+      tunable: true
+
+    file_anomaly_score:
+      value: 0.3
+      description: "文件路径异常时的加分"
+      tunable: true
+
+    net_anomaly_score:
+      value: 0.3
+      description: "非内网 IP 地址的加分"
+      tunable: true
+
+    command_anomaly_score:
+      value: 0.2
+      description: "命令名不在安全列表时的加分"
+      tunable: true
+
+    credential_file_score:
+      value: 0.6
+      description: "文件路径匹配凭据文件特征（credentials、*_key、*.pem 等）时的额外基线偏离分，优先级高于 file_anomaly_score"
+      tunable: true
+
+    min_events:
+      value: 5
+      description: "基线预热所需的最少事件数（构造函数参数）"
+      source: "risk_scorer.py → BasicBaselineScore.__init__(min_events=5)"
+
+  private_ip_ranges:
+    description: "内网 IP 判断规则（硬编码在算法中）"
+    prefixes:
+      - "10."
+      - "192.168."
+      - "172.16."
+      - "127."
+    note: "简化实现，仅检查前缀匹配"
+
+  examples:
+    - scenario: "冷启动期（基线未预热）"
+      result: 0.0
+
+    - scenario: "file_open 访问 /etc/passwd（不在 safe_dirs）"
+      calculation: "+0.3"
+      result: 0.3
+
+    - scenario: "net_conn 连接 8.8.8.8（非内网 IP）"
+      calculation: "+0.3"
+      result: 0.3
+
+    - scenario: "exec 执行 nmap（不在 safe_commands）"
+      calculation: "+0.2"
+      result: 0.2
+
+  dependency:
+    - "observer_core/judgment/baseline_checker.py — 基线预热状态"
+    - "config.yaml → baseline.min_events_for_baseline"
+
+
+# =============================================================================
+# § 3  维度 D3: 上下文风险分 (BasicContextScore)
+# =============================================================================
+#
+# 核心思路:
+#   分析滑动窗口（recent_events）内的行为序列组合。
+#   单个事件可能无害，但特定事件组合（如"读敏感文件+网络外联"）
+#   表明存在高危行为链。
+#
+# 数据依赖:
+#   - AgentContext.recent_events: 滑动窗口内的最近事件列表
+#   - NormalizedEvent.event_type: 各事件类型
+#   - NormalizedEvent.raw.file_path: 文件路径
+#   - NormalizedEvent.raw.file_op: 文件操作类型 (read/write)
+#   - NormalizedEvent.command_string: 命令字符串
+#   - NormalizedEvent.agent_id: Agent 标识
+#
+# 代码位置: risk_scorer.py → BasicContextScore.score()
+
+D3_context_risk:
+  id: "D3"
+  name: "上下文风险分"
+  class_name: "BasicContextScore"
+  weight: 0.20
+  implements: "IRiskDimension"
+
+  algorithm:
+    description: |
+      1. 空窗口检查: context.recent_events 为空 → 返回 0.0
+      2. 敏感文件读取 + 网络外联检测:
+         - 窗口内存在敏感文件读取 + 存在网络连接 → +0.3
+      3. 多次权限提升检测:
+         - 窗口内 sudo 命令出现 ≥ 2 次 → +0.4
+      4. 跨 Agent 数据流动检测:
+         - 多个不同 Agent 分别做文件读取和网络连接 → +0.3
+      5. 最终分 clamp 到 [0.0, 1.0]
+
+    pseudocode: |
+      if not context.recent_events:
+          return 0.0
+      s = 0.0
+      # 检测 "读敏感文件 + 网络外联"
+      has_sensitive_read = any(
+          e.event_type == "file_open" and
+          any(kw in e.raw.file_path.lower() for kw in SENSITIVE_KEYWORDS)
+          for e in recent
+      )
+      has_net_conn = any(e.event_type == "net_conn" for e in recent)
+      if has_sensitive_read and has_net_conn:
+          s += 0.3
+      # 检测 "多次权限提升"
+      sudo_count = sum(1 for e in recent if "sudo" in e.command_string.lower())
+      if sudo_count >= 2:
+          s += 0.4
+      # 检测 "跨Agent数据流动"
+      agents_read = {e.agent_id for e in recent if file_read(e)}
+      agents_net = {e.agent_id for e in recent if net_conn(e)}
+      if len(agents_read) > 1 or len(agents_net) > 1:
+          s += 0.3
+      return min(s, 1.0)
+
+  parameters:
+    sensitive_keywords:
+      value:
+        - ".env"
+        - ".pem"
+        - ".key"
+        - "secret"
+        - "password"
+        - "shadow"
+      description: "敏感文件关键词列表，匹配文件路径（大小写不敏感）"
+      tunable: true
+
+    sensitive_net_score:
+      value: 0.3
+      description: "读取敏感文件 + 网络外联序列的加分"
+      tunable: true
+
+    privilege_escalation_score:
+      value: 0.4
+      description: "多次权限提升尝试（sudo ≥ 2 次）的加分"
+      tunable: true
+
+    privilege_escalation_threshold:
+      value: 2
+      description: "sudo 命令出现次数达到此阈值触发加分"
+      tunable: true
+
+    cross_agent_score:
+      value: 0.3
+      description: "跨 Agent 数据流动的加分"
+      tunable: true
+
+  detection_patterns:
+    sensitive_read_plus_network:
+      name: "敏感文件读取 + 网络外联"
+      description: |
+        攻击链模式: Agent 先读取敏感文件（如 .env, .pem），
+        然后通过网络连接将数据外传。这是典型的数据窃取行为链。
+      score: 0.3
+      trigger_conditions:
+        - "窗口内存在 file_open 事件且 file_path 包含敏感关键词"
+        - "窗口内存在 net_conn 事件"
+
+    repeated_privilege_escalation:
+      name: "多次权限提升尝试"
+      description: |
+        攻击链模式: Agent 频繁使用 sudo 提权，
+        表明可能在尝试突破权限限制。
+      score: 0.4
+      trigger_conditions:
+        - "窗口内 exec 事件中包含 sudo 命令 ≥ 2 次"
+
+    cross_agent_data_flow:
+      name: "跨 Agent 数据流动"
+      description: |
+        多 Agent 协作攻击模式: 不同 Agent 分别执行文件读取和网络外传，
+        可能是协同窃取数据。
+      score: 0.3
+      trigger_conditions:
+        - "多个不同 agent_id 分别执行 file_open(read) 和 net_conn"
+
+  examples:
+    - scenario: "窗口内: Agent-A 读取 .env → Agent-A 连接外部 IP"
+      calculation: "+0.3 (敏感文件+网络)"
+      result: 0.3
+
+    - scenario: "窗口内: sudo apt → sudo chmod → sudo useradd"
+      calculation: "+0.4 (sudo ≥ 2次)"
+      result: 0.4
+
+    - scenario: "窗口内: Agent-A 读 .pem → Agent-B 连接外部 IP"
+      calculation: "+0.3 (敏感文件+网络) + 0.3 (跨Agent)"
+      result: 0.6
+
+  dependency:
+    - "models/event.py → AgentContext.recent_events (滑动窗口)"
+    - "config.yaml → monitoring.event_window_size (窗口大小)"
+
+
+# =============================================================================
+# § 4  维度 D4: 序列异常分 (BasicSequenceScore)
+# =============================================================================
+#
+# 核心思路:
+#   基于事件类型的统计频率偏差检测异常。
+#   冷启动期（事件数不足）固定返回 0.0。
+#   两个子检测: 新事件类型出现、已知类型频率偏高。
+#
+# 数据依赖:
+#   - context.event_count: Agent 累计事件数
+#   - NormalizedEvent.event_type: 当前事件类型
+#   - context.recent_events: 滑动窗口事件列表
+#
+# 代码位置: risk_scorer.py → BasicSequenceScore.score()
+
+D4_sequence_anomaly:
+  id: "D4"
+  name: "序列异常分"
+  class_name: "BasicSequenceScore"
+  weight: 0.15
+  implements: "IRiskDimension"
+
+  algorithm:
+    description: |
+      1. 冷启动检查: context.event_count < min_events → 返回 0.0
+      2. 更新内部频率统计: type_frequency[event_type] += 1
+      3. 新事件类型检测:
+         - event_type 不在 common_types 中 → +0.3
+      4. 频率异常偏高检测:
+         - 窗口内当前类型占比 > 0.7 且窗口大小 ≥ 5 → +0.2
+      5. 最终分 clamp 到 [0.0, 1.0]
+
+    pseudocode: |
+      if context.event_count < min_events:
+          return 0.0
+      type_frequency[event_type] += 1
+      s = 0.0
+      if event_type not in COMMON_TYPES:
+          s += 0.3
+      if context.recent_events:
+          type_count = sum(1 for e in recent if e.event_type == event_type)
+          ratio = type_count / len(recent)
+          if ratio > 0.7 and len(recent) >= 5:
+              s += 0.2
+      return min(s, 1.0)
+
+  parameters:
+    common_types:
+      value:
+        - "exec"
+        - "file_open"
+        - "net_conn"
+      description: "常见事件类型集合，不在此集合中的类型视为'新类型'"
+      tunable: true
+
+    new_type_score:
+      value: 0.3
+      description: "新出现的事件类型的异常加分"
+      tunable: true
+
+    frequency_anomaly_score:
+      value: 0.2
+      description: "事件类型频率异常偏高时的加分"
+      tunable: true
+
+    frequency_anomaly_ratio:
+      value: 0.7
+      description: "频率异常判定阈值: 某类型占窗口比例超过此值视为异常"
+      tunable: true
+
+    frequency_min_window:
+      value: 5
+      description: "频率异常检测的最小窗口大小"
+      tunable: true
+
+    min_events:
+      value: 10
+      description: "冷启动期最少事件数（构造函数参数），低于此值返回 0.0"
+      source: "risk_scorer.py → BasicSequenceScore.__init__(min_events=10)"
+
+  examples:
+    - scenario: "冷启动期（event_count < 10）"
+      result: 0.0
+
+    - scenario: "出现新事件类型 'signal'（不在 common_types 中）"
+      calculation: "+0.3"
+      result: 0.3
+
+    - scenario: "窗口 10 个事件中 8 个是 net_conn（占比 80% > 70%）"
+      calculation: "+0.2"
+      result: 0.2
+
+    - scenario: "新类型 + 频率偏高"
+      calculation: "+0.3 + 0.2 = 0.5"
+      result: 0.5
+
+  dependency:
+    - "models/event.py → AgentContext.event_count, AgentContext.recent_events"
+
+
+# =============================================================================
+# § 5  维度替换接口 (IRiskDimension)
+# =============================================================================
+#
+# 所有评分维度必须实现 IRiskDimension 接口。
+# 可通过新增实现类替换默认维度，实现算法升级。
+
+dimension_interface:
+  name: "IRiskDimension"
+  source_file: "observer_core/judgment/risk_scorer.py"
+
+  methods:
+    - name: "score"
+      signature: "score(event: NormalizedEvent, match: MatchResult, context: AgentContext, baseline: dict) -> float"
+      description: |
+        计算该维度的风险分。
+        返回 0.0 ~ 1.0 的浮点数。
+      abstract: true
+
+    - name: "name"
+      signature: "name() -> str"
+      description: "维度名称（用于去重和日志）"
+      abstract: true
+
+    - name: "weight"
+      signature: "weight -> float (property)"
+      description: "维度权重（参与加权合成）"
+      abstract: true
+
+  replacement_guide:
+    description: |
+      替换某个评分维度的步骤:
+      1. 创建新类，实现 IRiskDimension 接口
+      2. 在新类中实现 score()、name()、weight 三个抽象方法
+      3. 调用 RiskScorer.register_dimension(new_dim) 注册
+      4. 同名维度会自动替换旧实现
+    example: |
+      class AdvancedRuleScore(IRiskDimension):
+          def score(self, event, match, context, baseline):
+              # 更复杂的评分算法（如马尔可夫链）
+              ...
+          def name(self):
+              return "规则命中分"  # 与 BasicRuleScore 同名，会替换
+          @property
+          def weight(self):
+              return 0.40
+
+      scorer = RiskScorer()
+      scorer.register_default_dimensions()
+      scorer.register_dimension(AdvancedRuleScore())  # 替换 D1
+
+  future_extensions:
+    - name: "马尔可夫链序列评分"
+      description: "使用马尔可夫链模型替代 BasicSequenceScore，捕捉事件类型转移概率"
+      replaces: "D4"
+
+    - name: "图神经网络上下文评分"
+      description: "使用 GNN 分析行为图谱，替代 BasicContextScore"
+      replaces: "D3"
+
+    - name: "自适应基线评分"
+      description: "使用在线学习算法动态调整基线偏离阈值"
+      replaces: "D2"
+
+
+# =============================================================================
+# § 6  评分参数速查表 (Quick Reference)
+# =============================================================================
+#
+# 所有评分相关参数的汇总速查表，便于快速定位和调优。
+
+parameter_reference:
+  description: "所有评分参数的统一索引，格式: 维度.参数名"
+
+  table:
+    - param: "D1.multi_rule_bonus"
+      value: 0.1
+      description: "多规则命中额外加分"
+      file: "risk_scorer.py:91"
+
+    - param: "D2.file_anomaly_score"
+      value: 0.3
+      description: "文件路径异常加分"
+      file: "risk_scorer.py:137"
+
+    - param: "D2.net_anomaly_score"
+      value: 0.3
+      description: "非内网 IP 异常加分"
+      file: "risk_scorer.py:147"
+
+    - param: "D2.command_anomaly_score"
+      value: 0.2
+      description: "命令名异常加分"
+      file: "risk_scorer.py:154"
+
+    - param: "D2.credential_file_score"
+      value: 0.6
+      description: "凭据文件路径异常加分（优先级高于 file_anomaly_score）"
+      file: "risk_scorer.py (proposed)"
+
+    - param: "D2.min_events"
+      value: 5
+      description: "基线预热最少事件数"
+      file: "risk_scorer.py:122"
+
+    - param: "D3.sensitive_net_score"
+      value: 0.3
+      description: "敏感文件+网络外联加分"
+      file: "risk_scorer.py:198"
+
+    - param: "D3.privilege_escalation_score"
+      value: 0.4
+      description: "多次提权尝试加分"
+      file: "risk_scorer.py:206"
+
+    - param: "D3.cross_agent_score"
+      value: 0.3
+      description: "跨 Agent 数据流动加分"
+      file: "risk_scorer.py:220"
+
+    - param: "D3.privilege_escalation_threshold"
+      value: 2
+      description: "sudo 次数阈值"
+      file: "risk_scorer.py:205"
+
+    - param: "D4.new_type_score"
+      value: 0.3
+      description: "新事件类型异常加分"
+      file: "risk_scorer.py:264"
+
+    - param: "D4.frequency_anomaly_score"
+      value: 0.2
+      description: "频率偏高异常加分"
+      file: "risk_scorer.py:271"
+
+    - param: "D4.frequency_anomaly_ratio"
+      value: 0.7
+      description: "频率异常判定占比阈值"
+      file: "risk_scorer.py:270"
+
+    - param: "D4.frequency_min_window"
+      value: 5
+      description: "频率异常检测最小窗口"
+      file: "risk_scorer.py:270"
+
+    - param: "D4.min_events"
+      value: 10
+      description: "序列异常冷启动最少事件数"
+      file: "risk_scorer.py:246"

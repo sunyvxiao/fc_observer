@@ -290,7 +290,7 @@ class AuditLogger:
             return {"total": 0}
 
         allowed = sum(1 for e in entries if e.decision_action == "ALLOW")
-        alerted = sum(1 for e in entries if e.decision_action == "ALERT")
+        alerted = sum(1 for e in entries if e.decision_action == "ALERT" and not e.blocked)
         blocked = sum(1 for e in entries if e.blocked)
 
         risk_dist = {"LOW": 0, "MEDIUM": 0, "HIGH": 0, "CRITICAL": 0}

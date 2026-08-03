@@ -1,0 +1,566 @@
+# =============================================================================
+# 方寸观察者 — 风险评判流水线配置 (Judgment Pipeline)
+# =============================================================================
+#
+# 本文件是系统风险评判机制的 **唯一权威数据源**。
+# 所有评判逻辑（处置动作、评分体系、研判矩阵、阻断升级）均在此统一定义。
+#
+# 文件结构:
+#   § 1  处置动作定义 (四级梯度)
+#   § 2  风险等级阈值
+#   § 3  四维评分体系
+#   § 4  研判矩阵 (risk_level × rule_action → decision)
+#   § 5  评分自动升级规则
+#   § 6  阻断累计升级规则
+#   § 7  联合审查流程
+#   § 8  全局参数
+#
+# 兼容性说明:
+#   - 与 default_policy.yaml 配合使用：default_policy 定义"规则"，本文件定义"如何评判"
+#   - 与 config.yaml 的关系：config.yaml 中的 scoring/blocking/monitoring 段为本文件的子集
+#   - 代码引用：risk_scorer.py、decision_engine.py、blocking_coordinator.py 中的硬编码值
+#     均对应本文件中的参数，后续可通过加载本文件替代硬编码
+#
+# 版本: 1.0
+# 创建: 2026-08-02
+# =============================================================================
+
+version: "1.0"
+metadata:
+  title: "风险评判流水线配置"
+  description: |
+    定义方寸观察者系统的完整风险评判机制，包括处置动作、评分体系、
+    研判矩阵、自动升级规则和阻断协调逻辑。本文件是系统安全策略的
+    单一数据源（Single Source of Truth）。
+  author: "方寸观察者安全策略团队"
+  version: "1.0"
+  created: "2026-08-02"
+  last_updated: "2026-08-02"
+
+
+# =============================================================================
+# § 1  处置动作定义 (四级梯度)
+# =============================================================================
+#
+# 系统的处置动作分为三级动作 + 三级阻断等级，形成"四级梯度"：
+#
+#   放行(ALLOW) → 警告(ALERT/TIER1) → 阻止(BLOCK/TIER2) → 阻断(TIER3)
+#
+# 每个处置动作明确定义：触发条件、系统行为、反向管道指令、审计日志影响。
+
+actions:
+
+  ALLOW:
+    description: "事件正常通过，记录审计日志"
+    trigger: "风险等级 LOW，未命中任何规则，或评分 < 0.3"
+    system_behavior:
+      - "事件正常处理，不产生告警"
+      - "审计日志正常写入（INFO 级别）"
+      - "行为图谱正常记录节点"
+    reverse_pipe_command: "allow"
+    reverse_pipe_description: "向 C++ 探针发送 allow 确认，Agent 操作无感知"
+    audit_log_level: "INFO"
+    tier: "TIER1"
+    impact_on_agent: "无影响 — Agent 操作正常执行"
+
+  ALERT:
+    description: "事件放行但标记告警，审计日志高亮"
+    trigger: |
+      满足以下任一条件:
+      - 研判矩阵输出 ALERT（如 HIGH+allow 或 MEDIUM+block/alert）
+      - 评分 > 0.6 且原 tier 为 TIER1 时自动升级
+      - 违规累计达到升级阈值
+    system_behavior:
+      - "事件放行，Agent 操作不受阻断"
+      - "审计日志高亮写入（WARNING 级别）"
+      - "行为图谱标记告警节点（黄色）"
+      - "违规计数器 +1（TIER1 类别）"
+    reverse_pipe_command: "allow"
+    reverse_pipe_description: "向 C++ 探针发送 allow，但附带告警标记"
+    audit_log_level: "WARNING"
+    tier: "TIER1"
+    impact_on_agent: "无直接影响 — 但累计 3 次 ALERT 将升级为 BLOCK"
+
+  BLOCK:
+    description: "阻止访问，返回 EPERM 错误码"
+    trigger: |
+      满足以下任一条件:
+      - 研判矩阵输出 BLOCK（如 HIGH+block/alert）
+      - 评分 > 0.6 时强制升级
+      - TIER1 违规累计 ≥ 3 次自动升级
+      - TIER2 违规累计 ≥ 2 次前的 BLOCK 事件
+    system_behavior:
+      - "事件被阻止，Agent 收到 EPERM 错误"
+      - "审计日志记录阻断事件（ERROR 级别）"
+      - "行为图谱标记阻断节点（红色）"
+      - "阻断计数器 +1"
+      - "违规计数器 +1（TIER2 类别）"
+    reverse_pipe_command: "block_event"
+    reverse_pipe_description: "向 C++ 探针发送 block_event，模拟 EPERM 返回"
+    audit_log_level: "ERROR"
+    tier: "TIER2"
+    impact_on_agent: "操作失败 — Agent 收到 Permission denied 错误"
+
+  TIER3:
+    description: "进程树终止，最高级别阻断"
+    trigger: |
+      满足以下任一条件:
+      - 评分 ≥ 0.9 强制升级（CRITICAL_SCORE_THRESHOLD）
+      - TIER2 违规累计 ≥ 2 次自动升级
+      - 规则明确要求 block 且风险等级 HIGH
+    system_behavior:
+      - "Agent 进程树被终止（模拟 SIGTERM → SIGKILL）"
+      - "证据链紧急写入磁盘"
+      - "完整事故报告生成"
+      - "行为图谱标记终止节点（深红色 + 终止标记）"
+      - "Agent 状态标记为 terminated"
+      - "后续事件全部丢弃"
+    reverse_pipe_command: "terminate_process"
+    reverse_pipe_description: "向 C++ 探针发送 terminate_process，终止进程树"
+    audit_log_level: "CRITICAL"
+    tier: "TIER3"
+    impact_on_agent: "致命影响 — Agent 进程树被完全终止，不可恢复"
+
+
+# =============================================================================
+# § 2  风险等级阈值 (Risk Level Thresholds)
+# =============================================================================
+#
+# 综合评分（overall_score，范围 0.0 ~ 1.0）映射到四个风险等级。
+# 代码位置: models/risk.py → RiskAssessment.score_to_level()
+
+risk_levels:
+  LOW:
+    range: "[0.0, 0.3)"
+    description: "低风险 — 正常操作，通常放行"
+    color: "green"
+    default_action: "ALLOW"
+
+  MEDIUM:
+    range: "[0.3, 0.5)"
+    description: "中风险 — 可疑行为，根据规则动作决定告警或放行"
+    color: "yellow"
+    default_action: "视规则动作而定（ALLOW/ALERT）"
+
+  HIGH:
+    range: "[0.5, 0.9)"
+    description: "高风险 — 危险行为，通常触发阻断或告警"
+    color: "orange"
+    default_action: "ALERT 或 BLOCK"
+
+  CRITICAL:
+    range: "[0.9, 1.0]"
+    description: "极高风险 — 严重威胁，强制阻断并终止进程树"
+    color: "red"
+    default_action: "BLOCK + TIER3"
+
+
+# =============================================================================
+# § 3  四维评分体系 (Four-Dimension Scoring)
+# =============================================================================
+#
+# 综合评分 = Σ(维度分 × 权重) / Σ(权重)
+# 每个维度输出 0.0 ~ 1.0 的分数。
+# 详细维度定义见 scoring_dimensions.yaml
+
+scoring:
+  formula: "overall_score = Σ(dim_score × dim_weight) / Σ(dim_weight)"
+  normalization: "最终分数 clamp 到 [0.0, 1.0]"
+
+  dimensions:
+    - id: "D1"
+      name: "规则命中分"
+      class: "BasicRuleScore"
+      weight: 0.40
+      description: "基于 RuleEngine 匹配结果，取最高优先级规则评分"
+      source_file: "observer_core/judgment/risk_scorer.py"
+
+    - id: "D2"
+      name: "基线偏离分"
+      class: "BasicBaselineScore"
+      weight: 0.25
+      description: "检测事件是否偏离 Agent 正常行为基线"
+      source_file: "observer_core/judgment/risk_scorer.py"
+
+    - id: "D3"
+      name: "上下文风险分"
+      class: "BasicContextScore"
+      weight: 0.20
+      description: "分析滑动窗口内的可疑行为序列组合"
+      source_file: "observer_core/judgment/risk_scorer.py"
+
+    - id: "D4"
+      name: "序列异常分"
+      class: "BasicSequenceScore"
+      weight: 0.15
+      description: "基于事件类型频率偏差检测异常"
+      source_file: "observer_core/judgment/risk_scorer.py"
+
+  # 置信度计算
+  confidence:
+    formula: |
+      有规则命中: min(0.5 + 0.1 × 命中规则数, 1.0)
+      无规则命中: 0.3 (低置信度)
+    source_file: "observer_core/judgment/risk_scorer.py"
+
+
+# =============================================================================
+# § 4  研判矩阵 (Judgment Matrix)
+# =============================================================================
+#
+# 风险等级 × 命中规则动作 → (处置动作, 阻断等级)
+# 代码位置: observer_core/judgment/decision_engine.py → JUDGMENT_MATRIX
+
+judgment_matrix:
+  description: |
+    3×3 研判矩阵，将 (风险等级, 规则动作) 映射为 (处置动作, 阻断等级)。
+    矩阵在评分自动升级之前应用。
+  columns: ["block (命中block规则)", "alert (命中alert规则)", "allow (未命中规则)"]
+  rows: ["HIGH", "MEDIUM", "LOW"]
+
+  entries:
+    - risk_level: "HIGH"
+      rule_action: "block"
+      decision_action: "BLOCK"
+      tier: "TIER2"
+      reason: "高风险 + 命中阻断规则 → 阻止访问"
+
+    - risk_level: "HIGH"
+      rule_action: "alert"
+      decision_action: "BLOCK"
+      tier: "TIER2"
+      reason: "高风险 + 命中告警规则 → 升级为阻止"
+
+    - risk_level: "HIGH"
+      rule_action: "allow"
+      decision_action: "ALERT"
+      tier: "TIER1"
+      reason: "高风险但未命中规则 → 告警观察"
+
+    - risk_level: "MEDIUM"
+      rule_action: "block"
+      decision_action: "ALERT"
+      tier: "TIER1"
+      reason: "中风险 + 命中阻断规则 → 告警（未达阻断阈值）"
+
+    - risk_level: "MEDIUM"
+      rule_action: "alert"
+      decision_action: "ALERT"
+      tier: "TIER1"
+      reason: "中风险 + 命中告警规则 → 告警"
+
+    - risk_level: "MEDIUM"
+      rule_action: "allow"
+      decision_action: "ALLOW"
+      tier: "TIER1"
+      reason: "中风险未命中规则 → 放行"
+
+    - risk_level: "LOW"
+      rule_action: "block"
+      decision_action: "ALLOW"
+      tier: "TIER1"
+      reason: "低风险 + 命中阻断规则 → 放行（评分不足以触发阻断）"
+
+    - risk_level: "LOW"
+      rule_action: "alert"
+      decision_action: "ALLOW"
+      tier: "TIER1"
+      reason: "低风险 + 命中告警规则 → 放行"
+
+    - risk_level: "LOW"
+      rule_action: "allow"
+      decision_action: "ALLOW"
+      tier: "TIER1"
+      reason: "低风险未命中规则 → 正常放行"
+
+  # CRITICAL 等级特殊处理
+  critical_override:
+    description: |
+      CRITICAL 等级（评分 ≥ 0.9）不经过矩阵查表，
+      直接由评分自动升级规则强制输出 BLOCK + TIER3。
+    action: "BLOCK"
+    tier: "TIER3"
+
+
+# =============================================================================
+# § 5  评分自动升级规则 (Auto-Escalation by Score)
+# =============================================================================
+#
+# 在研判矩阵输出之后，根据综合评分强制提升处置等级。
+# 代码位置: observer_core/judgment/decision_engine.py → _auto_escalade()
+
+auto_escalation:
+  enabled: true
+  description: "综合评分极高时，不受研判矩阵约束，强制提升处置等级"
+
+  rules:
+    - name: "CRITICAL_SCORE_FORCE_TIER3"
+      condition: "overall_score ≥ 0.9"
+      threshold: 0.9
+      force_action: "BLOCK"
+      force_tier: "TIER3"
+      description: "评分 ≥ 0.9 → 强制 BLOCK + TIER3（进程树终止）"
+      priority: 1
+      source: "decision_engine.py → CRITICAL_SCORE_THRESHOLD"
+
+    - name: "HIGH_SCORE_FORCE_TIER2"
+      condition: "overall_score ≥ 0.5 且当前 tier == TIER1"
+      threshold: 0.5
+      force_action: "ALERT"
+      force_tier: "TIER2"
+      preconditions: ["当前 tier 为 TIER1"]
+      description: "评分 ≥ 0.5 → 至少 ALERT + TIER2（阻止访问）"
+      priority: 2
+      source: "decision_engine.py → HIGH_SCORE_THRESHOLD"
+
+
+# =============================================================================
+# § 6  阻断累计升级规则 (Escalation by Violation Accumulation)
+# =============================================================================
+#
+# 同一 Agent 在滑动窗口内的违规累计触发自动升级。
+# 代码位置: observer_core/blocking/violation_tracker.py
+
+violation_escalation:
+  description: "基于虚拟时钟滑动窗口的违规累计升级机制"
+
+  window:
+    size_ms: 300000
+    size_description: "5 分钟滑动窗口（虚拟时钟）"
+    size_ns: 300000000000
+    source: "config.yaml → blocking.violation_window_ms"
+
+  escalation_rules:
+    - name: "TIER1_TO_TIER2"
+      from_tier: "TIER1"
+      to_tier: "TIER2"
+      threshold: 5
+      description: "同一 Agent 在 5 分钟内累计 5 次 TIER1 违规 → 升级到 TIER2"
+      source: "violation_tracker.py → TIER1_ESCALATE_THRESHOLD"
+
+    - name: "TIER2_TO_TIER3"
+      from_tier: "TIER2"
+      to_tier: "TIER3"
+      threshold: 3
+      description: "同一 Agent 在 5 分钟内累计 3 次 TIER2 违规 → 升级到 TIER3（终止）"
+      source: "violation_tracker.py → TIER2_ESCALATE_THRESHOLD"
+
+  post_tier3:
+    description: "TIER3 执行后的不可逆状态"
+    agent_terminated: true
+    subsequent_events: "全部丢弃"
+    recovery: "无 — 需要外部重启 Agent"
+
+
+# =============================================================================
+# § 7  联合审查流程 (Joint Review Pipeline)
+# =============================================================================
+#
+# 一个事件从进入到最终处置的完整决策链路。
+# 每个步骤的输入、输出、代码位置均明确标注。
+
+pipeline:
+  description: |
+    事件处理流水线：
+    RawEvent → 归一化 → 规则匹配 → 基线收集 → 风险评分 → 研判决策 → 阻断执行 → 审计记录
+
+  steps:
+    - step: 1
+      name: "事件归一化"
+      component: "EventNormalizer"
+      source_file: "observer_core/monitoring/event_normalizer.py"
+      input: "RawEvent (原始事件)"
+      output: "NormalizedEvent (归一化事件)"
+      description: |
+        将不同采集模式（simulation/strace/ebpf）产生的 RawEvent
+        统一为 NormalizedEvent，提取 command_string、match_target 等字段。
+
+    - step: 2
+      name: "规则匹配"
+      component: "RuleEngine"
+      source_file: "observer_core/monitoring/rule_engine.py"
+      input: "NormalizedEvent"
+      output: "MatchResult (matched_rules, match_details, has_match, highest_priority, highest_action)"
+      config_file: "rules/default_policy.yaml"
+      description: |
+        1. 类别筛选: exec→command规则, file_open→file规则, net_conn→network规则
+        2. 模式匹配: 根据 match_mode 选择算法
+           - pattern: 子串匹配 (case-insensitive)
+           - exact: 精确匹配
+           - regex: 正则匹配 (re.IGNORECASE)
+           - path_glob: 路径通配符 (fnmatch)
+        3. 按优先级排序，返回 MatchResult
+
+    - step: 3
+      name: "基线收集"
+      component: "BaselineChecker"
+      source_file: "observer_core/judgment/baseline_checker.py"
+      input: "NormalizedEvent"
+      output: "更新基线模型 (is_warm, event_types, file_paths, ...)"
+      description: |
+        收集 Agent 正常行为模式，用于后续偏离检测。
+        冷启动期（事件数 < min_warm_events）不产生偏离分。
+
+    - step: 4
+      name: "多维风险评分"
+      component: "RiskScorer"
+      source_file: "observer_core/judgment/risk_scorer.py"
+      input: "NormalizedEvent + MatchResult + AgentContext + Baseline"
+      output: "RiskAssessment (overall_score, risk_level, dimension_scores, matched_rule_ids)"
+      config_file: "rules/scoring_dimensions.yaml"
+      description: |
+        四维加权评分:
+        D1 规则命中分(40%) + D2 基线偏离分(25%) + D3 上下文风险分(20%) + D4 序列异常分(15%)
+        → 综合评分 → 风险等级映射
+
+    - step: 5
+      name: "研判决策"
+      component: "DecisionEngine"
+      source_file: "observer_core/judgment/decision_engine.py"
+      input: "RiskAssessment"
+      output: "Decision (action, tier, reason)"
+      description: |
+        1. 查研判矩阵: (risk_level, rule_action) → (action, tier)
+        2. 评分自动升级: score≥0.9→TIER3, score≥0.6→至少TIER2
+        3. 生成决策原因说明
+
+    - step: 6
+      name: "阻断执行"
+      component: "BlockingCoordinator"
+      source_file: "observer_core/blocking/blocking_coordinator.py"
+      input: "NormalizedEvent + Decision"
+      output: "BlockingResult (blocked, tier, cmd_id, details)"
+      description: |
+        1. 检查 Agent 是否已终止 → 是则丢弃
+        2. 记录违规并检查累计升级 (ViolationTracker)
+        3. 根据最终 tier 路由到对应处理器:
+           TIER1 → SoftReportHandler (allow + 日志)
+           TIER2 → BlockAccessHandler (EPERM + 阻断)
+           TIER3 → HardInterruptHandler (终止进程树)
+        4. 通过 CommandSender 发送反向管道指令
+
+    - step: 7
+      name: "行为图谱更新"
+      component: "BehaviorGraph"
+      source_file: "observer_core/audit/behavior_graph.py"
+      input: "NormalizedEvent + Assessment + Decision + BlockingResult"
+      output: "更新行为图谱节点和边"
+      description: "将事件处理全链路记录到行为图谱中"
+
+    - step: 8
+      name: "审计日志写入"
+      component: "AuditLogger"
+      source_file: "observer_core/audit/audit_logger.py"
+      input: "NormalizedEvent + Assessment + Decision + BlockingResult + matched_rules"
+      output: "JSONL 审计日志条目"
+      description: "将完整处理结果写入审计日志"
+
+
+# =============================================================================
+# § 8  全局参数 (Global Parameters)
+# =============================================================================
+#
+# 散落在各模块中的全局配置参数统一汇总。
+
+global_parameters:
+  monitoring:
+    event_window_size:
+      value: 10
+      description: "最近 N 个事件用于上下文分析"
+      source: "config.yaml → monitoring.event_window_size"
+      used_by: ["EventNormalizer (window_size)", "BasicContextScore", "BasicSequenceScore"]
+
+    process_window_ms:
+      value: 60000
+      description: "进程关联时间窗口（毫秒）"
+      source: "config.yaml → monitoring.process_window_ms"
+
+  baseline:
+    min_warm_events:
+      value: 5
+      description: "BaselineChecker 最少预热事件数"
+      source: "app.py → BaselineChecker(min_warm_events=5)"
+      used_by: ["BaselineChecker"]
+
+    min_events_for_baseline:
+      value: 20
+      description: "最少事件数才激活偏离检测"
+      source: "config.yaml → baseline.min_events_for_baseline"
+
+    cold_start_deviation:
+      value: 0.0
+      description: "冷启动期偏离分固定值"
+      source: "config.yaml → baseline.cold_start_deviation"
+
+  scoring:
+    multi_rule_bonus:
+      value: 0.1
+      description: "多条规则命中时，每条额外规则加分"
+      formula: "score = min(highest_priority/100 + 0.1 × (命中数-1), 1.0)"
+      source: "risk_scorer.py → BasicRuleScore.score()"
+
+    baseline_file_anomaly:
+      value: 0.3
+      description: "文件路径不在安全目录列表时的异常加分"
+      source: "risk_scorer.py → BasicBaselineScore.score()"
+
+    baseline_network_anomaly:
+      value: 0.3
+      description: "非内网 IP 地址的异常加分"
+      source: "risk_scorer.py → BasicBaselineScore.score()"
+
+    baseline_command_anomaly:
+      value: 0.2
+      description: "命令不在安全命令列表时的异常加分"
+      source: "risk_scorer.py → BasicBaselineScore.score()"
+
+    credential_file_score:
+      value: 0.6
+      description: "文件路径匹配凭据文件特征时的额外基线偏离分（优先于 baseline_file_anomaly）"
+      source: "risk_scorer.py → BasicBaselineScore.score() (proposed)"
+
+    context_sensitive_net:
+      value: 0.3
+      description: "读取敏感文件 + 网络外联序列的上下文风险加分"
+      source: "risk_scorer.py → BasicContextScore.score()"
+
+    context_privilege_escalation:
+      value: 0.4
+      description: "多次权限提升尝试的上下文风险加分"
+      source: "risk_scorer.py → BasicContextScore.score()"
+
+    context_cross_agent:
+      value: 0.3
+      description: "跨 Agent 数据流动的上下文风险加分"
+      source: "risk_scorer.py → BasicContextScore.score()"
+
+    sequence_new_type:
+      value: 0.3
+      description: "新出现的事件类型（历史未见过）的异常加分"
+      source: "risk_scorer.py → BasicSequenceScore.score()"
+
+    sequence_frequency_anomaly:
+      value: 0.2
+      description: "事件类型频率异常偏高（占比>70%且窗口≥5）的异常加分"
+      source: "risk_scorer.py → BasicSequenceScore.score()"
+
+    sequence_min_events:
+      value: 10
+      description: "序列异常分维度冷启动最少事件数"
+      source: "risk_scorer.py → BasicSequenceScore(min_events=10)"
+
+  blocking:
+    violation_window_ms:
+      value: 300000
+      description: "违规升级滑动窗口（5分钟）"
+      source: "config.yaml → blocking.violation_window_ms"
+
+    tier1_to_tier2_threshold:
+      value: 5
+      description: "TIER1 累计次数达到此阈值升级到 TIER2"
+      source: "config.yaml → blocking.tier1_to_tier2_threshold"
+
+    tier2_to_tier3_threshold:
+      value: 3
+      description: "TIER2 累计次数达到此阈值升级到 TIER3"
+      source: "config.yaml → blocking.tier2_to_tier3_threshold"
