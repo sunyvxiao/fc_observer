@@ -18,7 +18,7 @@ ReportExporter — Markdown 风险分析报告导出
 import os
 import json
 import logging
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Tuple
 from datetime import datetime
 
 import sys
@@ -206,6 +206,106 @@ class ReportExporter:
             return ""
         filled = int(count / total * width)
         return "\u2588" * filled + "\u2591" * (width - filled)
+
+    def export_from_segments(self, merged_data: dict,
+                             time_range: Tuple[int, int] = None,
+                             scenario_name: str = "实时监测") -> str:
+        """
+        从 ReportCacheManager 合并的片段数据导出 Markdown 报告。
+
+        Args:
+            merged_data: ReportCacheManager.merge_segments() 的返回结果
+            time_range:  (start_ns, end_ns) 可选时间范围
+            scenario_name: 报告标题
+
+        Returns:
+            str: 报告文件路径
+        """
+        os.makedirs(self._reports_dir, exist_ok=True)
+        ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+        filename = f"risk_report_range_{ts}.md"
+        filepath = os.path.join(self._reports_dir, filename)
+
+        stats = merged_data.get("merged_stats", {})
+        coverage = merged_data.get("coverage", {})
+        segment_count = merged_data.get("segment_count", 0)
+        gaps_filled = merged_data.get("gaps_filled", 0)
+
+        lines = []
+        lines.append(f"# 风险分析报告: {scenario_name}")
+        lines.append("")
+        lines.append(f"> 生成时间: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+        lines.append(f"> 报告类型: 片段拼接 (D1+D2 双模)")
+
+        if time_range:
+            start_dt = datetime.fromtimestamp(time_range[0] / 1_000_000_000)
+            end_dt = datetime.fromtimestamp(time_range[1] / 1_000_000_000)
+            lines.append(f"> 时间范围: {start_dt.isoformat()} ~ {end_dt.isoformat()}")
+        lines.append(f"> 覆盖片段: {segment_count} 个")
+        if gaps_filled > 0:
+            lines.append(f"> 间隙补充: {gaps_filled} 条（从 audit JSONL）")
+        lines.append("")
+
+        # 概览
+        lines.append("## 1. 概览")
+        lines.append("")
+        total = stats.get("total", 0)
+        lines.append(f"- **总事件数**: {total}")
+        lines.append(f"- **放行**: {stats.get('allow', 0)}")
+        lines.append(f"- **告警**: {stats.get('alert', 0)}")
+        lines.append(f"- **阻断**: {stats.get('block', 0)}")
+        lines.append(f"- **最高风险分**: {stats.get('max_score', 0):.2f}")
+        lines.append("")
+
+        # 风险等级分布
+        risk_dist = stats.get("risk_dist", {})
+        lines.append("## 2. 风险等级分布")
+        lines.append("")
+        lines.append("| 风险等级 | 事件数 | 占比 |")
+        lines.append("|---------|:---:|:---:|")
+        for level in ["LOW", "MEDIUM", "HIGH", "CRITICAL"]:
+            count = risk_dist.get(level, 0)
+            pct = f"{count / total * 100:.1f}%" if total > 0 else "0%"
+            bar = self._make_bar(count, total)
+            lines.append(f"| {level} | {count} | {pct} {bar} |")
+        lines.append("")
+
+        # 规则命中
+        rule_hits = stats.get("rule_hits", {})
+        if rule_hits:
+            lines.append("## 3. 规则命中统计")
+            lines.append("")
+            lines.append("| 规则ID | 命中次数 |")
+            lines.append("|--------|:---:|")
+            sorted_rules = sorted(rule_hits.items(), key=lambda x: x[1], reverse=True)
+            for rule_id, count in sorted_rules:
+                lines.append(f"| {rule_id} | {count} |")
+            lines.append("")
+
+        # 覆盖率
+        if coverage:
+            lines.append("## 4. 数据覆盖率")
+            lines.append("")
+            cov_start = coverage.get("start_ns", 0)
+            cov_end = coverage.get("end_ns", 0)
+            duration_s = (cov_end - cov_start) / 1_000_000_000 if cov_end > cov_start else 0
+            lines.append(f"- 覆盖开始: {datetime.fromtimestamp(cov_start / 1_000_000_000).isoformat() if cov_start else 'N/A'}")
+            lines.append(f"- 覆盖结束: {datetime.fromtimestamp(cov_end / 1_000_000_000).isoformat() if cov_end else 'N/A'}")
+            lines.append(f"- 覆盖时长: {duration_s:.1f}s")
+            lines.append(f"- 拼接片段: {segment_count} 个")
+            lines.append(f"- 间隙补充: {gaps_filled} 条")
+            lines.append("")
+
+        # 页脚
+        lines.append("---")
+        lines.append(f"*本报告由方寸观察者模拟学习系统自动生成（片段拼接模式） | {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}*")
+
+        content = "\n".join(lines)
+        with open(filepath, "w", encoding="utf-8") as f:
+            f.write(content)
+
+        logger.info(f"[ReportExporter] Segment report saved: {filepath}")
+        return filepath
 
     def export_all_summary(self, scenario_summaries: List[Dict]) -> str:
         """

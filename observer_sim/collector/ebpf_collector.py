@@ -1,15 +1,16 @@
 """
-collector/ebpf_collector.py — eBPF 采集器（Linux 内核探针观测）
+collector/ebpf_collector.py — eBPF 采集器（Linux 内核探针：观测 + 阻断 v2.0）
 
 实现 ICollector 接口，通过 libbpf (ctypes) 加载预编译的 eBPF 字节码，
-挂载三类 tracepoint 探针（execve/openat/connect），消费 perf ring buffer
-事件并转换为 RawEvent yield 给上层。
+挂载三类 tracepoint 探针（观测：execve/openat/connect），
+消费 perf ring buffer 事件并转换为 RawEvent yield 给上层。
 
-第一版仅做观测，send_command() 返回 False（不支持阻断）。
+v2.0 新增：send_command() 通过 block_policy eBPF map + kprobe 实现阻断，
+被阻断的 Agent syscall 返回 EPERM。
 
 依赖:
   - libbpf.so (libbpf-dev 包)
-  - ebpf/observer.bpf.o (预编译的 eBPF 字节码)
+  - ebpf/observer.bpf.o (预编译的 eBPF 字节码，含 kprobe 程序)
 """
 
 import os
@@ -21,10 +22,12 @@ import logging
 import threading
 import atexit
 import queue
-from typing import Iterator, Optional
+import time
+from typing import Iterator, Optional, Set
 
 from collector.base_collector import ICollector, CollectorCapabilities
 from models.event import RawEvent
+from models.command import Command, CmdType, BlockAction
 
 logger = logging.getLogger(__name__)
 
@@ -148,6 +151,21 @@ def _setup_libbpf_signatures(lib):
     lib.perf_buffer__poll.argtypes = [ctypes.c_void_p, ctypes.c_int]
     lib.perf_buffer__poll.restype = ctypes.c_int
 
+    # int bpf_map_update_elem(int fd, const void *key,
+    #                         const void *value, __u64 flags)
+    lib.bpf_map_update_elem.argtypes = [
+        ctypes.c_int, ctypes.c_void_p, ctypes.c_void_p, ctypes.c_uint64]
+    lib.bpf_map_update_elem.restype = ctypes.c_int
+
+    # int bpf_map_delete_elem(int fd, const void *key)
+    lib.bpf_map_delete_elem.argtypes = [ctypes.c_int, ctypes.c_void_p]
+    lib.bpf_map_delete_elem.restype = ctypes.c_int
+
+    # int bpf_map_lookup_elem(int fd, const void *key, void *value)
+    lib.bpf_map_lookup_elem.argtypes = [
+        ctypes.c_int, ctypes.c_void_p, ctypes.c_void_p]
+    lib.bpf_map_lookup_elem.restype = ctypes.c_int
+
     # void perf_buffer__free(struct perf_buffer *pb)
     lib.perf_buffer__free.argtypes = [ctypes.c_void_p]
     lib.perf_buffer__free.restype = None
@@ -224,11 +242,17 @@ class EventT(ctypes.Structure):
 
 class EbpfCollector(ICollector):
     """
-    eBPF 采集器 —— 加载 eBPF 字节码，挂载 tracepoint 探针，
+    eBPF 采集器 —— 加载 eBPF 字节码，挂载 tracepoint 探针（观测），
     消费 perf ring buffer 事件并转换为 RawEvent。
 
-    第一版仅做观测，不支持阻断。
+    v2.0: 通过 block_policy map + kprobe 实现 syscall 级别阻断。
     """
+
+    # block_flags 位掩码常量（与 observer.bpf.c 一致）
+    BLOCK_EXECVE = 0x01
+    BLOCK_OPENAT = 0x02
+    BLOCK_CONNECT = 0x04
+    BLOCK_ALL = 0x01 | 0x02 | 0x04
 
     def __init__(self, config: dict):
         """
@@ -250,12 +274,16 @@ class EbpfCollector(ICollector):
         self._lib = None
         self._bpf_object = None
         self._perf_buffer = None
-        self._links = []  # bpf_link 列表
+        self._links = []  # tracepoint bpf_link 列表
+        self._kprobe_links = []  # kprobe bpf_link 列表
         self._event_queue = queue.Queue(maxsize=10000)
         self._poll_thread = None
         self._running = False
         self._seq = 0
         self._attached = False
+        self._kprobe_attached = False  # kprobe 动态挂载状态
+        self._blocked_pids: Set[int] = set()  # 被阻断的 PID 集合
+        self._block_policy_fd = -1  # block_policy map fd（延迟获取）
 
         # 加载 libbpf
         try:
@@ -266,12 +294,12 @@ class EbpfCollector(ICollector):
             raise
 
     def capabilities(self) -> CollectorCapabilities:
-        """返回 eBPF 采集器能力描述"""
+        """返回 eBPF 采集器能力描述（v2.0 支持阻断）"""
         return CollectorCapabilities(
             name="Ebpf",
             can_observe=True,
-            can_block_tier2=False,    # 第一版不支持
-            can_block_tier3=False,    # 第一版不支持
+            can_block_tier2=True,     # v2.0: kprobe 阻断
+            can_block_tier3=True,     # v2.0: 可终止进程
             is_transparent=True,      # 对 Agent 无感知
             performance_overhead="low",
             time_source="realtime_monotonic",
@@ -573,29 +601,250 @@ class EbpfCollector(ICollector):
             except queue.Empty:
                 continue
 
-    def send_command(self, cmd) -> bool:
-        """
-        eBPF 第一版不支持阻断。
+    # ============================================================
+    # v2.0: send_command() + kprobe 动态挂载/卸载
+    # ============================================================
 
-        返回 False 并记录警告日志。
+    def _get_block_policy_fd(self) -> int:
+        """获取 block_policy map 文件描述符（延迟获取，缓存结果）"""
+        if self._block_policy_fd >= 0:
+            return self._block_policy_fd
+        if not self._bpf_object:
+            return -1
+        self._block_policy_fd = self._lib.bpf_object__find_map_fd_by_name(
+            self._bpf_object, b"block_policy")
+        if self._block_policy_fd < 0:
+            logger.error(f"找不到 block_policy map: fd={self._block_policy_fd}")
+        return self._block_policy_fd
+
+    def _update_block_policy(self, pid: int, flags: int) -> bool:
+        """更新 block_policy map：写入 pid → flags 映射"""
+        map_fd = self._get_block_policy_fd()
+        if map_fd < 0:
+            return False
+        key = ctypes.c_uint32(pid)
+        value = ctypes.c_uint64(flags)
+        ret = self._lib.bpf_map_update_elem(
+            map_fd,
+            ctypes.byref(key),
+            ctypes.byref(value),
+            0,  # BPF_ANY: 更新或创建
+        )
+        if ret != 0:
+            logger.error(
+                f"bpf_map_update_elem(block_policy, pid={pid}, flags=0x{flags:x}) "
+                f"失败: {self._libbpf_strerror(ret)}")
+            return False
+        logger.info(f"block_policy 已更新: pid={pid}, flags=0x{flags:x}")
+        return True
+
+    def _delete_block_policy(self, pid: int) -> bool:
+        """从 block_policy map 删除指定 pid 的条目"""
+        map_fd = self._get_block_policy_fd()
+        if map_fd < 0:
+            return False
+        key = ctypes.c_uint32(pid)
+        ret = self._lib.bpf_map_delete_elem(map_fd, ctypes.byref(key))
+        if ret != 0:
+            # ENOENT (2) 表示条目不存在，不是错误
+            if ret == -2 or ret == 2:
+                logger.debug(f"block_policy pid={pid} 不存在，无需删除")
+                return True
+            logger.error(
+                f"bpf_map_delete_elem(block_policy, pid={pid}) 失败: "
+                f"{self._libbpf_strerror(ret)}")
+            return False
+        logger.info(f"block_policy 已删除: pid={pid}")
+        return True
+
+    def _query_block_policy(self, pid: int) -> Optional[int]:
+        """查询 block_policy map 中指定 pid 的 block_flags"""
+        map_fd = self._get_block_policy_fd()
+        if map_fd < 0:
+            return None
+        key = ctypes.c_uint32(pid)
+        value = ctypes.c_uint64(0)
+        ret = self._lib.bpf_map_lookup_elem(
+            map_fd, ctypes.byref(key), ctypes.byref(value))
+        if ret != 0:
+            return None
+        return value.value
+
+    def _ensure_kprobes_attached(self) -> bool:
         """
-        logger.warning(
-            "eBPF 第一版不支持阻断，send_command() 忽略。"
-            "阻断功能将在第二版实现（kprobe + bpf_override_return）")
-        return False
+        确保 kprobe 阻断探针已挂载。
+
+        仅在首次阻断时调用，后续阻断复用已挂载的探针。
+        kprobe 程序已在 bpf_object 中加载，只需 attach。
+        """
+        if self._kprobe_attached:
+            return True
+        if not self._bpf_object:
+            logger.error("bpf_object 未加载，无法挂载 kprobe")
+            return False
+
+        kprobe_names = [
+            b"kprobe__execve",
+            b"kprobe__openat",
+            b"kprobe__connect",
+        ]
+
+        for name in kprobe_names:
+            prog = self._lib.bpf_object__find_program_by_name(
+                self._bpf_object, name)
+            if not prog:
+                logger.error(
+                    f"找不到 kprobe 程序: {name.decode()}，"
+                    f"请确认 observer.bpf.o 已重新编译")
+                return False
+
+            fd = self._lib.bpf_program__fd(prog)
+            logger.info(
+                f"[阻断] 挂载 kprobe: {name.decode()} (prog=0x{prog:x}, fd={fd})")
+
+            link = self._lib.bpf_program__attach(prog)
+            if not link:
+                logger.error(
+                    f"kprobe {name.decode()} attach 失败: 返回 NULL。"
+                    f"可能需要 root 权限")
+                self._detach_kprobes()
+                return False
+
+            self._kprobe_links.append(link)
+            logger.info(
+                f"[阻断] kprobe 已挂载: {name.decode()} (link=0x{link:x})")
+
+        self._kprobe_attached = True
+        logger.info(
+            f"[阻断] 全部 3 个 kprobe 已挂载，阻断能力已激活")
+        return True
+
+    def _detach_kprobes(self) -> None:
+        """卸载所有 kprobe 阻断探针，释放内核资源"""
+        if not self._kprobe_links:
+            self._kprobe_attached = False
+            return
+
+        for link in self._kprobe_links:
+            try:
+                self._lib.bpf_link__destroy(link)
+            except Exception as e:
+                logger.warning(f"kprobe link destroy 异常: {e}")
+
+        self._kprobe_links.clear()
+        self._kprobe_attached = False
+        logger.info("[阻断] kprobe 探针已卸载")
+
+    def _resolve_block_flags(self, cmd: Command) -> int:
+        """
+        从 Command 对象解析 block_flags 位掩码。
+
+        BLOCK_EVENT → 全部阻断 (0x07)
+        ALLOW      → 清除阻断 (0x00)
+        TERMINATE  → 全部阻断 + 终止标记 (0x07)
+        """
+        if cmd.cmd_type == CmdType.BLOCK_EVENT.value:
+            return self.BLOCK_ALL
+        elif cmd.cmd_type == CmdType.TERMINATE_PROCESS.value:
+            return self.BLOCK_ALL
+        elif cmd.cmd_type == CmdType.ALLOW.value:
+            return 0
+        else:
+            # HEARTBEAT 等其他类型不处理
+            return -1
+
+    def send_command(self, cmd: Command) -> bool:
+        """
+        实现 eBPF 阻断指令（v2.0）。
+
+        流程:
+          1. 解析 Command → target_pid + block_flags
+          2. 若 block_flags > 0: 更新 block_policy map，首次时挂载 kprobe
+          3. 若 block_flags == 0: 删除 map 条目，若再无被阻断 PID 则卸载 kprobe
+
+        参数:
+            cmd: Command 对象（来自 judgment 层）
+
+        返回:
+            True: 阻断指令已执行
+            False: 无法执行（eBPF 未初始化、PID 无效等）
+        """
+        if not self._bpf_object or not self._attached:
+            logger.warning(
+                "eBPF 未初始化，send_command() 降级: 无法执行阻断")
+            return False
+
+        # 1. 解析 Command
+        target_pid = cmd.target_pid
+        if not target_pid or target_pid <= 0:
+            logger.error(f"Command 缺少有效的 target_pid: {cmd.target_pid}")
+            return False
+
+        block_flags = self._resolve_block_flags(cmd)
+        if block_flags < 0:
+            logger.debug(
+                f"Command 类型 {cmd.cmd_type} 不适用于 eBPF 阻断，跳过")
+            return False
+
+        if block_flags == 0:
+            # 2a. 解除阻断
+            logger.info(
+                f"[阻断] 解除 PID {target_pid} 的阻断 "
+                f"(cmd_id={cmd.cmd_id}, reason={cmd.reason})")
+
+            if not self._delete_block_policy(target_pid):
+                return False
+
+            self._blocked_pids.discard(target_pid)
+
+            # 如果再无被阻断 PID，卸载 kprobe
+            if not self._blocked_pids:
+                self._detach_kprobes()
+                logger.info("[阻断] 所有 PID 已解除阻断，kprobe 已卸载")
+
+            return True
+        else:
+            # 2b. 设置阻断
+            logger.info(
+                f"[阻断] 阻断 PID {target_pid} "
+                f"(cmd_id={cmd.cmd_id}, flags=0x{block_flags:x}, "
+                f"reason={cmd.reason})")
+
+            # 确保 kprobe 已挂载（首次阻断时挂载）
+            if not self._ensure_kprobes_attached():
+                logger.error(
+                    f"[阻断] kprobe 挂载失败，PID {target_pid} 阻断未生效")
+                return False
+
+            # 更新 block_policy map
+            if not self._update_block_policy(target_pid, block_flags):
+                return False
+
+            self._blocked_pids.add(target_pid)
+            return True
 
     def detach(self) -> None:
-        """断开采集，清理 eBPF 资源"""
+        """断开采集，清理 eBPF 资源（含 kprobe）"""
         self._running = False
+        self._detach_kprobes()
         self._cleanup()
         self._attached = False
         logger.info("EbpfCollector 已断开")
 
     def _cleanup(self):
-        """清理所有 eBPF 资源"""
+        """清理所有 eBPF 资源（含 kprobe 和 tracepoint）"""
         if self._poll_thread and self._poll_thread.is_alive():
             self._running = False
             self._poll_thread.join(timeout=2.0)
+
+        # 清理 kprobe 链接
+        for link in self._kprobe_links:
+            try:
+                self._lib.bpf_link__destroy(link)
+            except Exception:
+                pass
+        self._kprobe_links.clear()
+        self._kprobe_attached = False
 
         if self._perf_buffer and self._lib:
             try:
@@ -618,6 +867,8 @@ class EbpfCollector(ICollector):
             except Exception:
                 pass
             self._bpf_object = None
+
+        self._block_policy_fd = -1
 
     def get_process_tree(self) -> dict:
         """

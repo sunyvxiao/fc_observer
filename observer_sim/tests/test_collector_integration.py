@@ -218,11 +218,11 @@ class TestCapabilitiesComparison:
         assert caps.can_block_tier2 is False
         assert caps.can_block_tier3 is False
 
-    def test_ebpf_v1_no_blocking(self):
-        """eBPF 第一版不支持阻断"""
+    def test_ebpf_v2_blocking_supported(self):
+        """eBPF v2.0 支持阻断"""
         caps = _create_mock_ebpf_collector().capabilities()
-        assert caps.can_block_tier2 is False
-        assert caps.can_block_tier3 is False
+        assert caps.can_block_tier2 is True
+        assert caps.can_block_tier3 is True
 
     def test_all_can_observe(self):
         """三种采集器都支持观测"""

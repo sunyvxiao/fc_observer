@@ -1,0 +1,174 @@
+# Hook 配置: pydantic-deep 框架
+# 
+# 将 pydantic-deep Agent 的工具调用映射为 observer_core RawEvent。
+# 新增 Agent 框架时，在此目录下添加对应的 YAML 文件即可，
+# hook_registry.py 会自动发现并加载。
+#
+# 扩展点: 对于不支持标准 Hook 的 Agent 框架，可配置
+#   capture_mode: "strace" 或 "ebpf" (降级模式，本阶段预留)
+
+framework: pydantic-deep
+version: "1.0"
+description: "pydantic-deep Agent 框架 Hook 配置"
+
+# 捕获模式: hook (使用框架内置 Hook) | strace | ebpf (预留)
+capture_mode: hook
+
+# 工具名 → 事件类型 + 参数映射
+tool_mappings:
+  # ── Shell 执行类 ──
+  execute:
+    event_type: exec
+    param_rules:
+      executable: "input.command.split()[0] if input.get('command') else tool_name"
+      arguments: "input.command.split() if input.get('command') else [tool_name]"
+
+  execute_command:
+    event_type: exec
+    param_rules:
+      executable: "input.command.split()[0] if input.get('command') else tool_name"
+      arguments: "input.command.split() if input.get('command') else [tool_name]"
+
+  run_command:
+    event_type: exec
+    param_rules:
+      executable: "input.command.split()[0] if input.get('command') else tool_name"
+      arguments: "input.command.split() if input.get('command') else [tool_name]"
+
+  shell:
+    event_type: exec
+    param_rules:
+      executable: "input.command.split()[0] if input.get('command') else tool_name"
+      arguments: "input.command.split() if input.get('command') else [tool_name]"
+
+  bash:
+    event_type: exec
+    param_rules:
+      executable: "input.command.split()[0] if input.get('command') else tool_name"
+      arguments: "input.command.split() if input.get('command') else [tool_name]"
+
+  # ── 文件读取类 ──
+  read_file:
+    event_type: file_open
+    param_rules:
+      file_path: "input.get('path') or input.get('file_path') or input.get('file') or ''"
+      file_op: '"read"'
+
+  read:
+    event_type: file_open
+    param_rules:
+      file_path: "input.get('path') or input.get('file_path') or input.get('file') or ''"
+      file_op: '"read"'
+
+  cat:
+    event_type: file_open
+    param_rules:
+      file_path: "input.get('path') or input.get('file_path') or input.get('file') or ''"
+      file_op: '"read"'
+
+  list_files:
+    event_type: file_open
+    param_rules:
+      file_path: "input.get('path') or input.get('file_path') or input.get('file') or ''"
+      file_op: '"read"'
+
+  grep:
+    event_type: file_open
+    param_rules:
+      file_path: "input.get('path') or input.get('file_path') or input.get('file') or ''"
+      file_op: '"read"'
+
+  glob:
+    event_type: file_open
+    param_rules:
+      file_path: "input.get('path') or input.get('file_path') or input.get('file') or ''"
+      file_op: '"read"'
+
+  # ── 文件写入类 ──
+  write_file:
+    event_type: file_open
+    param_rules:
+      file_path: "input.get('path') or input.get('file_path') or input.get('file') or ''"
+      file_op: '"write"'
+
+  write:
+    event_type: file_open
+    param_rules:
+      file_path: "input.get('path') or input.get('file_path') or input.get('file') or ''"
+      file_op: '"write"'
+
+  edit_file:
+    event_type: file_open
+    param_rules:
+      file_path: "input.get('path') or input.get('file_path') or input.get('file') or ''"
+      file_op: '"write"'
+
+  edit:
+    event_type: file_open
+    param_rules:
+      file_path: "input.get('path') or input.get('file_path') or input.get('file') or ''"
+      file_op: '"write"'
+
+  patch:
+    event_type: file_open
+    param_rules:
+      file_path: "input.get('path') or input.get('file_path') or input.get('file') or ''"
+      file_op: '"write"'
+
+  # ── 网络类 ──
+  web_fetch:
+    event_type: net_conn
+    param_rules:
+      remote_addr: "extract_host(input.get('url') or input.get('query') or '')"
+      remote_port: "443 if 'https' in str(input.get('url', '')) else 80"
+      protocol: '"TCP"'
+
+  fetch:
+    event_type: net_conn
+    param_rules:
+      remote_addr: "extract_host(input.get('url') or input.get('query') or '')"
+      remote_port: "443 if 'https' in str(input.get('url', '')) else 80"
+      protocol: '"TCP"'
+
+  web_search:
+    event_type: net_conn
+    param_rules:
+      remote_addr: "extract_host(input.get('url') or input.get('query') or '')"
+      remote_port: "443"
+      protocol: '"TCP"'
+
+  browse:
+    event_type: net_conn
+    param_rules:
+      remote_addr: "extract_host(input.get('url') or input.get('query') or '')"
+      remote_port: "443"
+      protocol: '"TCP"'
+
+  curl:
+    event_type: net_conn
+    param_rules:
+      remote_addr: "extract_host(input.get('url') or input.get('query') or '')"
+      remote_port: "443"
+      protocol: '"TCP"'
+
+  http_request:
+    event_type: net_conn
+    param_rules:
+      remote_addr: "extract_host(input.get('url') or input.get('query') or '')"
+      remote_port: "443"
+      protocol: '"TCP"'
+
+# 默认映射（未匹配的工具使用此配置）
+default_mapping:
+  event_type: exec
+  param_rules:
+    executable: "tool_name"
+    arguments: "[str(input.get('command', input.get('cmd', '')))]"
+
+# Hook 回调配置
+hook_config:
+  capture_phases:
+    - pre_tool     # 工具执行前捕获
+    - post_tool    # 工具执行后捕获
+  timeout_ms: 5000
+  queue_maxsize: 10000

@@ -22,6 +22,7 @@ import sys
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from models.risk import ActionTier
 from models.virtual_clock import VirtualClock
+from observer_core.judgment.tuning_loader import get_tuning
 
 logger = logging.getLogger(__name__)
 
@@ -71,10 +72,20 @@ class AgentViolationTracker:
         """
         Args:
             clock: 虚拟时钟实例
-            window_size_ns: 滑动窗口大小（纳秒），默认 5 分钟
+            window_size_ns: 滑动窗口大小（纳秒），None 时从 tuning.yaml 加载
         """
+        tuning = get_tuning()
+        esc_cfg = tuning.get("escalation", {})
+
         self._clock = clock
-        self._window_size = window_size_ns or self.WINDOW_SIZE_NS
+        self._window_size = (
+            window_size_ns
+            or esc_cfg.get("window_size_ns", self.WINDOW_SIZE_NS)
+        )
+        self.TIER1_ESCALATE_THRESHOLD = esc_cfg.get(
+            "tier1_escalate_threshold", self.TIER1_ESCALATE_THRESHOLD)
+        self.TIER2_ESCALATE_THRESHOLD = esc_cfg.get(
+            "tier2_escalate_threshold", self.TIER2_ESCALATE_THRESHOLD)
         self._agents: Dict[str, AgentViolationState] = {}
 
     def record_violation(self, agent_id: str, tier: ActionTier,

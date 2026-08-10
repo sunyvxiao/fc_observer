@@ -659,6 +659,98 @@
             padding: 4px 8px;
         }
         .file-preview-content .fp-close:hover { color: var(--accent-red); }
+
+        /* ── 实时监测页面 ── */
+        .monitor-status-card {
+            display: flex;
+            align-items: center;
+            gap: 16px;
+            padding: 16px;
+            background: var(--bg-card);
+            border: 1px solid var(--border-color);
+            border-radius: 8px;
+            margin-bottom: 16px;
+        }
+        .monitor-status-indicator {
+            width: 16px;
+            height: 16px;
+            border-radius: 50%;
+            flex-shrink: 0;
+        }
+        .monitor-status-indicator.running {
+            background: var(--accent-green);
+            box-shadow: 0 0 8px var(--accent-green);
+            animation: pulse 1.5s infinite;
+        }
+        .monitor-status-indicator.stopped { background: var(--accent-red); }
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.5; }
+        }
+        .command-display {
+            background: #0d0d1a;
+            border: 1px solid var(--border-color);
+            border-radius: 6px;
+            padding: 14px 16px;
+            font-family: 'Consolas', 'Courier New', monospace;
+            font-size: 13px;
+            line-height: 1.8;
+            color: var(--accent-green);
+            margin-bottom: 8px;
+            overflow-x: auto;
+            white-space: pre-wrap;
+        }
+        .command-label {
+            font-size: 12px;
+            color: var(--text-secondary);
+            margin-bottom: 4px;
+        }
+
+        /* ── Agent模拟测试页面 ── */
+        .agent-sim-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+            gap: 16px;
+        }
+        .agent-sim-card {
+            background: var(--bg-card);
+            border: 1px solid var(--border-color);
+            border-radius: 8px;
+            padding: 20px;
+            transition: all 0.2s;
+        }
+        .agent-sim-card:hover {
+            border-color: var(--accent-blue);
+        }
+        .agent-sim-card .sc-name {
+            font-size: 16px;
+            font-weight: bold;
+            margin-bottom: 8px;
+        }
+        .agent-sim-card .sc-desc {
+            font-size: 13px;
+            color: var(--text-secondary);
+            margin-bottom: 10px;
+            line-height: 1.5;
+        }
+        .agent-sim-card .sc-expected {
+            font-size: 12px;
+            color: var(--accent-yellow);
+            margin-bottom: 12px;
+            padding: 6px 8px;
+            background: rgba(255, 204, 0, 0.08);
+            border-radius: 4px;
+        }
+        .agent-sim-result {
+            margin-top: 12px;
+            padding: 10px;
+            background: var(--bg-secondary);
+            border-radius: 6px;
+            font-size: 13px;
+        }
+        .result-pass { color: var(--accent-green); }
+        .result-fail { color: var(--accent-red); }
+        .result-skip { color: var(--text-secondary); }
     </style>
 </head>
 <body>
@@ -674,17 +766,25 @@
                     <span class="nav-icon">&#x1F4CB;</span>
                     <span>全面场景模拟</span>
                 </div>
+                <div class="nav-item" data-view="view-monitor" onclick="showView('view-monitor')">
+                    <span class="nav-icon">&#x1F4E1;</span>
+                    <span>实时监测</span>
+                </div>
+                <div class="nav-item" data-view="view-agent-sim" onclick="showView('view-agent-sim')">
+                    <span class="nav-icon">&#x1F9EA;</span>
+                    <span>Agent模拟测试</span>
+                </div>
+                <div class="nav-item" data-view="scenario-samples" onclick="showView('scenario-samples')">
+                    <span class="nav-icon">&#x1F4CB;</span>
+                    <span>真实场景样例</span>
+                </div>
                 <div class="nav-item" data-view="record-replay" onclick="showView('record-replay')">
                     <span class="nav-icon">&#x1F3AC;</span>
-                    <span>录制-回放</span>
+                    <span>录制与回放</span>
                 </div>
-                <div class="nav-item" data-view="reports" onclick="showView('reports')">
-                    <span class="nav-icon">&#x1F4C4;</span>
-                    <span>查看历史报告</span>
-                </div>
-                <div class="nav-item" data-view="delete" onclick="showView('delete')">
-                    <span class="nav-icon">&#x1F5D1;</span>
-                    <span>删除测试记录</span>
+                <div class="nav-item" data-view="files" onclick="showView('files')">
+                    <span class="nav-icon">&#x1F4C1;</span>
+                    <span>文件管理</span>
                 </div>
             </nav>
             <div class="server-status">
@@ -734,14 +834,20 @@
                 </div>
                 <div id="event-log"></div>
                 <div id="analysis-panel"></div>
+                <div id="scenario-report-preview" class="report-content" style="display:none;"></div>
             </div>
 
             <!-- 视图: 录制-回放 -->
             <div id="view-record-replay" class="view">
-                <h1 class="view-title">&#x1F3AC; 录制-回放演示</h1>
-                <p style="color:var(--text-secondary); margin-bottom:20px;">
+                <h1 class="view-title">&#x1F3AC; 录制与回放</h1>
+                <p style="color:var(--text-secondary); margin-bottom:12px;">
                     模拟真实生产环境中的旁路监控场景：Agent 独立执行任务，监控系统旁路捕获并分析。
                 </p>
+                <!-- 模式切换 Tab -->
+                <div class="tab-bar">
+                    <div class="tab-item active-tab" id="tab-record-mode" onclick="switchDemoMode('record')">&#x1F4F9; 录制模式</div>
+                    <div class="tab-item" id="tab-monitor-mode" onclick="switchDemoMode('monitor')">&#x1F6E1; 监测模式</div>
+                </div>
                 <!-- 场景选择 -->
                 <div class="card" style="margin-bottom:20px;">
                     <div class="card-title">&#x1F4C1; 演示场景</div>
@@ -777,23 +883,52 @@
                         <span style="color:var(--text-secondary);">加载中...</span>
                     </div>
                 </div>
-                <!-- Step 3: 运行 Agent -->
-                <div class="demo-step">
+                <!-- Step 3: 录制模式（纯录制，不运行 Agent） -->
+                <div class="demo-step" id="demo-step-record">
                     <div class="step-header">
                         <div class="step-number">3</div>
-                        <div class="step-title">运行 Agent 并录制</div>
+                        <div class="step-title">录制模式（手动控制）</div>
                     </div>
-                    <div class="step-desc">启动 Agent 执行任务，监控系统同时开始录制事件流</div>
-                    <button class="btn btn-primary" id="btn-run-agent" onclick="runDemoRecord()" style="font-size:14px; padding:10px 24px;">&#x25B6; 运行 Agent，同时开始录制</button>
+                    <div class="step-desc">
+                        点击「开始录制」启动 Monitor 旁路录制，然后在终端中手动启动 Agent。<br>
+                        <span style="font-size:12px; color:var(--accent-yellow);">Agent 启动后的事件会实时显示在下方。</span>
+                    </div>
+                    <div style="margin:8px 0;">
+                        <button class="btn btn-success" id="btn-start-record-only" onclick="startRecordOnly()" style="font-size:14px; padding:10px 24px;">&#x25B6; 开始录制</button>
+                        <button class="btn btn-danger" id="btn-stop-record-only" onclick="stopRecordOnly()" style="font-size:14px; padding:10px 24px; display:none;">&#x23F9; 停止录制</button>
+                        <span id="record-status" style="margin-left:12px; color:var(--text-secondary); font-size:13px;">未开始</span>
+                    </div>
+                    <div class="step-desc" style="margin-top:8px;">
+                        <strong>Agent 启动命令（在终端中运行）：</strong>
+                        <div class="command-display">cd deep-agents-demo && python run_agent.py --fifo ../.monitoring/pipe</div>
+                    </div>
                     <div id="demo-event-log" style="margin-top:12px;"></div>
                 </div>
+                <!-- Step 3 Monitor: 监测模式 -->
+                <div class="demo-step" id="demo-step-monitor" style="display:none;">
+                    <div class="step-header">
+                        <div class="step-number" style="background:var(--accent-yellow);">3</div>
+                        <div class="step-title">运行 Agent 并监测</div>
+                    </div>
+                    <div class="step-desc">启动 Agent 执行任务，监控系统执行完整风险评估管道（ALLOW / ALERT / BLOCK）</div>
+                    <button class="btn btn-primary" id="btn-run-agent-monitor" onclick="runDemoMonitor()" style="font-size:14px; padding:10px 24px;">&#x25B6; 运行 Agent，同时开始监测</button>
+                    <div id="demo-monitor-event-log" style="margin-top:12px;"></div>
+                </div>
                 <!-- Step 4: 完成录制 -->
-                <div class="demo-step">
+                <div class="demo-step" id="demo-step-record-summary">
                     <div class="step-header">
                         <div class="step-number">4</div>
                         <div class="step-title">录制摘要</div>
                     </div>
                     <div id="demo-recording-summary" style="color:var(--text-secondary);">等待运行完成...</div>
+                </div>
+                <!-- Step 4 Monitor: 监测摘要 -->
+                <div class="demo-step" id="demo-step-monitor-summary" style="display:none;">
+                    <div class="step-header">
+                        <div class="step-number" style="background:var(--accent-yellow);">4</div>
+                        <div class="step-title">监测摘要</div>
+                    </div>
+                    <div id="demo-monitor-summary" style="color:var(--text-secondary);">等待运行完成...</div>
                 </div>
                 <!-- Step 5: 输出成果 -->
                 <div class="demo-step">
@@ -850,60 +985,99 @@
                 </div>
             </div>
 
-            <!-- 视图: 历史报告查看 -->
-            <div id="view-reports" class="view">
-                <h1 class="view-title">&#x1F4C4; 查看历史报告</h1>
-                <div class="tab-bar">
-                    <div class="tab-item active-tab" onclick="switchReportTab('run')">场景运行报告</div>
-                    <div class="tab-item" onclick="switchReportTab('replay')">场景回放</div>
+            <!-- 视图: 文件管理 -->
+            <div id="view-files" class="view">
+                <h1 class="view-title">&#x1F4C1; 文件管理</h1>
+                <p style="color:var(--text-secondary); margin-bottom:16px;">
+                    统一管理系统所有生成的输出文件，支持按分类浏览、在线预览和删除。
+                </p>
+                <div class="tab-bar" style="margin-bottom:16px;">
+                    <div class="tab-item active-tab" id="tab-file-records" onclick="switchFileTab('records')">&#x1F3AC; 录制文件</div>
+                    <div class="tab-item" id="tab-file-monitoring" onclick="switchFileTab('monitoring')">&#x1F4E1; 监测报告</div>
+                    <div class="tab-item" id="tab-file-reports" onclick="switchFileTab('reports')">&#x1F4CA; 场景报告</div>
+                    <div class="tab-item" id="tab-file-unittest" onclick="switchFileTab('unit_test')">&#x1F9EA; 测试输出</div>
                 </div>
-                <div id="report-tab-run">
-                    <div id="report-tree" class="report-tree">
-                        <div class="card" style="color: var(--text-secondary);">加载中...</div>
-                    </div>
-                    <div id="report-content" class="report-content" style="display:none;"></div>
+                <div id="files-tree-container">
+                    <div class="card" style="color:var(--text-secondary);">加载文件树...</div>
                 </div>
-                <div id="report-tab-replay" style="display:none;">
-                    <div id="replay-report-list">
-                        <span style="color:var(--text-secondary);">加载中...</span>
+                <div id="files-preview" class="report-content" style="display:none;"></div>
+            </div>
+
+            <!-- 视图: 真实场景样例 -->
+            <div id="view-scenario-samples" class="view">
+                <h1 class="view-title">&#x1F4CB; 真实场景样例</h1>
+                <p style="color:var(--text-secondary); margin-bottom:16px;">
+                    面向演示需求的真实 DeepAgent 场景描述。每个场景包含 Agent 输入数据、任务提示词、
+                    预期操作序列、可能触发的安全风险以及 Monitor 应产生的告警/阻断类型。
+                </p>
+                <div id="scenario-samples-container">
+                    <div class="card" style="color:var(--text-secondary);">加载场景列表...</div>
+                </div>
+                <div id="scenario-sample-detail" style="display:none;"></div>
+            </div>
+
+            <!-- 视图: 实时监测 -->
+            <div id="view-view-monitor" class="view">
+                <h1 class="view-title">&#x1F4E1; 实时监测</h1>
+                <p style="color:var(--text-secondary); margin-bottom:20px;">
+                    启动 Monitor 守护进程，监听 FIFO 管道，Agent 独立运行并通过管道发送事件。
+                </p>
+                <!-- Monitor 状态与控制 -->
+                <div class="card" style="margin-bottom:20px;">
+                    <div class="card-title">Monitor 守护进程</div>
+                    <div class="monitor-status-card" id="monitor-status-card">
+                        <div class="monitor-status-indicator stopped" id="monitor-indicator"></div>
+                        <div style="flex:1;">
+                            <div style="font-weight:bold;" id="monitor-status-text">未启动</div>
+                            <div style="font-size:12px; color:var(--text-secondary);" id="monitor-pid-info">PID: -</div>
+                        </div>
+                        <button class="btn btn-success" id="btn-monitor-start" onclick="startMonitor()">&#x25B6; 启动 Monitor</button>
+                        <button class="btn btn-danger" id="btn-monitor-stop" onclick="stopMonitor()" style="display:none;">&#x23F9; 停止 Monitor</button>
                     </div>
-                    <div id="replay-report-content" class="report-content" style="display:none;"></div>
+                </div>
+                <!-- Agent 命令行 -->
+                <div class="card" style="margin-bottom:20px;">
+                    <div class="card-title">&#x1F4BB; Agent 启动命令</div>
+                    <p style="font-size:13px; color:var(--text-secondary); margin-bottom:12px;">
+                        Monitor 启动后，在终端中运行以下任一命令启动 Agent（Agent 将事件通过 FIFO 发送给 Monitor）：
+                    </p>
+                    <div class="command-label">方式一：Agent 模拟器（推荐，无需真实 LLM）</div>
+                    <div class="command-display">cd deep-agents-demo && python agent_sim.py --fifo ../.monitoring/pipe --scenario da04</div>
+                    <div class="command-label" style="margin-top:12px;">方式二：真实 AI Agent</div>
+                    <div class="command-display">cd deep-agents-demo && python run_agent.py --fifo ../.monitoring/pipe</div>
+                </div>
+                <!-- 事件日志流 -->
+                <div class="card" style="margin-bottom:20px;">
+                    <div class="card-title">&#x1F4E8; 事件日志流</div>
+                    <div id="monitor-event-log" style="font-family:'Consolas','Courier New',monospace; font-size:13px; background:#0d0d1a; border:1px solid var(--border-color); border-radius:6px; padding:12px; max-height:400px; overflow-y:auto;">
+                        <span style="color:var(--text-secondary);">等待 Monitor 启动...</span>
+                    </div>
+                </div>
+                <!-- 报告摘要 -->
+                <div class="card" id="monitor-report-card" style="display:none;">
+                    <div class="card-title">&#x1F4CA; 监测报告摘要</div>
+                    <div id="monitor-report-content"></div>
                 </div>
             </div>
 
-            <!-- 视图: 删除记录 -->
-            <div id="view-delete" class="view">
-                <h1 class="view-title">&#x1F5D1; 删除测试记录</h1>
-                <div class="delete-section">
-                    <h3>&#x26A0; 删除全部场景运行记录</h3>
-                    <p style="font-size:13px; color:var(--text-secondary); margin-bottom:12px;">
-                        删除所有场景的运行报告、审计日志和证据文件
-                    </p>
-                    <button class="btn btn-danger" onclick="deleteAll()">&#x1F5D1; 删除全部</button>
+            <!-- 视图: Agent模拟测试 -->
+            <div id="view-view-agent-sim" class="view">
+                <h1 class="view-title">&#x1F9EA; Agent模拟测试</h1>
+                <p style="color:var(--text-secondary); margin-bottom:20px;">
+                    运行预定义的 Agent 模拟测试场景，验证监控系统的拦截和风险评估能力。
+                </p>
+                <div id="agent-sim-scenarios" class="agent-sim-grid">
+                    <div class="card" style="color:var(--text-secondary);">加载中...</div>
                 </div>
-                <div class="delete-section">
-                    <h3>按分类删除</h3>
-                    <p style="font-size:13px; color:var(--text-secondary); margin-bottom:12px;">
-                        删除指定分类的所有运行记录
-                    </p>
-                    <select id="delete-category-select" style="padding:6px; margin-right:8px; background:var(--bg-secondary); color:var(--text-primary); border:1px solid var(--border-color); border-radius:4px;">
-                        <option value="normal">Normal 正常行为</option>
-                        <option value="anomalous">Anomalous 异常行为</option>
-                        <option value="boundary">Boundary 边界场景</option>
-                        <option value="multi_agent">Multi-Agent 多Agent</option>
-                        <option value="extreme">Extreme 极端场景</option>
-                    </select>
-                    <button class="btn btn-danger" onclick="deleteCategory()">删除该分类</button>
+                <!-- 运行日志 -->
+                <div id="agent-sim-run-area" style="display:none; margin-top:20px;">
+                    <div class="card" style="margin-bottom:12px;">
+                        <div class="card-title" id="agent-sim-run-title">运行中...</div>
+                        <button class="btn btn-danger" onclick="stopAgentSimRun()" style="margin-top:8px;">&#x23F9; 停止</button>
+                    </div>
+                    <div id="agent-sim-event-log" style="font-family:'Consolas','Courier New',monospace; font-size:13px; background:#0d0d1a; border:1px solid var(--border-color); border-radius:6px; padding:12px; max-height:400px; overflow-y:auto;"></div>
+                    <div id="agent-sim-result" style="margin-top:12px;"></div>
                 </div>
-                <div class="delete-section">
-                    <h3>&#x1F3AC; 删除场景回放录制</h3>
-                    <p style="font-size:13px; color:var(--text-secondary); margin-bottom:12px;">
-                        删除录制-回放功能生成的录制会话
-                    </p>
-                    <button class="btn btn-danger" onclick="deleteAllRecordings()">&#x1F5D1; 删除全部录制</button>
-                    <div id="delete-recording-list" style="margin-top:12px;"></div>
-                </div>
-                <div id="delete-result" style="margin-top:16px;"></div>
             </div>
         </div>
     </div>
@@ -921,6 +1095,8 @@
             "boundary": "边界场景",
             "multi_agent": "多Agent协作",
             "extreme": "极端场景",
+            "deep_agent": "真实Agent报告",
+            "agent_sim": "模拟Agent报告",
         };
 
         const state = {
@@ -976,10 +1152,14 @@
                 restoreLogFromBuffer();
             }
             if (viewId === "all-scenarios") showCategories();
-            if (viewId === "reports") loadReportList();
             if (viewId === "record-replay") initDemoPage();
-            if (viewId === "delete") loadDeleteRecordingList();
+            if (viewId === "view-monitor") checkMonitorStatus();
+            if (viewId === "scenario-samples") loadScenarioSamples();
+            if (viewId === "files") loadFilesTree();
+            if (viewId === "view-agent-sim") loadAgentSimScenarios();
         }
+
+        // ... existing code ...
 
         // ══════════════════════════════════════════════════════
         //  4. 分类与场景渲染
@@ -1369,15 +1549,17 @@
         }
 
         async function viewReportFile(path) {
-            const content = document.getElementById("report-content");
-            const tree = document.getElementById("report-tree");
-            content.style.display = "block";
-            content.innerHTML = "<span style='color:var(--text-secondary);'>加载中...</span>";
-            // 如果在报告查看页面，隐藏树，显示内容；否则切换到报告视图
-            if (state.currentView !== "reports") {
-                showView("reports");
-            }
-            tree.style.display = "none";
+            // Hide scenario-run panels and show report preview inline
+            const runHeader = document.getElementById("run-header");
+            const eventLog = document.getElementById("event-log");
+            const analysisPanel = document.getElementById("analysis-panel");
+            const preview = document.getElementById("scenario-report-preview");
+            if (runHeader) runHeader.style.display = "none";
+            if (eventLog) eventLog.style.display = "none";
+            if (analysisPanel) analysisPanel.style.display = "none";
+            preview.style.display = "block";
+            preview.innerHTML = "<span style='color:var(--text-secondary);'>加载中...</span>";
+        
             try {
                 const resp = await fetch(`/api/reports/view?path=${encodeURIComponent(path)}`);
                 if (!resp.ok) {
@@ -1386,12 +1568,12 @@
                 }
                 const ct = resp.headers.get('content-type') || '';
                 const text = await resp.text();
-
+        
                 // 检查是否返回目录列表JSON
                 if (ct.includes('application/json')) {
                     const dirData = JSON.parse(text);
                     if (dirData.directory && dirData.files) {
-                        content.innerHTML = `<div class="report-back-btn" onclick="backToReportTree()">\u2190 返回列表</div>
+                        preview.innerHTML = `<div class="report-back-btn" onclick="backFromReportPreview()">\u2190 返回分析面板</div>
                             <h3 style="margin-bottom:12px;">目录文件列表</h3>` +
                             dirData.files.map(f => {
                                 const filePath = `${dirData.base_path}/${f}`;
@@ -1400,32 +1582,34 @@
                         return;
                     }
                 }
-
-                // Markdown 渲染
-                const backBtn = `<div class="report-back-btn" onclick="backToReportTree()">\u2190 返回报告列表</div>`;
+        
+                // Markdown / JSON / 纯文本渲染
+                const backBtn = `<div class="report-back-btn" onclick="backFromReportPreview()">\u2190 返回分析面板</div>`;
                 if (path.endsWith('.md') || ct.includes('markdown')) {
-                    content.innerHTML = backBtn + renderMarkdown(text);
+                    preview.innerHTML = backBtn + renderMarkdown(text);
                 } else if (path.endsWith('.json') || ct.includes('json')) {
-                    // JSON 美化显示
                     try {
                         const formatted = JSON.stringify(JSON.parse(text), null, 2);
-                        content.innerHTML = backBtn + `<pre style="white-space:pre-wrap;font-family:Consolas,monospace;font-size:12px;">${formatted.replace(/</g,'&lt;').replace(/>/g,'&gt;')}</pre>`;
+                        preview.innerHTML = backBtn + `<pre style="white-space:pre-wrap;font-family:Consolas,monospace;font-size:12px;">${formatted.replace(/</g,'&lt;').replace(/>/g,'&gt;')}</pre>`;
                     } catch {
-                        content.innerHTML = backBtn + `<pre style="white-space:pre-wrap;">${text.replace(/</g,'&lt;').replace(/>/g,'&gt;')}</pre>`;
+                        preview.innerHTML = backBtn + `<pre style="white-space:pre-wrap;">${text.replace(/</g,'&lt;').replace(/>/g,'&gt;')}</pre>`;
                     }
                 } else {
-                    content.innerHTML = backBtn + `<pre style="white-space:pre-wrap;">${text.replace(/</g,'&lt;').replace(/>/g,'&gt;')}</pre>`;
+                    preview.innerHTML = backBtn + `<pre style="white-space:pre-wrap;">${text.replace(/</g,'&lt;').replace(/>/g,'&gt;')}</pre>`;
                 }
             } catch (e) {
-                content.innerHTML = `<div class="report-back-btn" onclick="backToReportTree()">\u2190 返回报告列表</div><div style="color:var(--accent-red);">加载失败: ${e.message}</div>`;
+                preview.innerHTML = `<div class="report-back-btn" onclick="backFromReportPreview()">\u2190 返回分析面板</div><div style="color:var(--accent-red);">加载失败: ${e.message}</div>`;
             }
         }
-
-        function backToReportTree() {
-            const tree = document.getElementById("report-tree");
-            const content = document.getElementById("report-content");
-            content.style.display = "none";
-            tree.style.display = "";
+        
+        function backFromReportPreview() {
+            document.getElementById("scenario-report-preview").style.display = "none";
+            const runHeader = document.getElementById("run-header");
+            const eventLog = document.getElementById("event-log");
+            const analysisPanel = document.getElementById("analysis-panel");
+            if (runHeader) runHeader.style.display = "";
+            if (eventLog) eventLog.style.display = "";
+            if (analysisPanel) analysisPanel.style.display = "";
         }
 
         // ══════════════════════════════════════════════════════
@@ -1525,6 +1709,7 @@
                     stream.scrollTop = stream.scrollHeight;
                 } else if (data.type === "replay_done") {
                     es.close();
+                    fetch('/api/monitor/stop', {method: 'POST'});
                     btn.disabled = false;
                     btn.innerHTML = "\u25B6 开始回放";
                     renderReplaySummary(data);
@@ -1549,9 +1734,12 @@
         function renderReplaySummary(data) {
             const el = document.getElementById("replay-summary");
             const s = data.stats || {};
-            const filesHtml = (data.replay_files || []).map(f =>
-                `<div class="ft-file" onclick="previewSessionFile('${data.session_id}/${f.path}')" style="padding:3px 0;">&#x1F4C4; ${f.name} <span style="color:var(--text-secondary);font-size:11px;">(${f.size < 1024 ? f.size + 'B' : (f.size/1024).toFixed(1) + 'KB'})</span></div>`
-            ).join('');
+            let filesHtml = '';
+            if (data.replay_files && data.replay_files.length) {
+                filesHtml = (data.replay_files || []).map(f =>
+                    `<div class="ft-file" onclick="previewSessionFile('${data.session_id}/${f.path}')" style="padding:3px 0;">&#x1F4C4; ${f.name} <span style="color:var(--text-secondary);font-size:11px;">(${f.size < 1024 ? f.size + 'B' : (f.size/1024).toFixed(1) + 'KB'})</span></div>`
+                ).join('');
+            }
             el.innerHTML = `
                 <div class="recording-summary" style="margin-bottom:12px;">
                     <div class="summary-card"><div class="sc-value" style="color:var(--accent-cyan);">${data.replay_id || ''}</div><div class="sc-label">回放 ID</div></div>
@@ -1560,10 +1748,11 @@
                     <div class="summary-card"><div class="sc-value" style="color:var(--accent-yellow);">${s.alert || 0}</div><div class="sc-label">Alert</div></div>
                     <div class="summary-card"><div class="sc-value" style="color:var(--accent-red);">${s.block || 0}</div><div class="sc-label">Block</div></div>
                 </div>
+                ${filesHtml ? `
                 <div style="margin-top:8px;">
                     <div style="color:var(--text-secondary); font-size:13px; margin-bottom:6px;">回放产物文件 (点击预览):</div>
-                    <div class="file-tree-widget" style="padding:10px;">${filesHtml || '<span style="color:var(--text-secondary);">无产物文件</span>'}</div>
-                </div>
+                    <div class="file-tree-widget" style="padding:10px;">${filesHtml}</div>
+                </div>` : ''}
             `;
         }
 
@@ -1643,31 +1832,34 @@
         }
 
         function runDemoRecord() {
-            const btn = document.getElementById("btn-run-agent");
+            const btn = document.getElementById("btn-run-agent-record");
             btn.disabled = true;
             btn.textContent = "运行中...";
             const logEl = document.getElementById("demo-event-log");
             logEl.innerHTML = '<div id="demo-event-stream" style="font-family:Consolas,monospace;font-size:13px;background:#0d0d1a;border:1px solid var(--border-color);border-radius:6px;padding:12px;max-height:400px;overflow-y:auto;"></div>';
             const stream = document.getElementById("demo-event-stream");
             document.getElementById("demo-recording-summary").innerHTML = '<span style="color:var(--text-secondary);">运行中...</span>';
-            const es = new EventSource("/api/demo/run-record");
+            const es = new EventSource("/api/demo/start-record");
             state.sseConnection = es;
             state.sseActive = true;
             es.onmessage = (e) => {
                 const data = JSON.parse(e.data);
-                if (data.type === "recording_start") {
+                if (data.type === "session_start") {
                     state.demoSessionId = data.session_id;
                     const d = document.createElement("div");
                     d.style.color = "var(--accent-cyan)";
-                    d.textContent = `▶ 录制开始  Session: ${data.session_id}`;
+                    d.textContent = `▶ 录制开始  Session: ${data.session_id}  Mode: ${data.mode}`;
                     stream.appendChild(d);
                     stream.scrollTop = stream.scrollHeight;
-                } else if (data.type === "step") {
-                    const entry = renderLogEntry(data);
-                    stream.appendChild(entry);
+                } else if (data.type === "record_step") {
+                    const d = document.createElement("div");
+                    d.className = "log-entry";
+                    d.innerHTML = `<span class="log-step">[${data.seq}/${data.total}]</span> <span style="color:var(--accent-blue);">${data.event_type}</span> <span style="color:var(--text-secondary);">| ${data.summary}</span>`;
+                    stream.appendChild(d);
                     stream.scrollTop = stream.scrollHeight;
-                } else if (data.type === "recording_done") {
+                } else if (data.type === "session_done") {
                     es.close();
+                    fetch('/api/monitor/stop', {method: 'POST'});
                     state.sseConnection = null;
                     state.sseActive = false;
                     btn.disabled = false;
@@ -1835,8 +2027,11 @@
             document.querySelectorAll('#view-reports .tab-item').forEach(t => t.classList.remove('active-tab'));
             event.target.classList.add('active-tab');
             document.getElementById('report-tab-run').style.display = tab === 'run' ? '' : 'none';
-            document.getElementById('report-tab-replay').style.display = tab === 'replay' ? '' : 'none';
-            if (tab === 'replay') loadReplayReports();
+            document.getElementById('report-tab-deep_agent').style.display = tab === 'deep_agent' ? '' : 'none';
+            document.getElementById('report-tab-agent_sim').style.display = tab === 'agent_sim' ? '' : 'none';
+            if (tab === 'run') loadReportList();
+            else if (tab === 'deep_agent') loadDeepAgentReports();
+            else if (tab === 'agent_sim') loadAgentSimReports();
         }
 
         async function loadReplayReports() {
@@ -1956,6 +2151,218 @@
             document.getElementById('replay-report-list').style.display = '';
         }
 
+        async function loadDeepAgentReports() {
+            const listEl = document.getElementById('deep-agent-report-list');
+            const contentEl = document.getElementById('deep-agent-report-content');
+            contentEl.style.display = 'none';
+            listEl.style.display = '';
+            listEl.innerHTML = '<span style="color:var(--text-secondary);">加载中...</span>';
+            try {
+                const data = await apiGet("/api/reports/list");
+                const cats = data.categories || {};
+                const deepAgentScenarios = cats["deep_agent"] || [];
+                if (!deepAgentScenarios.length) {
+                    listEl.innerHTML = '<div class="card" style="color:var(--text-secondary);">暂无真实Agent报告。请在实时监测页面启动 Monitor 后运行真实 Agent。</div>';
+                    return;
+                }
+                listEl.innerHTML = "";
+                deepAgentScenarios.forEach(sc => {
+                    const wrapper = document.createElement("div");
+                    wrapper.style.cssText = "margin-bottom:8px;";
+                    const name = sc.scenario_name || sc.scenario_id;
+                    const header = document.createElement("div");
+                    header.className = "report-cat-header";
+                    header.style.cssText = "margin-bottom:4px;";
+                    header.innerHTML = `<span>&#x1F9E0; ${name}</span><span style="color:var(--text-secondary);font-size:13px;">${sc.count} 次运行</span>`;
+                    wrapper.appendChild(header);
+
+                    const tsList = document.createElement("div");
+                    tsList.style.cssText = "padding-left:16px;";
+                    (sc.timestamps || []).forEach(ts => {
+                        const tsItem = document.createElement("div");
+                        tsItem.style.cssText = "padding:6px 10px; margin:4px 0; background:var(--bg-secondary); border:1px solid var(--border-color); border-radius:4px; cursor:pointer; display:flex; justify-content:space-between; align-items:center;";
+                        tsItem.innerHTML = `<span style="color:var(--text-primary);">&#x1F4C5; ${ts}</span><span style="color:var(--accent-blue); font-size:12px;">查看报告 \u2192</span>`;
+                        tsItem.onclick = () => viewDeepAgentReport(sc.scenario_id, ts);
+                        tsList.appendChild(tsItem);
+                    });
+                    wrapper.appendChild(tsList);
+                    listEl.appendChild(wrapper);
+                });
+            } catch (e) {
+                listEl.innerHTML = `<div style="color:var(--accent-red);">加载失败: ${e.message}</div>`;
+            }
+        }
+
+        async function viewDeepAgentReport(scenarioId, timestamp) {
+            const listEl = document.getElementById('deep-agent-report-list');
+            const contentEl = document.getElementById('deep-agent-report-content');
+            listEl.style.display = 'none';
+            contentEl.style.display = 'block';
+            contentEl.innerHTML = '<span style="color:var(--text-secondary);">加载中...</span>';
+            try {
+                const path = `deep_agent/${scenarioId}/${timestamp}`;
+                const resp = await fetch(`/api/reports/view?path=${encodeURIComponent(path)}`);
+                if (!resp.ok) throw new Error(await resp.text());
+                const text = await resp.text();
+                let body;
+                const ct = resp.headers.get('content-type') || '';
+                if (ct.includes('application/json')) {
+                    // 目录列表
+                    const data = JSON.parse(text);
+                    if (data.directory) {
+                        body = `<div class="report-back-btn" onclick="backToDeepAgentList()">\u2190 返回列表</div>`;
+                        body += `<div style="color:var(--text-secondary); margin-bottom:8px;">选择文件查看:</div>`;
+                        (data.files || []).forEach(f => {
+                            body += `<div class="ft-file" style="padding:6px 10px;" onclick="viewDeepAgentFile('${path}/${f}')">&#x1F4C4; ${f}</div>`;
+                        });
+                    } else {
+                        body = `<div class="report-back-btn" onclick="backToDeepAgentList()">\u2190 返回列表</div>${JSON.stringify(data, null, 2)}`;
+                    }
+                } else if (ct.includes('markdown') || path.endsWith('.md')) {
+                    body = `<div class="report-back-btn" onclick="backToDeepAgentList()">\u2190 返回列表</div>${renderMarkdown(text)}`;
+                } else {
+                    body = `<div class="report-back-btn" onclick="backToDeepAgentList()">\u2190 返回列表</div><pre style="white-space:pre-wrap;">${text.replace(/</g,'&lt;')}</pre>`;
+                }
+                contentEl.innerHTML = body;
+            } catch (e) {
+                contentEl.innerHTML = `<div class="report-back-btn" onclick="backToDeepAgentList()">\u2190 返回列表</div><div style="color:var(--accent-red);">${e.message}</div>`;
+            }
+        }
+
+        async function viewDeepAgentFile(filePath) {
+            const resp = await fetch(`/api/reports/view?path=${encodeURIComponent(filePath)}`);
+            const text = await resp.text();
+            const ct = resp.headers.get('content-type') || '';
+            const contentEl = document.getElementById('deep-agent-report-content');
+            // 提取父路径: deep_agent/{scenarioId}/{timestamp}
+            const parts = filePath.split('/');
+            const parentPath = parts.slice(0, 3).join('/');
+            const backHtml = `<div class="report-back-btn" onclick="viewDeepAgentReport('${parts[1]}', '${parts[2]}')">← 返回</div>`;
+            if (ct.includes('application/json')) {
+                const data = JSON.parse(text);
+                if (data.directory) {
+                    contentEl.innerHTML = backHtml + `<div style="color:var(--text-secondary); margin-bottom:8px;">选择文件查看:</div>` +
+                        (data.files || []).map(f => `<div class="ft-file" style="padding:6px 10px;" onclick="viewDeepAgentFile('${filePath}/${f}')">&#x1F4C4; ${f}</div>`).join('');
+                } else {
+                    contentEl.innerHTML = backHtml + `<pre style="white-space:pre-wrap;">${JSON.stringify(data, null, 2)}</pre>`;
+                }
+            } else if (ct.includes('markdown') || filePath.endsWith('.md')) {
+                contentEl.innerHTML = backHtml + renderMarkdown(text);
+            } else {
+                contentEl.innerHTML = backHtml + `<pre style="white-space:pre-wrap; font-size:12px;">${text.replace(/</g,'&lt;')}</pre>`;
+            }
+        }
+
+        function backToDeepAgentList() {
+            document.getElementById('deep-agent-report-content').style.display = 'none';
+            document.getElementById('deep-agent-report-list').style.display = '';
+        }
+
+        // ── 模拟Agent报告 ─────────────────────────────────────────
+        async function loadAgentSimReports() {
+            const listEl = document.getElementById('agent-sim-report-list');
+            const contentEl = document.getElementById('agent-sim-report-content');
+            contentEl.style.display = 'none';
+            listEl.style.display = '';
+            listEl.innerHTML = '<span style="color:var(--text-secondary);">加载中...</span>';
+            try {
+                const data = await apiGet("/api/reports/list");
+                const cats = data.categories || {};
+                const simScenarios = cats["agent_sim"] || [];
+                if (!simScenarios.length) {
+                    listEl.innerHTML = '<div class="card" style="color:var(--text-secondary);">暂无模拟Agent报告。请在 Agent 模拟测试页面运行场景。</div>';
+                    return;
+                }
+                listEl.innerHTML = "";
+                simScenarios.forEach(sc => {
+                    const wrapper = document.createElement("div");
+                    wrapper.style.cssText = "margin-bottom:8px;";
+                    const name = sc.scenario_name || sc.scenario_id;
+                    const header = document.createElement("div");
+                    header.className = "report-cat-header";
+                    header.style.cssText = "margin-bottom:4px;";
+                    header.innerHTML = `<span>&#x1F916; ${name}</span><span style="color:var(--text-secondary);font-size:13px;">${sc.count} 次运行</span>`;
+                    wrapper.appendChild(header);
+
+                    const tsList = document.createElement("div");
+                    tsList.style.cssText = "padding-left:16px;";
+                    (sc.timestamps || []).forEach(ts => {
+                        const tsItem = document.createElement("div");
+                        tsItem.style.cssText = "padding:6px 10px; margin:4px 0; background:var(--bg-secondary); border:1px solid var(--border-color); border-radius:4px; cursor:pointer; display:flex; justify-content:space-between; align-items:center;";
+                        tsItem.innerHTML = `<span style="color:var(--text-primary);">&#x1F4C5; ${ts}</span><span style="color:var(--accent-blue); font-size:12px;">查看报告 \u2192</span>`;
+                        tsItem.onclick = () => viewAgentSimReport(sc.scenario_id, ts);
+                        tsList.appendChild(tsItem);
+                    });
+                    wrapper.appendChild(tsList);
+                    listEl.appendChild(wrapper);
+                });
+            } catch (e) {
+                listEl.innerHTML = `<div style="color:var(--accent-red);">加载失败: ${e.message}</div>`;
+            }
+        }
+
+        async function viewAgentSimReport(scenarioId, timestamp) {
+            const listEl = document.getElementById('agent-sim-report-list');
+            const contentEl = document.getElementById('agent-sim-report-content');
+            listEl.style.display = 'none';
+            contentEl.style.display = 'block';
+            contentEl.innerHTML = '<span style="color:var(--text-secondary);">加载中...</span>';
+            try {
+                const path = `agent_sim/${scenarioId}/${timestamp}`;
+                const resp = await fetch(`/api/reports/view?path=${encodeURIComponent(path)}`);
+                if (!resp.ok) throw new Error(await resp.text());
+                const text = await resp.text();
+                let body;
+                const ct = resp.headers.get('content-type') || '';
+                if (ct.includes('application/json')) {
+                    const data = JSON.parse(text);
+                    if (data.directory) {
+                        body = `<div class="report-back-btn" onclick="backToAgentSimList()">\u2190 返回列表</div>`;
+                        body += `<div style="color:var(--text-secondary); margin-bottom:8px;">选择文件查看:</div>`;
+                        (data.files || []).forEach(f => {
+                            body += `<div class="ft-file" style="padding:6px 10px;" onclick="viewAgentSimFile('${path}/${f}')">&#x1F4C4; ${f}</div>`;
+                        });
+                    } else {
+                        body = `<div class="report-back-btn" onclick="backToAgentSimList()">\u2190 返回列表</div>${JSON.stringify(data, null, 2)}`;
+                    }
+                } else if (ct.includes('markdown') || path.endsWith('.md')) {
+                    body = `<div class="report-back-btn" onclick="backToAgentSimList()">\u2190 返回列表</div>${renderMarkdown(text)}`;
+                } else {
+                    body = `<div class="report-back-btn" onclick="backToAgentSimList()">\u2190 返回列表</div><pre style="white-space:pre-wrap;">${text.replace(/</g,'&lt;')}</pre>`;
+                }
+                contentEl.innerHTML = body;
+            } catch (e) {
+                contentEl.innerHTML = `<div class="report-back-btn" onclick="backToAgentSimList()">\u2190 返回列表</div><div style="color:var(--accent-red);">${e.message}</div>`;
+            }
+        }
+
+        async function viewAgentSimFile(filePath) {
+            const resp = await fetch(`/api/reports/view?path=${encodeURIComponent(filePath)}`);
+            const text = await resp.text();
+            const ct = resp.headers.get('content-type') || '';
+            const contentEl = document.getElementById('agent-sim-report-content');
+            const parts = filePath.split('/');
+            const backHtml = `<div class="report-back-btn" onclick="viewAgentSimReport('${parts[1]}', '${parts[2]}')">\u2190 返回</div>`;
+            if (ct.includes('application/json')) {
+                const data = JSON.parse(text);
+                if (data.directory) {
+                    contentEl.innerHTML = backHtml + `<div style="color:var(--text-secondary); margin-bottom:8px;">选择文件查看:</div>` +
+                        (data.files || []).map(f => `<div class="ft-file" style="padding:6px 10px;" onclick="viewAgentSimFile('${filePath}/${f}')">&#x1F4C4; ${f}</div>`).join('');
+                } else {
+                    contentEl.innerHTML = backHtml + `<pre style="white-space:pre-wrap;">${JSON.stringify(data, null, 2)}</pre>`;
+                }
+            } else if (ct.includes('markdown') || filePath.endsWith('.md')) {
+                contentEl.innerHTML = backHtml + renderMarkdown(text);
+            } else {
+                contentEl.innerHTML = backHtml + `<pre style="white-space:pre-wrap; font-size:12px;">${text.replace(/</g,'&lt;')}</pre>`;
+            }
+        }
+
+        function backToAgentSimList() {
+            document.getElementById('agent-sim-report-content').style.display = 'none';
+            document.getElementById('agent-sim-report-list').style.display = '';
+        }
+
         // ══════════════════════════════════════════════════════
         //  13. 删除录制
         // ══════════════════════════════════════════════════════
@@ -2046,7 +2453,435 @@
         }
 
         // ══════════════════════════════════════════════════════
-        //  14. 工具函数
+        //  14. 实时监测 (Monitor)
+        // ══════════════════════════════════════════════════════
+        async function checkMonitorStatus() {
+            try {
+                const data = await apiGet("/api/monitor/status");
+                updateMonitorUI(data);
+            } catch (e) {
+                updateMonitorUI({ monitor_running: false });
+            }
+        }
+
+        function updateMonitorUI(data) {
+            const indicator = document.getElementById("monitor-indicator");
+            const statusText = document.getElementById("monitor-status-text");
+            const pidInfo = document.getElementById("monitor-pid-info");
+            const btnStart = document.getElementById("btn-monitor-start");
+            const btnStop = document.getElementById("btn-monitor-stop");
+            const isRunning = data.monitor_running || (data.success && data.pid);
+            const fifoExists = data.fifo_exists !== undefined ? data.fifo_exists : true;
+            if (isRunning) {
+                indicator.className = "monitor-status-indicator running";
+                statusText.textContent = fifoExists ? "运行中" : "运行中 (FIFO 未就绪)";
+                const pid = data.monitor_pid || data.pid || '-';
+                const fifo = data.fifo || data.fifo_path || '-';
+                pidInfo.textContent = `PID: ${pid} | FIFO: ${fifo}${fifoExists ? '' : ' ⚠️'}`;
+                if (!fifoExists) {
+                    pidInfo.style.color = "var(--accent-yellow)";
+                } else {
+                    pidInfo.style.color = "";
+                }
+                btnStart.style.display = "none";
+                btnStop.style.display = "";
+            } else {
+                indicator.className = "monitor-status-indicator stopped";
+                statusText.textContent = "未启动";
+                pidInfo.textContent = "PID: -";
+                pidInfo.style.color = "";
+                btnStart.style.display = "";
+                btnStop.style.display = "none";
+            }
+        }
+
+        async function startMonitor() {
+            const btn = document.getElementById("btn-monitor-start");
+            btn.disabled = true;
+            btn.textContent = "启动中...";
+            try {
+                const data = await apiPost("/api/monitor/start", {});
+                if (data.fifo_exists) {
+                    showNotification(data.message || "Monitor 已启动");
+                } else {
+                    showNotification("Monitor 已启动，但 FIFO 管道尚未就绪，Agent 连接需要稍等片刻");
+                }
+                updateMonitorUI(data);
+                // 开始轮询状态
+                startMonitorPolling();
+            } catch (e) {
+                showNotification("启动失败: " + e.message);
+                btn.disabled = false;
+                btn.textContent = "▶ 启动 Monitor";
+            }
+        }
+
+        async function stopMonitor() {
+            const btn = document.getElementById("btn-monitor-stop");
+            btn.disabled = true;
+            btn.textContent = "停止中...";
+            try {
+                const data = await apiPost("/api/monitor/stop", {});
+                showNotification(data.message || "Monitor 已停止");
+                updateMonitorUI({ monitor_running: false });
+                stopMonitorPolling();
+                // 显示报告
+                if (data.report) {
+                    renderMonitorReport(data.report);
+                }
+            } catch (e) {
+                showNotification("停止失败: " + e.message);
+                btn.disabled = false;
+                btn.textContent = "⏹ 停止 Monitor";
+            }
+        }
+
+        let monitorPollTimer = null;
+        let monitorEventSource = null;
+
+        function startMonitorPolling() {
+            stopMonitorPolling();
+            // Connect SSE for real-time event streaming
+            connectMonitorEvents();
+            monitorPollTimer = setInterval(async () => {
+                try {
+                    const data = await apiGet("/api/monitor/status");
+                    updateMonitorUI(data);
+                    if (!data.monitor_running) {
+                        stopMonitorPolling();
+                        // 检查是否有新报告
+                        try {
+                            const report = await apiGet("/api/monitor/report");
+                            if (report && report.summary) {
+                                renderMonitorReport(report);
+                            }
+                        } catch (e) { /* ignore */ }
+                    }
+                } catch (e) {
+                    updateMonitorUI({ monitor_running: false });
+                    stopMonitorPolling();
+                }
+            }, 3000);
+        }
+
+        function stopMonitorPolling() {
+            if (monitorPollTimer) {
+                clearInterval(monitorPollTimer);
+                monitorPollTimer = null;
+            }
+            if (monitorEventSource) {
+                monitorEventSource.close();
+                monitorEventSource = null;
+            }
+        }
+
+        function connectMonitorEvents() {
+            if (monitorEventSource) {
+                monitorEventSource.close();
+            }
+            const logEl = document.getElementById("monitor-event-log");
+            logEl.innerHTML = '<span style="color:var(--text-secondary);">正在连接事件流...</span>';
+            monitorEventSource = new EventSource("/api/monitor/events");
+            let connected = false;
+            monitorEventSource.onmessage = (e) => {
+                const data = JSON.parse(e.data);
+                if (data.type === "connected" || data.type === "waiting") {
+                    if (!connected) {
+                        logEl.innerHTML = "";
+                        connected = true;
+                    }
+                    const d = document.createElement("div");
+                    d.style.cssText = "padding:2px 0; color:var(--accent-cyan); font-size:12px;";
+                    d.textContent = `● ${data.message}${data.file ? ' (' + data.file + ')' : ''}`;
+                    logEl.appendChild(d);
+                    logEl.scrollTop = logEl.scrollHeight;
+                } else if (data.type === "new_file") {
+                    const d = document.createElement("div");
+                    d.style.cssText = "padding:2px 0; color:var(--text-secondary); font-size:11px;";
+                    d.textContent = `--- 新审计文件: ${data.file} ---`;
+                    logEl.appendChild(d);
+                    logEl.scrollTop = logEl.scrollHeight;
+                } else if (data.type === "step") {
+                    const entry = renderLogEntry(data);
+                    logEl.appendChild(entry);
+                    logEl.scrollTop = logEl.scrollHeight;
+                } else if (data.type === "monitor_stopped") {
+                    const d = document.createElement("div");
+                    d.style.cssText = "padding:4px 0; color:var(--accent-yellow); font-weight:bold;";
+                    d.textContent = `⏹ ${data.message}`;
+                    logEl.appendChild(d);
+                    logEl.scrollTop = logEl.scrollHeight;
+                    monitorEventSource.close();
+                    monitorEventSource = null;
+                }
+            };
+            monitorEventSource.onerror = () => {
+                // Will auto-reconnect via polling
+                if (monitorEventSource) {
+                    monitorEventSource.close();
+                    monitorEventSource = null;
+                }
+            };
+        }
+
+        function renderMonitorReport(report) {
+            const card = document.getElementById("monitor-report-card");
+            const content = document.getElementById("monitor-report-content");
+            card.style.display = "";
+            const s = report.summary || {};
+            const startTime = report.started_at || "-";
+            const endTime = report.ended_at || "-";
+            const duration = report.duration_seconds ? `${report.duration_seconds.toFixed(1)}s` : "-";
+            content.innerHTML = `
+                <div class="recording-summary">
+                    <div class="summary-card"><div class="sc-value" style="color:var(--accent-cyan);">${s.total_events || 0}</div><div class="sc-label">总事件</div></div>
+                    <div class="summary-card"><div class="sc-value" style="color:var(--accent-green);">${s.allowed || 0}</div><div class="sc-label">ALLOW</div></div>
+                    <div class="summary-card"><div class="sc-value" style="color:var(--accent-yellow);">${s.alerted || 0}</div><div class="sc-label">ALERT</div></div>
+                    <div class="summary-card"><div class="sc-value" style="color:var(--accent-red);">${s.blocked || 0}</div><div class="sc-label">BLOCK</div></div>
+                    <div class="summary-card"><div class="sc-value">${duration}</div><div class="sc-label">持续时间</div></div>
+                </div>
+                <div style="font-size:12px; color:var(--text-secondary); margin-top:8px;">
+                    开始: ${startTime} | 结束: ${endTime}
+                    ${report.report_count ? ` | 报告去重: ${report.report_count}次` : ''}
+                </div>
+            `;
+        }
+
+        // ══════════════════════════════════════════════════════
+        //  15. Agent模拟测试
+        // ══════════════════════════════════════════════════════
+        async function loadAgentSimScenarios() {
+            const container = document.getElementById("agent-sim-scenarios");
+            container.innerHTML = '<div class="card" style="color:var(--text-secondary);">加载中...</div>';
+            try {
+                const data = await apiGet("/api/agent-sim/scenarios");
+                container.innerHTML = "";
+                (data.scenarios || []).forEach(sc => {
+                    const card = document.createElement("div");
+                    card.className = "agent-sim-card";
+                    card.innerHTML = `
+                        <div class="sc-name">${sc.label || sc.name}</div>
+                        <div class="sc-desc">${sc.description}</div>
+                        <div class="sc-expected">&#x1F3AF; 预期: ${sc.expected || '-'}</div>
+                        <button class="btn btn-primary" onclick="runAgentSimScenario('${sc.key}')">&#x25B6; 运行测试</button>
+                    `;
+                    container.appendChild(card);
+                });
+            } catch (e) {
+                container.innerHTML = `<div class="card" style="color:var(--accent-red);">加载失败: ${e.message}</div>`;
+            }
+        }
+
+        async function runAgentSimScenario(scenarioKey) {
+            const area = document.getElementById("agent-sim-run-area");
+            const logEl = document.getElementById("agent-sim-event-log");
+            const resultEl = document.getElementById("agent-sim-result");
+            const titleEl = document.getElementById("agent-sim-run-title");
+            area.style.display = "";
+            logEl.innerHTML = '<span style="color:var(--text-secondary);">启动中...</span>';
+            resultEl.innerHTML = "";
+            titleEl.textContent = `运行: ${scenarioKey}`;
+
+            const es = new EventSource(`/api/agent-sim/run/${scenarioKey}`);
+            state.sseConnection = es;
+            state.sseActive = true;
+            logEl.innerHTML = "";
+
+            es.onmessage = (e) => {
+                const data = JSON.parse(e.data);
+                if (data.type === "test_start") {
+                    const div = document.createElement("div");
+                    div.style.cssText = "padding:4px 0; font-size:13px; color:var(--accent-blue);";
+                    div.textContent = `🚀 启动测试: ${data.label || ''} — ${data.description || ''}`;
+                    if (data.expected) {
+                        div.textContent += ` | 预期: ${data.expected}`;
+                    }
+                    logEl.appendChild(div);
+                    logEl.scrollTop = logEl.scrollHeight;
+                } else if (data.type === "log") {
+                    const div = document.createElement("div");
+                    div.style.cssText = "padding:2px 0; font-size:12px;";
+                    div.style.color = data.level === "error" ? "var(--accent-red)"
+                        : data.level === "warn" ? "var(--accent-yellow)"
+                        : "var(--text-secondary)";
+                    div.textContent = data.message;
+                    logEl.appendChild(div);
+                    logEl.scrollTop = logEl.scrollHeight;
+                } else if (data.type === "step") {
+                    const entry = renderLogEntry(data);
+                    logEl.appendChild(entry);
+                    logEl.scrollTop = logEl.scrollHeight;
+                } else if (data.type === "done" || data.type === "test_done") {
+                    es.close();
+                    fetch('/api/monitor/stop', {method: 'POST'});
+                    state.sseConnection = null;
+                    state.sseActive = false;
+                    renderAgentSimResult(data);
+                    showNotification("测试运行完成");
+                } else if (data.type === "error") {
+                    es.close();
+                    state.sseConnection = null;
+                    state.sseActive = false;
+                    resultEl.innerHTML = `<div style="color:var(--accent-red);">错误: ${data.message}</div>`;
+                    showNotification("测试运行失败: " + data.message);
+                }
+            };
+
+            es.onerror = () => {
+                es.close();
+                state.sseConnection = null;
+                state.sseActive = false;
+                showNotification("连接中断");
+            };
+        }
+
+        function stopAgentSimRun() {
+            if (state.sseConnection) {
+                state.sseConnection.close();
+                state.sseConnection = null;
+                state.sseActive = false;
+                showNotification("测试运行已停止");
+            }
+        }
+
+        function renderAgentSimResult(data) {
+            const resultEl = document.getElementById("agent-sim-result");
+            // 兼容 test_done (直接字段) 和 done (含 summary/statistics 子对象) 两种格式
+            const passed = data.passed ?? data.summary?.passed ?? data.statistics?.allow ?? 0;
+            const failed = data.failed ?? data.summary?.failed ?? 0;
+            const total = data.total ?? data.summary?.total ?? 0;
+            const exitCode = data.exit_code ?? 0;
+            const output = data.output ?? '';
+            const report = data.report ?? null;
+
+            let inner = `
+                <div class="agent-sim-result">
+                    <div style="font-weight:bold; margin-bottom:8px;">📊 ${data.label ? '测试结果: ' + data.label : '测试结果摘要'}</div>
+                    <div style="display:flex; gap:20px; flex-wrap:wrap; margin-bottom:12px;">
+                        <span class="result-pass">✅ 通过: ${passed}</span>
+                        <span class="result-fail">❌ 失败: ${failed}</span>
+                        ${total > 0 ? `<span style="color:var(--accent-blue);">总计: ${total}</span>` : ''}
+                        <span style="color:var(--text-secondary);">退出码: ${exitCode}</span>
+                    </div>`;
+
+            // 显示报告摘要（agent_sim 场景）
+            if (report && report.report_path) {
+                const rs = report.statistics || {};
+                inner += `
+                    <div style="font-size:12px; color:var(--text-secondary); margin-bottom:8px;">
+                        📄 报告: ${report.report_path}<br>
+                        📊 事件统计: ALLOW=${rs.allow ?? '?'} ALERT=${rs.alert ?? '?'} BLOCK=${rs.block ?? '?'} TOTAL=${rs.total ?? '?'}
+                    </div>`;
+            }
+
+            // 显示输出
+            if (output) {
+                inner += `<pre style="margin-top:10px; font-size:11px; color:var(--text-secondary); white-space:pre-wrap; max-height:200px; overflow-y:auto;">${output.replace(/</g,'&lt;').replace(/>/g,'&gt;')}</pre>`;
+            }
+
+            inner += `</div>`;
+            resultEl.innerHTML = inner;
+        }
+
+        // ══════════════════════════════════════════════════════
+        //  16. 录制/监测双模式
+        // ══════════════════════════════════════════════════════
+        let currentDemoMode = "record";
+
+        function switchDemoMode(mode) {
+            currentDemoMode = mode;
+            document.querySelectorAll('#view-record-replay .tab-item').forEach(t => t.classList.remove('active-tab'));
+            document.getElementById(`tab-${mode}-mode`).classList.add('active-tab');
+            // 切换显示
+            const isRecord = mode === "record";
+            document.getElementById("demo-step-record").style.display = isRecord ? "" : "none";
+            document.getElementById("demo-step-monitor").style.display = isRecord ? "none" : "";
+            document.getElementById("demo-step-record-summary").style.display = isRecord ? "" : "none";
+            document.getElementById("demo-step-monitor-summary").style.display = isRecord ? "none" : "";
+        }
+
+        function runDemoMonitor() {
+            const btn = document.getElementById("btn-run-agent-monitor");
+            btn.disabled = true;
+            btn.textContent = "运行中...";
+            const logEl = document.getElementById("demo-monitor-event-log");
+            logEl.innerHTML = '<div id="demo-monitor-stream" style="font-family:Consolas,monospace;font-size:13px;background:#0d0d1a;border:1px solid var(--border-color);border-radius:6px;padding:12px;max-height:400px;overflow-y:auto;"></div>';
+            const stream = document.getElementById("demo-monitor-stream");
+            document.getElementById("demo-monitor-summary").innerHTML = '<span style="color:var(--text-secondary);">运行中...</span>';
+
+            const es = new EventSource("/api/demo/start-monitor");
+            state.sseConnection = es;
+            state.sseActive = true;
+
+            es.onmessage = (e) => {
+                const data = JSON.parse(e.data);
+                if (data.type === "session_start") {
+                    state.demoSessionId = data.session_id;
+                    const d = document.createElement("div");
+                    d.style.color = "var(--accent-cyan)";
+                    d.textContent = `▶ 监测开始  Session: ${data.session_id || '-'}  Mode: ${data.mode}`;
+                    stream.appendChild(d);
+                    stream.scrollTop = stream.scrollHeight;
+                } else if (data.type === "step") {
+                    const entry = renderLogEntry(data);
+                    stream.appendChild(entry);
+                    stream.scrollTop = stream.scrollHeight;
+                } else if (data.type === "session_done") {
+                    es.close();
+                    fetch('/api/monitor/stop', {method: 'POST'});
+                    state.sseConnection = null;
+                    state.sseActive = false;
+                    btn.disabled = false;
+                    btn.innerHTML = "&#x25B6; 运行 Agent，同时开始监测";
+                    renderMonitorSummary(data);
+                    loadSessionList();
+                    showNotification("监测完成");
+                } else if (data.type === "error") {
+                    es.close();
+                    state.sseConnection = null;
+                    state.sseActive = false;
+                    btn.disabled = false;
+                    btn.innerHTML = "&#x25B6; 运行 Agent，同时开始监测";
+                    showNotification("错误: " + data.message);
+                }
+            };
+
+            es.onerror = () => {
+                es.close();
+                state.sseConnection = null;
+                state.sseActive = false;
+                btn.disabled = false;
+                btn.innerHTML = "&#x25B6; 运行 Agent，同时开始监测";
+                showNotification("连接中断");
+            };
+        }
+
+        function renderMonitorSummary(data) {
+            const el = document.getElementById("demo-monitor-summary");
+            const s = data.stats || {};
+            el.innerHTML = `
+                <div class="recording-summary">
+                    <div class="summary-card"><div class="sc-value" style="color:var(--accent-cyan);">${data.session_id || '-'}</div><div class="sc-label">会话 ID</div></div>
+                    <div class="summary-card"><div class="sc-value">${data.event_count || 0}</div><div class="sc-label">事件数</div></div>
+                    <div class="summary-card"><div class="sc-value" style="color:var(--accent-green);">${s.allow || 0}</div><div class="sc-label">ALLOW</div></div>
+                    <div class="summary-card"><div class="sc-value" style="color:var(--accent-yellow);">${s.alert || 0}</div><div class="sc-label">ALERT</div></div>
+                    <div class="summary-card"><div class="sc-value" style="color:var(--accent-red);">${s.block || 0}</div><div class="sc-label">BLOCK</div></div>
+                </div>
+            `;
+            // 更新输出文件区
+            const outEl = document.getElementById("demo-output-files");
+            if (data.files_generated && data.files_generated.length) {
+                outEl.innerHTML = `<div style="color:var(--accent-green);">\u2713 监测报告已生成</div>`;
+                data.files_generated.forEach(f => {
+                    const div = document.createElement("div");
+                    div.className = "ft-file";
+                    div.innerHTML = `&#x1F4C4; ${f.path || f}`;
+                    outEl.appendChild(div);
+                });
+            }
+        }
+        // ══════════════════════════════════════════════════════
+        //  17. 工具函数
         // ══════════════════════════════════════════════════════
         function showNotification(msg) {
             const area = document.getElementById("notification-area");
@@ -2075,7 +2910,371 @@
         }
 
         // ══════════════════════════════════════════════════════
-        //  15. 初始化
+        //  18. 录制解耦：纯录制模式函数
+        // ══════════════════════════════════════════════════════
+        let recordOnlySSE = null;
+        let recordEventCount = 0;
+
+        function startRecordOnly() {
+            const btnStart = document.getElementById("btn-start-record-only");
+            const btnStop = document.getElementById("btn-stop-record-only");
+            const statusEl = document.getElementById("record-status");
+            btnStart.style.display = "none";
+            btnStop.style.display = "";
+            statusEl.textContent = "正在启动 Monitor...";
+            statusEl.style.color = "var(--accent-yellow)";
+            recordEventCount = 0;
+
+            const logEl = document.getElementById("demo-event-log");
+            logEl.innerHTML = '<div id="demo-event-stream" style="font-family:Consolas,monospace;font-size:13px;background:#0d0d1a;border:1px solid var(--border-color);border-radius:6px;padding:12px;max-height:400px;overflow-y:auto;"></div>';
+            const stream = document.getElementById("demo-event-stream");
+
+            document.getElementById("demo-recording-summary").innerHTML = '<span style="color:var(--text-secondary);">等待 Agent 连接...</span>';
+
+            recordOnlySSE = new EventSource("/api/demo/record/start");
+            state.sseConnection = recordOnlySSE;
+            state.sseActive = true;
+
+            recordOnlySSE.onmessage = (e) => {
+                const data = JSON.parse(e.data);
+                if (data.type === "log") {
+                    const d = document.createElement("div");
+                    d.style.color = "var(--text-secondary)";
+                    d.style.fontSize = "12px";
+                    d.textContent = data.message;
+                    stream.appendChild(d);
+                    stream.scrollTop = stream.scrollHeight;
+                } else if (data.type === "recording_started") {
+                    statusEl.textContent = `录制中 (PID: ${data.pid}) — 请在终端启动 Agent`;
+                    statusEl.style.color = "var(--accent-green)";
+                    stream.innerHTML = '<div style="color:var(--accent-cyan);padding:4px 0;">▶ 录制已开始，等待 Agent 发送事件...</div>';
+                    showNotification("录制已开始，请在终端中启动 Agent");
+                } else if (data.type === "record_step") {
+                    recordEventCount++;
+                    statusEl.textContent = `录制中 — 已捕获 ${recordEventCount} 个事件`;
+                    const d = document.createElement("div");
+                    d.className = "log-entry";
+                    d.innerHTML = `<span class="log-step">[${data.seq}]</span> <span style="color:var(--accent-blue);">${data.event_type}</span> <span style="color:var(--text-secondary);">| ${data.summary}</span>`;
+                    stream.appendChild(d);
+                    stream.scrollTop = stream.scrollHeight;
+                } else if (data.type === "monitor_stopped") {
+                    closeRecordSSE();
+                    statusEl.textContent = "Monitor 已停止";
+                    statusEl.style.color = "var(--accent-yellow)";
+                    resetRecordButtons();
+                    showNotification("Monitor 已停止，录制结束");
+                } else if (data.type === "error") {
+                    closeRecordSSE();
+                    resetRecordButtons();
+                    statusEl.textContent = "错误: " + data.message;
+                    statusEl.style.color = "var(--accent-red)";
+                    showNotification("录制错误: " + data.message);
+                }
+            };
+
+            recordOnlySSE.onerror = () => {
+                closeRecordSSE();
+                resetRecordButtons();
+                statusEl.textContent = "连接中断";
+                statusEl.style.color = "var(--accent-red)";
+                showNotification("录制连接中断");
+            };
+        }
+
+        function stopRecordOnly() {
+            fetch('/api/demo/record/stop', {method: 'POST'}).then(r => r.json()).then(data => {
+                if (data.success) {
+                    showNotification(`录制已停止: ${data.event_count || 0} 个事件, 会话: ${data.session_id || '-'}`);
+                    document.getElementById("record-status").textContent = `已完成 — ${data.event_count || 0} 个事件`;
+                    document.getElementById("record-status").style.color = "var(--accent-blue)";
+                    if (data.session_id) {
+                        renderRecordingSummary({
+                            session_id: data.session_id,
+                            event_count: data.event_count || 0,
+                            stats: { allow: data.event_count || 0, alert: 0, block: 0 }
+                        });
+                    }
+                }
+            }).catch(e => showNotification("停止录制失败: " + e.message));
+            closeRecordSSE();
+            resetRecordButtons();
+        }
+
+        function closeRecordSSE() {
+            if (recordOnlySSE) {
+                recordOnlySSE.close();
+                recordOnlySSE = null;
+                state.sseConnection = null;
+                state.sseActive = false;
+            }
+        }
+
+        function resetRecordButtons() {
+            document.getElementById("btn-start-record-only").style.display = "";
+            document.getElementById("btn-stop-record-only").style.display = "none";
+        }
+
+        // ══════════════════════════════════════════════════════
+        //  19. 真实场景样例
+        // ══════════════════════════════════════════════════════
+        async function loadScenarioSamples() {
+            const container = document.getElementById("scenario-samples-container");
+            const detail = document.getElementById("scenario-sample-detail");
+            detail.style.display = "none";
+            container.style.display = "";
+            container.innerHTML = '<div class="card" style="color:var(--text-secondary);">加载场景列表...</div>';
+            try {
+                const data = await apiGet("/api/demo/scenario-samples");
+                if (!data.samples || !data.samples.length) {
+                    container.innerHTML = '<div class="card" style="color:var(--text-secondary);">暂无场景样例</div>';
+                    return;
+                }
+                container.innerHTML = "";
+                data.samples.forEach(sample => {
+                    const card = document.createElement("div");
+                    card.className = "card";
+                    card.style.cssText = "margin-bottom:16px; cursor:pointer;";
+                    const risksHtml = (sample.risks || []).length
+                        ? `<div style="margin-top:8px;">${sample.risks.map(r => `<span style="display:inline-block;background:rgba(255,80,80,0.15);color:var(--accent-red);padding:2px 8px;border-radius:3px;margin:2px;font-size:11px;">${r.replace(/</g,'&lt;').substring(0,50)}</span>`).join('')}</div>`
+                        : '';
+                    card.innerHTML = `
+                        <div style="display:flex; justify-content:space-between; align-items:center;">
+                            <div>
+                                <div class="card-title" style="margin-bottom:4px;">&#x1F3AF; ${sample.name} <span style="font-size:11px;color:var(--text-secondary);">(${sample.scenario_id})</span></div>
+                                <div class="card-meta">${sample.description.substring(0, 120)}...</div>
+                            </div>
+                            <div style="text-align:right;">
+                                <div style="color:var(--accent-blue); font-weight:bold;">${sample.event_count} 事件</div>
+                                <div style="color:var(--text-secondary); font-size:11px;">${sample.category || 'mixed'}</div>
+                            </div>
+                        </div>
+                        <div style="margin-top:8px; font-size:12px; color:var(--accent-green);">
+                            &#x1F3AF; 预期: ${sample.expected_result || '-'}
+                        </div>
+                        ${risksHtml}
+                        <div style="margin-top:8px; display:flex; gap:8px; flex-wrap:wrap;">
+                            <button class="btn btn-primary" style="font-size:12px; padding:6px 14px;" onclick="event.stopPropagation(); viewScenarioSampleDetail('${sample.scenario_id}')">&#x1F50D; 查看详情</button>
+                            <button class="btn" style="font-size:11px; padding:6px 12px;" onclick="event.stopPropagation(); navigator.clipboard.writeText('${sample.agent_sim_command}'); showNotification('已复制模拟器命令')">&#x1F4CB; 复制模拟器命令</button>
+                            <button class="btn" style="font-size:11px; padding:6px 12px;" onclick="event.stopPropagation(); navigator.clipboard.writeText('${sample.agent_command}'); showNotification('已复制真实Agent命令')">&#x1F4BB; 复制Agent命令</button>
+                        </div>
+                    `;
+                    card.onclick = () => viewScenarioSampleDetail(sample.scenario_id);
+                    container.appendChild(card);
+                });
+            } catch (e) {
+                container.innerHTML = `<div class="card" style="color:var(--accent-red);">加载失败: ${e.message}</div>`;
+            }
+        }
+
+        async function viewScenarioSampleDetail(scenarioId) {
+            const container = document.getElementById("scenario-samples-container");
+            const detail = document.getElementById("scenario-sample-detail");
+            container.style.display = "none";
+            detail.style.display = "";
+            detail.innerHTML = '<div class="card" style="color:var(--text-secondary);">加载场景详情...</div>';
+            try {
+                const data = await apiGet(`/api/demo/scenario-sample?scenario_id=${encodeURIComponent(scenarioId)}`);
+                if (data.error) {
+                    detail.innerHTML = `<div class="report-back-btn" onclick="backToScenarioSamples()">← 返回场景列表</div><div style="color:var(--accent-red);">${data.error}</div>`;
+                    return;
+                }
+                let opsHtml = (data.operations || []).map(op => {
+                    const color = op.tool.includes('web_') ? 'var(--accent-yellow)' : op.tool === 'execute' ? 'var(--accent-blue)' : 'var(--text-secondary)';
+                    return `<div style="padding:4px 0; font-size:13px; border-bottom:1px solid var(--border-color);"><span style="color:${color};">[#${op.seq}] ${op.tool}</span> — ${op.detail.replace(/</g,'&lt;')}</div>`;
+                }).join('');
+                detail.innerHTML = `
+                    <div class="report-back-btn" onclick="backToScenarioSamples()">← 返回场景列表</div>
+                    <div class="card" style="margin-top:12px;">
+                        <div class="card-title">${data.name} <span style="font-size:12px;color:var(--text-secondary);">(${data.scenario_id})</span></div>
+                        <div class="card-meta" style="white-space:pre-wrap;">${data.description}</div>
+                        <div style="margin-top:8px; color:var(--accent-green);">预期: ${data.expected_result || '-'} | 共 ${data.event_count} 个事件</div>
+                    </div>
+                    ${data.task_prompt ? `<div class="card" style="margin-top:12px;"><div class="card-title">任务提示词</div><div class="code-block" style="white-space:pre-wrap; font-size:12px; max-height:200px; overflow-y:auto;">${data.task_prompt.replace(/</g,'&lt;')}</div></div>` : ''}
+                    <div class="card" style="margin-top:12px;">
+                        <div class="card-title">Agent 启动命令</div>
+                        <div class="command-display">${data.agent_command}</div>
+                    </div>
+                    <div class="card" style="margin-top:12px;">
+                        <div class="card-title">操作序列</div>
+                        <div style="max-height:500px; overflow-y:auto;">${opsHtml}</div>
+                    </div>
+                `;
+            } catch (e) {
+                detail.innerHTML = `<div class="report-back-btn" onclick="backToScenarioSamples()">← 返回场景列表</div><div style="color:var(--accent-red);">${e.message}</div>`;
+            }
+        }
+
+        function backToScenarioSamples() {
+            document.getElementById("scenario-sample-detail").style.display = "none";
+            document.getElementById("scenario-samples-container").style.display = "";
+        }
+
+        // ══════════════════════════════════════════════════════
+        //  20. 统一文件管理
+        // ══════════════════════════════════════════════════════
+        let currentFileTab = "records";
+
+        function switchFileTab(tab) {
+            currentFileTab = tab;
+            document.querySelectorAll('#view-files .tab-item').forEach(t => t.classList.remove('active-tab'));
+            const tabEl = document.getElementById(`tab-file-${tab}`);
+            if (tabEl) tabEl.classList.add('active-tab');
+            loadFilesTree();
+        }
+
+        async function loadFilesTree() {
+            const container = document.getElementById("files-tree-container");
+            const preview = document.getElementById("files-preview");
+            preview.style.display = "none";
+            container.style.display = "";
+            container.innerHTML = '<div class="card" style="color:var(--text-secondary);">加载文件树...</div>';
+            try {
+                const data = await apiGet("/api/files/tree");
+                const tree = data.tree || {};
+                container.innerHTML = "";
+                // 默认展示当前Tab对应的分类
+                const tabCategory = currentFileTab;
+                if (tree[tabCategory]) {
+                    const cat = tree[tabCategory];
+                    const catDiv = document.createElement("div");
+                    catDiv.className = "card";
+                    catDiv.style.marginBottom = "12px";
+                    catDiv.innerHTML = `<div class="card-title" style="display:flex; justify-content:space-between; align-items:center;"><span>${cat.icon || ''} ${cat.label}</span><button class="btn btn-danger" style="font-size:11px; padding:4px 12px;" onclick="event.stopPropagation(); deleteCategory('${tabCategory}')">🗑 批量删除</button></div>`;
+                    const treeDiv = document.createElement("div");
+                    treeDiv.className = "file-tree-widget";
+                    (cat.children || []).forEach(node => {
+                        treeDiv.appendChild(renderFileTreeNode(node, tabCategory, 0));
+                    });
+                    catDiv.appendChild(treeDiv);
+                    container.appendChild(catDiv);
+                } else {
+                    container.innerHTML = '<div class="card" style="color:var(--text-secondary);">暂无文件</div>';
+                }
+                // 同时显示其他分类的摘要
+                const otherCats = [];
+                for (const [key, cat] of Object.entries(tree)) {
+                    if (key === tabCategory) continue;
+                    otherCats.push(key);
+                }
+                if (otherCats.length) {
+                    const summaryDiv = document.createElement("div");
+                    summaryDiv.style.cssText = "margin-top:12px; padding:12px; background:var(--bg-secondary); border:1px solid var(--border-color); border-radius:6px;";
+                    summaryDiv.innerHTML = '<div style="font-size:13px; color:var(--text-secondary); margin-bottom:8px;">其他分类:</div>';
+                    otherCats.forEach(key => {
+                        const cat = tree[key];
+                        const count = cat.children ? cat.children.length : 0;
+                        summaryDiv.innerHTML += `<div style="cursor:pointer; padding:4px 0; color:var(--accent-blue); font-size:13px;" onclick="switchFileTab('${key}')">${cat.icon || ''} ${cat.label} (${count} 项)</div>`;
+                    });
+                    container.appendChild(summaryDiv);
+                }
+            } catch (e) {
+                container.innerHTML = `<div class="card" style="color:var(--accent-red);">加载失败: ${e.message}</div>`;
+            }
+        }
+
+        function renderFileTreeNode(node, category, depth) {
+            const wrapper = document.createElement("div");
+            wrapper.style.paddingLeft = (depth * 16) + "px";
+            if (node.type === "dir") {
+                const dirEl = document.createElement("div");
+                dirEl.style.cssText = "padding:5px 8px; cursor:pointer; display:flex; align-items:center; gap:6px; border-radius:4px;";
+                dirEl.innerHTML = `<span style="font-size:14px;">&#x1F4C1;</span><span style="color:var(--text-primary);">${node.name}</span>`;
+                const childrenDiv = document.createElement("div");
+                childrenDiv.style.display = "block";
+                if (node.children) {
+                    node.children.forEach(c => childrenDiv.appendChild(renderFileTreeNode(c, category, depth + 1)));
+                }
+                let open = true;
+                dirEl.onclick = () => {
+                    open = !open;
+                    childrenDiv.style.display = open ? "block" : "none";
+                    dirEl.querySelector('span:first-child').innerHTML = open ? '&#x1F4C1;' : '&#x1F4C2;';
+                };
+                dirEl.onmouseenter = () => dirEl.style.background = "var(--bg-secondary)";
+                dirEl.onmouseleave = () => dirEl.style.background = "";
+                wrapper.appendChild(dirEl);
+                wrapper.appendChild(childrenDiv);
+            } else {
+                const fileEl = document.createElement("div");
+                const sizeStr = node.size < 1024 ? `${node.size}B` : `${(node.size/1024).toFixed(1)}KB`;
+                fileEl.style.cssText = "padding:5px 8px; cursor:pointer; display:flex; align-items:center; justify-content:space-between; border-radius:4px;";
+                fileEl.innerHTML = `<div style="display:flex; align-items:center; gap:6px; flex:1; min-width:0;"><span>&#x1F4C4;</span><span style="color:var(--text-primary); overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">${node.name}</span></div><span style="color:var(--text-secondary); font-size:11px; flex-shrink:0; margin-right:8px;">${sizeStr}</span><button class="btn btn-danger" style="font-size:10px; padding:3px 8px; flex-shrink:0;" onclick="event.stopPropagation(); deleteFileNode('${node.path}', this)">&#x1F5D1;</button>`;
+                fileEl.onclick = () => previewFileNode(node.path);
+                fileEl.onmouseenter = () => fileEl.style.background = "var(--bg-secondary)";
+                fileEl.onmouseleave = () => fileEl.style.background = "";
+                wrapper.appendChild(fileEl);
+            }
+            return wrapper;
+        }
+
+        async function previewFileNode(filePath) {
+            const container = document.getElementById("files-tree-container");
+            const preview = document.getElementById("files-preview");
+            container.style.display = "none";
+            preview.style.display = "block";
+            preview.innerHTML = '<span style="color:var(--text-secondary);">加载中...</span>';
+            try {
+                const resp = await fetch(`/api/files/view?path=${encodeURIComponent(filePath)}`);
+                if (!resp.ok) throw new Error(await resp.text());
+                const text = await resp.text();
+                const ct = resp.headers.get('content-type') || '';
+                let body;
+                if (ct.includes('application/json')) {
+                    try {
+                        const d = JSON.parse(text);
+                        if (d.directory) {
+                            body = `<div class="report-back-btn" onclick="backToFileTree()">← 返回文件树</div><div style="color:var(--text-secondary); margin-bottom:8px;">目录内容:</div>` +
+                                (d.files || []).map(f => `<div class="ft-file" style="padding:8px;" onclick="previewFileNode('${filePath}/${f.name}')">${f.type === 'dir' ? '📁' : '📄'} ${f.name}</div>`).join('');
+                        } else {
+                            body = `<div class="report-back-btn" onclick="backToFileTree()">← 返回文件树</div><pre style="white-space:pre-wrap;">${JSON.stringify(d, null, 2).replace(/</g,'&lt;')}</pre>`;
+                        }
+                    } catch {
+                        body = `<div class="report-back-btn" onclick="backToFileTree()">← 返回文件树</div><pre style="white-space:pre-wrap;">${text.replace(/</g,'&lt;')}</pre>`;
+                    }
+                } else if (ct.includes('markdown') || filePath.endsWith('.md')) {
+                    body = `<div class="report-back-btn" onclick="backToFileTree()">← 返回文件树</div>${renderMarkdown(text)}`;
+                } else {
+                    body = `<div class="report-back-btn" onclick="backToFileTree()">← 返回文件树</div><pre style="white-space:pre-wrap; font-size:12px; max-height:70vh; overflow-y:auto;">${text.replace(/</g,'&lt;')}</pre>`;
+                }
+                preview.innerHTML = body;
+            } catch (e) {
+                preview.innerHTML = `<div class="report-back-btn" onclick="backToFileTree()">← 返回文件树</div><div style="color:var(--accent-red);">${e.message}</div>`;
+            }
+        }
+
+        function backToFileTree() {
+            document.getElementById("files-preview").style.display = "none";
+            document.getElementById("files-tree-container").style.display = "";
+        }
+
+        async function deleteFileNode(filePath, btnEl) {
+            if (!confirm(`确定要删除 "${filePath}" 吗？此操作不可恢复。`)) return;
+            if (btnEl) btnEl.disabled = true;
+            try {
+                const result = await apiPost("/api/files/delete", { path: filePath });
+                showNotification(`已删除: ${result.deleted.name} (${result.deleted.files} 个文件)`);
+                loadFilesTree();
+            } catch (e) {
+                showNotification("删除失败: " + e.message);
+                if (btnEl) btnEl.disabled = false;
+            }
+        }
+
+        async function deleteCategory(category) {
+            const labels = { records: "录制文件", monitoring: "监测报告", reports: "场景报告", unit_test: "测试输出" };
+            const label = labels[category] || category;
+            if (!confirm(`确定要删除「${label}」分类下的全部文件吗？此操作不可恢复。`)) return;
+            try {
+                const result = await apiPost("/api/files/delete-category", { category: category });
+                showNotification(result.message || `已清空「${label}」分类`);
+                loadFilesTree();
+            } catch (e) {
+                showNotification("批量删除失败: " + e.message);
+            }
+        }
+
+        // ══════════════════════════════════════════════════════
+        //  21. 初始化
         // ══════════════════════════════════════════════════════
         document.addEventListener("DOMContentLoaded", () => {
             showCategories();

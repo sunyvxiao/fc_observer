@@ -25,6 +25,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from models.risk import (
     RiskAssessment, RiskLevel, Decision, DecisionAction, ActionTier
 )
+from observer_core.judgment.tuning_loader import get_tuning
 
 logger = logging.getLogger(__name__)
 
@@ -55,12 +56,23 @@ class DecisionEngine:
     CRITICAL_SCORE_THRESHOLD = 0.9  # 评分 > 0.9 → 强制 TIER3
     HIGH_SCORE_THRESHOLD = 0.6      # 评分 > 0.6 → 至少 TIER2
 
-    def __init__(self, enable_auto_escalation: bool = True):
+    def __init__(self, enable_auto_escalation: bool = None):
         """
         Args:
-            enable_auto_escalation: 是否启用评分自动升级（评分极高时强制提升等级）
+            enable_auto_escalation: 是否启用评分自动升级。
+                None 时从 tuning.yaml 加载
         """
-        self._enable_auto_escalation = enable_auto_escalation
+        tuning = get_tuning()
+        decision_cfg = tuning.get("decision", {})
+        thresholds = decision_cfg.get("thresholds", {})
+
+        self._enable_auto_escalation = (
+            enable_auto_escalation
+            if enable_auto_escalation is not None
+            else decision_cfg.get("enable_auto_escalation", True)
+        )
+        self.CRITICAL_SCORE_THRESHOLD = thresholds.get("critical_score", 0.9)
+        self.HIGH_SCORE_THRESHOLD = thresholds.get("high_score", 0.6)
 
     def decide(self, assessment: RiskAssessment,
                event_id: str = "", agent_id: str = "") -> Decision:

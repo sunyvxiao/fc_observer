@@ -186,7 +186,7 @@
 | strace | >= 5.x | strace 降级采集模式 |
 | pyyaml + pytest | 最新版 | Python 依赖 |
 
-> 详细环境搭建步骤请参考 [迁移方案.md](../杂项文档/迁移方案.md)（从虚拟机创建到完整工具链安装）。
+> 详细环境搭建步骤请参考 [迁移方案.md](../docs/杂项文档/迁移方案.md)（从虚拟机创建到完整工具链安装）。
 
 ### API 密钥配置
 
@@ -208,7 +208,7 @@ cp .env.example .env
 **密钥加载机制**：
 - `setup_workspace.sh`：执行时 `source .env`，将密钥注入生成的配置文件
 - `run_agent.py`：启动时 `load_dotenv()` 自动读取
-- `deep_agent_monitor.py`：通过 `env_config.load_env_config()` 加载
+- `scripts/deep_agent_monitor.py`：通过 `env_config.load_env_config()` 加载
 - 默认值均为安全占位符（全大写英文如 `STRIPE_PLACEHOLDER_KEY`），不会触发 GitHub 推送保护
 
 ### 快速环境检查
@@ -485,97 +485,123 @@ output/
 ## 项目目录结构
 
 ```
-observer_sim/
-├── app.py                          # Web 模式入口（ThreadingHTTPServer + SSE，支持 --mode）
-├── main.py                         # 全场景批量运行入口（支持 --scenario/--category/--mode）
-├── demo.py                         # 交互式命令行演示脚本（主菜单 + 场景分析面板）
-├── config.yaml                     # 全局配置（mode/pipeline/simulation/ebpf/strace + 原有字段）
-├── check_env.py                    # 环境预检脚本（Windows/Linux 双端检测）
-├── conftest.py                     # pytest 插件（unit_test 输出管理）
-├── generate_scenarios.py           # 批量生成 37 个场景 YAML 的工具脚本
-├── analysis_panels.py              # 37 个场景的分析面板数据（SA 字典，CLI/Web 共享）
-├── .gitignore                      # Git 排除规则（output/、build/、__pycache__、ebpf/*.o）
+observer_sim/                          # 项目根目录
+├── observer_sim/                      # Python 源码包
+│   ├── app.py                         # Web 模式入口（ThreadingHTTPServer + SSE，支持 --mode）
+│   ├── main.py                        # 全场景批量运行入口（支持 --scenario/--category/--mode）
+│   ├── demo.py                        # 交互式命令行演示脚本（主菜单 + 场景分析面板）
+│   ├── config.yaml                    # 全局配置（mode/pipeline/simulation/ebpf/strace）
+│   ├── check_env.py                   # 环境预检脚本（Windows/Linux 双端检测）
+│   ├── conftest.py                    # pytest 插件（unit_test 输出管理）
+│   ├── generate_scenarios.py          # 批量生成 37 个场景 YAML 的工具脚本
+│   ├── analysis_panels.py             # 37 个场景的分析面板数据（SA 字典，CLI/Web 共享）
+│   ├── .gitignore                     # Git 排除规则（保留兼容）
+│   │
+│   ├── adapter/                       # 平台适配层
+│   │   ├── __init__.py
+│   │   ├── platform_detect.py         # 平台检测 + eBPF 能力查询 + detect_and_create_collector()
+│   │   ├── pipe_factory.py            # 管道适配器（Windows 命名管道 / Linux FIFO）
+│   │   └── time_source.py             # 时间源抽象（VirtualClock / realtime_monotonic）
+│   │
+│   ├── collector/                     # 采集层
+│   │   ├── __init__.py                # 导出 ICollector, CollectorCapabilities
+│   │   ├── base_collector.py          # ICollector 抽象接口 + CollectorCapabilities 数据类
+│   │   ├── simulation_collector.py    # 模拟采集器（封装场景 YAML + VirtualClock）
+│   │   ├── ebpf_collector.py          # eBPF 采集器（libbpf ctypes + perf ring buffer）
+│   │   ├── strace_collector.py        # strace 采集器（subprocess + 行解析）
+│   │   ├── file_replay_collector.py   # 文件回放采集器（JSONL 录制文件回放）
+│   │   ├── deep_agent_collector.py    # DeepAgent 采集器（Agent 框架集成）
+│   │   └── event_recorder.py          # 事件录制器（ICollector 输出 → JSONL）
+│   │
+│   ├── ebpf/                          # eBPF 探针 [仅 Linux]
+│   │   ├── observer.bpf.c             # eBPF 内核态 C 程序（3 个 tracepoint，仅观测）
+│   │   ├── Makefile                   # 编译脚本（make → observer.bpf.o）
+│   │   ├── vmlinux.h                  # 内核类型定义（bpftool 生成，.gitignore 排除）
+│   │   └── observer.bpf.o             # 编译产物（.gitignore 排除）
+│   │
+│   ├── static/                        # Web 前端静态文件
+│   │   └── index.html                 # 单文件应用（HTML + CSS + JS 内联，深色终端主题）
+│   │
+│   ├── scenarios/                     # 场景定义 YAML（37 个，按分类组织）
+│   │   ├── normal/                    # 正常行为 (N01-N08)
+│   │   ├── anomalous/                 # 异常行为 (A01-A12)
+│   │   ├── boundary/                  # 边界场景 (B01-B08)
+│   │   ├── multi_agent/               # 多Agent协作 (M01-M05)
+│   │   ├── deep_agent/                # DeepAgent 演示场景
+│   │   └── extreme/                   # 极端场景 (E01-E04)
+│   │
+│   ├── rules/                         # 安全策略规则库（v2.0）
+│   │   ├── default_policy.yaml        # 21 条安全策略规则（命令9/文件7/网络5）
+│   │   ├── judgment_pipeline.yaml     # 研判流水线配置（评分阈值 + 升级规则）
+│   │   ├── scoring_dimensions.yaml    # 四维评分权重与偏离分配置
+│   │   └── evolution_interface.yaml   # 自优化接口配置（预留）
+│   │
+│   ├── cpp_probe/                     # C++ 探针模拟层（保留兼容）
+│   │   ├── CMakeLists.txt
+│   │   ├── main.cpp
+│   │   ├── iprobe.h / process_probe.h / file_probe.h / network_probe.h
+│   │   ├── event_formatter.h / pipe_writer.h / command_reader.h
+│   │   ├── process_table.h/.cpp / common.h / ring_buffer.h
+│   │   └── build/                     # CMake 编译产物（.gitignore 排除）
+│   │
+│   ├── observer_core/                 # Python Observer 核心引擎
+│   │   ├── monitoring/                # 监测: pipe_reader / event_normalizer / rule_engine
+│   │   ├── judgment/                  # 评判: risk_scorer / baseline_checker / decision_engine
+│   │   ├── blocking/                  # 阻断: blocking_coordinator / command_sender / violation_tracker
+│   │   └── audit/                     # 审计: behavior_graph / audit_logger / report_exporter
+│   │
+│   ├── evolution/                     # 自优化接口（预留）
+│   │   └── interfaces.py              # ITraceStore/IPatternMiner/IStrategyGenerator
+│   │
+│   ├── models/                        # 共享数据模型
+│   │   ├── event.py                   # RawEvent / NormalizedEvent / AgentContext
+│   │   ├── risk.py                    # RiskAssessment / Decision / BlockingResult
+│   │   ├── command.py                 # Command（反向管道指令）
+│   │   └── virtual_clock.py           # VirtualClock 虚拟时钟
+│   │
+│   ├── tests/                         # 测试套件（500+ 个测试）
+│   │   ├── test_virtual_clock.py      # 虚拟时钟
+│   │   ├── test_pipe_communication.py # 管道通信
+│   │   ├── test_monitoring.py         # 监测机制
+│   │   ├── test_judgment.py           # 评判机制
+│   │   ├── test_blocking.py           # 阻断机制
+│   │   ├── test_audit.py              # 审计输出
+│   │   ├── test_integration.py        # 集成测试
+│   │   ├── test_adapter.py            # 平台适配层测试
+│   │   ├── test_simulation_collector.py # 模拟采集器测试
+│   │   ├── test_ebpf_collector.py     # eBPF 采集器测试
+│   │   ├── test_strace_collector.py   # strace 采集器测试
+│   │   └── test_collector_integration.py # 采集层集成测试
+│   │
+│   └── output/                        # 运行输出目录（自动生成，.gitignore 排除）
+│       ├── reports/                   # 场景报告（按分类+场景+时间戳归档）
+│       ├── audit/                     # 审计日志
+│       ├── baselines/                 # 行为基线
+│       └── unit_test/                 # 单元测试输出
 │
-├── adapter/                        # 平台适配层 [新增]
-│   ├── __init__.py
-│   ├── platform_detect.py          # 平台检测 + eBPF 能力查询 + detect_and_create_collector()
-│   ├── pipe_factory.py             # 管道适配器（Windows 命名管道 / Linux FIFO）
-│   └── time_source.py              # 时间源抽象（VirtualClock / realtime_monotonic）
+├── scripts/                           # 入口脚本与工具
+│   ├── test.py                        # 统一测试入口（支持 --all/--unit/--scenario/--e2e）
+│   ├── demo_workflow.py               # DeepAgent 演示工作流脚本
+│   ├── deep_agent_monitor.py          # DeepAgent 监测脚本（--scenario/--live/--record）
+│   ├── start_demo_monitoring.sh       # 启动演示监测的 Shell 脚本
+│   └── setup_ebpf_env.sh              # eBPF 环境初始化脚本
 │
-├── collector/                      # 采集层 [新增]
-│   ├── __init__.py                 # 导出 ICollector, CollectorCapabilities
-│   ├── base_collector.py           # ICollector 抽象接口 + CollectorCapabilities 数据类
-│   ├── simulation_collector.py     # 模拟采集器（封装场景 YAML + VirtualClock）
-│   ├── ebpf_collector.py           # eBPF 采集器（libbpf ctypes + perf ring buffer）
-│   ├── strace_collector.py         # strace 采集器（subprocess + 行解析）
-│   ├── file_replay_collector.py    # 文件回放采集器（JSONL 录制文件回放）
-│   ├── deep_agent_collector.py     # DeepAgent 采集器（Agent 框架集成）
-│   └── event_recorder.py           # 事件录制器（ICollector 输出 → JSONL）
+├── docs/                              # 项目文档
+│   ├── 杂项文档/                      # 开发过程文档（PRD/调研/交接/方案）
+│   ├── 软件工程文档/                  # 软件工程文档（数据流/状态机/模块设计等）
+│   ├── 测试图片/                      # 测试截图
+│   └── ARCHITECTURE.md                # 项目架构文档
 │
-├── ebpf/                           # eBPF 探针 [新增，仅 Linux]
-│   ├── observer.bpf.c              # eBPF 内核态 C 程序（3 个 tracepoint，仅观测）
-│   ├── Makefile                     # 编译脚本（make → observer.bpf.o）
-│   ├── vmlinux.h                    # 内核类型定义（bpftool 生成，.gitignore 排除）
-│   └── observer.bpf.o              # 编译产物（.gitignore 排除）
+├── assets/
+│   └── screenshots/                   # 截图资源
 │
-├── static/                         # Web 前端静态文件
-│   └── index.html                  # 单文件应用（HTML + CSS + JS 内联，深色终端主题）
-│
-├── scenarios/                      # 场景定义 YAML（37 个，按分类组织） [零改动]
-│   ├── normal/                     # 正常行为 (N01-N08)
-│   ├── anomalous/                  # 异常行为 (A01-A12)
-│   ├── boundary/                   # 边界场景 (B01-B08)
-│   ├── multi_agent/                # 多Agent协作 (M01-M05)
-│   └── extreme/                    # 极端场景 (E01-E04)
-│
-├── rules/                          # 安全策略规则库（v2.0）
-│   ├── default_policy.yaml         # 21 条安全策略规则（命令9/文件7/网络5）
-│   ├── judgment_pipeline.yaml      # 研判流水线配置（评分阈值 + 升级规则 + 全局参数）
-│   ├── scoring_dimensions.yaml     # 四维评分权重与偏离分配置
-│   └── evolution_interface.yaml    # 自优化接口配置（预留）
-│
-├── cpp_probe/                      # C++ 探针模拟层（保留兼容）
-│   ├── CMakeLists.txt
-│   ├── main.cpp                    # 探针入口
-│   ├── iprobe.h / process_probe.h / file_probe.h / network_probe.h
-│   ├── event_formatter.h / pipe_writer.h / command_reader.h
-│   ├── process_table.h/.cpp / common.h / ring_buffer.h
-│   └── build/                      # CMake 编译产物（.gitignore 排除）
-│
-├── observer_core/                  # Python Observer 核心引擎 [零改动]
-│   ├── monitoring/                 # 监测: pipe_reader / event_normalizer / rule_engine
-│   ├── judgment/                   # 评判: risk_scorer / baseline_checker / decision_engine
-│   ├── blocking/                   # 阻断: blocking_coordinator / command_sender / violation_tracker
-│   └── audit/                      # 审计: behavior_graph / audit_logger / report_exporter
-│
-├── evolution/                      # 自优化接口（预留） [零改动]
-│   └── interfaces.py               # ITraceStore/IPatternMiner/IStrategyGenerator
-│
-├── models/                         # 共享数据模型 [零改动]
-│   ├── event.py                    # RawEvent / NormalizedEvent / AgentContext
-│   ├── risk.py                     # RiskAssessment / Decision / BlockingResult
-│   ├── command.py                  # Command（反向管道指令）
-│   └── virtual_clock.py            # VirtualClock 虚拟时钟
-│
-├── tests/                          # 测试套件（367 个测试）
-│   ├── test_virtual_clock.py       # 虚拟时钟（16）
-│   ├── test_pipe_communication.py  # 管道通信（26）
-│   ├── test_monitoring.py          # 监测机制（18）
-│   ├── test_judgment.py            # 评判机制（21）
-│   ├── test_blocking.py            # 阻断机制（16）
-│   ├── test_audit.py               # 审计输出（16）
-│   ├── test_integration.py         # 集成测试（17）
-│   ├── test_adapter.py             # 平台适配层测试（23） [新增]
-│   ├── test_simulation_collector.py # 模拟采集器测试（28） [新增]
-│   ├── test_ebpf_collector.py      # eBPF 采集器测试（30） [新增]
-│   ├── test_strace_collector.py    # strace 采集器测试（45） [新增]
-│   └── test_collector_integration.py # 采集层集成测试（39） [新增]
-│
-└── output/                         # 运行输出目录（自动生成，.gitignore 排除）
-    ├── reports/                    # 场景报告（按分类+场景+时间戳归档）
-    ├── audit/                      # 审计日志
-    ├── baselines/                  # 行为基线
-    └── unit_test/                  # 单元测试输出
+├── deep-agents-demo/                  # Agent 演示工作目录
+├── tools/                             # 辅助工具
+├── records/                           # 录制数据（运行时产物，.gitignore 排除）
+├── .monitoring/                       # 监测运行时目录
+├── .env / .env.example                # 环境变量配置
+├── .gitignore                         # Git 排除规则
+└── README.md                          # (此文件位于 observer_sim/ 子目录)
 ```
 
 ---
@@ -813,22 +839,22 @@ git pull
 python3 -m pytest -v     # 确认无回归
 ```
 
-**环境搭建**：详细步骤请参考 [迁移方案.md](../杂项文档/迁移方案.md)（从 VMware 创建到完整 eBPF 工具链安装）。
+**环境搭建**：详细步骤请参考 [迁移方案.md](../docs/杂项文档/迁移方案.md)（从 VMware 创建到完整 eBPF 工具链安装）。
 
-**环境预检**：两端均可运行 `python check_env.py` 检查环境依赖。
+**环境预检**：两端均可运行 `python check_env.py`（进入 observer_sim/ 后）检查环境依赖。
 
 ---
 
 ## 相关文档
 
-- [ARCHITECTURE.md](../ARCHITECTURE.md) - 项目架构文档
-- [eBPF 开发方案定稿](../杂项文档/统一架构切换_eBPF%20数据输入模块开发方案定稿.md) - 统一架构设计与排期
-- [迁移方案](../杂项文档/迁移方案.md) - Linux 环境搭建指南（VMware + eBPF 工具链）
-- [第一次交接](../杂项文档/第一次交接.md) - Windows → Linux 交接文档（Phase 1-2 成果）
-- [第二次交接](../杂项文档/第二次交接.md) - Linux → Windows 交接文档（Phase 3 成果）
-- [第三次交接](../杂项文档/第三次交接.md) - Windows → Linux 交接文档（Phase 4-5 Windows 部分）
-- [前端开发方案定稿](../杂项文档/前端开发方案定稿.md) - Web 模式详细设计
-- [测试场景清单](../杂项文档/测试场景描述.md) - 37 个场景的详细描述与验收标准
+- [ARCHITECTURE.md](../docs/ARCHITECTURE.md) - 项目架构文档
+- [eBPF 开发方案定稿](../docs/杂项文档/统一架构切换_eBPF%20数据输入模块开发方案定稿.md) - 统一架构设计与排期
+- [迁移方案](../docs/杂项文档/迁移方案.md) - Linux 环境搭建指南（VMware + eBPF 工具链）
+- [第一次交接](../docs/杂项文档/第一次交接.md) - Windows → Linux 交接文档（Phase 1-2 成果）
+- [第二次交接](../docs/杂项文档/第二次交接.md) - Linux → Windows 交接文档（Phase 3 成果）
+- [第三次交接](../docs/杂项文档/第三次交接.md) - Windows → Linux 交接文档（Phase 4-5 Windows 部分）
+- [前端开发方案定稿](../docs/杂项文档/前端开发方案定稿.md) - Web 模式详细设计
+- [测试场景清单](../docs/杂项文档/测试场景描述.md) - 37 个场景的详细描述与验收标准
 
 ---
 

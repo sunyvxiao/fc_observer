@@ -25,6 +25,7 @@ import sys
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from models.event import NormalizedEvent, AgentContext
 from models.virtual_clock import VirtualClock
+from observer_core.judgment.tuning_loader import get_tuning
 
 logger = logging.getLogger(__name__)
 
@@ -108,15 +109,26 @@ class BaselineChecker:
         "cp", "mv", "touch", "find", "head", "tail", "wc",
     }
 
-    def __init__(self, min_warm_events: int = 10,
-                 baseline_dir: str = "output/baselines"):
+    def __init__(self, min_warm_events: int = None,
+                 baseline_dir: str = None):
         """
         Args:
-            min_warm_events: 基线预热所需的最小事件数
-            baseline_dir: 基线快照保存目录
+            min_warm_events: 基线预热所需的最小事件数。None 时从 tuning.yaml 加载
+            baseline_dir: 基线快照保存目录。None 时从 tuning.yaml 加载
         """
-        self._min_warm_events = min_warm_events
-        self._baseline_dir = baseline_dir
+        tuning = get_tuning()
+        baseline_cfg = tuning.get("baseline", {})
+
+        self._min_warm_events = (
+            min_warm_events
+            if min_warm_events is not None
+            else baseline_cfg.get("min_warm_events", 10)
+        )
+        self._baseline_dir = (
+            baseline_dir
+            if baseline_dir is not None
+            else baseline_cfg.get("baseline_dir", "output/baselines")
+        )
         self._model = BaselineModel()
         self._is_cold_start = True  # 初始为冷启动
 

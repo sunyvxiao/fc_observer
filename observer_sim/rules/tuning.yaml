@@ -1,0 +1,155 @@
+# tuning.yaml — 阻断灵敏度与行为分析调优参数
+#
+# 本文件定义监测系统的所有可调参数，包括:
+# - 评分的维度权重
+# - 研判决策的阈值
+# - 违规升级的滑动窗口和累计阈值
+# - 基线学习参数
+#
+# 修改此文件后无需重启 Monitor Daemon 即可生效（运行时热加载）。
+# 所有参数均有默认值和注释说明。
+
+# =============================================================================
+# 风险评分 (RiskScorer)
+# =============================================================================
+scoring:
+  # 四维评分权重 (总和建议 = 1.0)
+  dimensions:
+    rule_score:
+      weight: 0.40              # D1: 规则命中分权重
+      description: "基于规则匹配的评分，命中多条规则时额外加分"
+    baseline_score:
+      weight: 0.25              # D2: 基线偏离分权重
+      description: "基于行为基线的偏离度评分"
+      min_warm_events: 5         # 基线预热所需的最小事件数
+      safe_dirs:                  # 安全目录前缀（不触发偏离）
+        - "/home/"
+        - "/project/"
+        - "/tmp/"
+        - "/var/log/"
+        - "/usr/bin/git"
+        - "/usr/bin/python"
+        - "C:\\Users\\"
+        - "C:\\Projects\\"
+      safe_commands:              # 安全命令列表（不触发偏离）
+        - "git"
+        - "python"
+        - "pytest"
+        - "pip"
+        - "npm"
+        - "node"
+        - "make"
+        - "cmake"
+        - "gcc"
+        - "javac"
+        - "docker"
+    context_score:
+      weight: 0.20              # D3: 上下文风险分权重
+      description: "基于滑动窗口内行为序列的上下文分析"
+      sensitive_keywords:        # 敏感文件关键词
+        - ".env"
+        - ".pem"
+        - ".key"
+        - "secret"
+        - "password"
+        - "shadow"
+    sequence_score:
+      weight: 0.15              # D4: 序列异常分权重
+      description: "基于事件类型频率偏差的序列分析"
+      min_events: 10             # 序列分析所需的最小事件数
+      common_types:              # 常见事件类型
+        - "exec"
+        - "file_open"
+        - "net_conn"
+
+# =============================================================================
+# 研判决策 (DecisionEngine)
+# =============================================================================
+decision:
+  enable_auto_escalation: true   # 是否启用评分自动升级
+
+  # 评分阈值（高于此值强制执行升级，不受矩阵约束）
+  thresholds:
+    critical_score: 0.9          # 评分 >= 0.9 → 强制 TIER3 (BLOCK)
+    high_score: 0.6              # 评分 >= 0.6 → 至少 TIER2
+
+  # 研判矩阵: (risk_level, rule_action) → (decision_action, tier)
+  # rule_action 取值: block / alert / allow
+  # risk_level 取值: HIGH / MEDIUM / LOW
+  judgment_matrix:
+    HIGH:
+      block:  { action: BLOCK, tier: TIER2 }
+      alert:  { action: BLOCK, tier: TIER2 }
+      allow:  { action: ALERT, tier: TIER1 }
+    MEDIUM:
+      block:  { action: ALERT, tier: TIER1 }
+      alert:  { action: ALERT, tier: TIER1 }
+      allow:  { action: ALLOW, tier: TIER1 }
+    LOW:
+      block:  { action: ALLOW, tier: TIER1 }
+      alert:  { action: ALLOW, tier: TIER1 }
+      allow:  { action: ALLOW, tier: TIER1 }
+
+# =============================================================================
+# 违规升级 (ViolationTracker)
+# =============================================================================
+escalation:
+  # 滑动窗口: 虚拟时钟内的时间范围（纳秒）
+  window_size_ns: 300000000000   # 5 分钟 = 5 * 60 * 1_000_000_000
+
+  # 升级阈值
+  tier1_escalate_threshold: 5    # Tier1 累计 >= 5 次 → 升级到 Tier2
+  tier2_escalate_threshold: 3    # Tier2 累计 >= 3 次 → 升级到 Tier3
+
+# =============================================================================
+# 基线学习 (BaselineChecker)
+# =============================================================================
+baseline:
+  min_warm_events: 10            # 基线预热所需的最小事件数
+  baseline_dir: "output/baselines"  # 基线快照保存目录
+
+  safe_dir_prefixes:             # 安全目录前缀（基线中不触发偏离）
+    - "/home/"
+    - "/project/"
+    - "/tmp/"
+    - "/var/log/"
+    - "/usr/bin/git"
+    - "/usr/bin/python"
+    - "C:\\Users\\"
+    - "C:\\Projects\\"
+
+  safe_commands:                 # 常见安全命令
+    - "git"
+    - "python"
+    - "python3"
+    - "pytest"
+    - "pip"
+    - "pip3"
+    - "npm"
+    - "node"
+    - "make"
+    - "cmake"
+    - "gcc"
+    - "g++"
+    - "javac"
+    - "docker"
+    - "ls"
+    - "cat"
+    - "grep"
+    - "echo"
+    - "cd"
+    - "mkdir"
+    - "cp"
+    - "mv"
+    - "touch"
+    - "find"
+    - "head"
+    - "tail"
+    - "wc"
+
+# =============================================================================
+# 报告缓存 (ReportCache)
+# =============================================================================
+report_cache:
+  auto_interval: 60              # 自动片段生成间隔（秒）
+  max_segments: 60               # 最大保留片段数（1小时 = 60 × 60s）

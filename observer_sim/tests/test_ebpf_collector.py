@@ -378,17 +378,17 @@ class TestCapabilities:
         caps = collector.capabilities()
         assert caps.can_observe is True
 
-    def test_capabilities_no_block_tier2(self):
-        """第一版不支持 Tier2 阻断"""
+    def test_capabilities_block_tier2(self):
+        """v2.0 支持 Tier2 阻断"""
         collector = _create_collector_mock_lib()
         caps = collector.capabilities()
-        assert caps.can_block_tier2 is False
+        assert caps.can_block_tier2 is True
 
-    def test_capabilities_no_block_tier3(self):
-        """第一版不支持 Tier3 阻断"""
+    def test_capabilities_block_tier3(self):
+        """v2.0 支持 Tier3 阻断"""
         collector = _create_collector_mock_lib()
         caps = collector.capabilities()
-        assert caps.can_block_tier3 is False
+        assert caps.can_block_tier3 is True
 
     def test_capabilities_transparent(self):
         """对 Agent 无感知"""
@@ -414,22 +414,26 @@ class TestCapabilities:
 # ============================================================
 
 class TestSendCommand:
-    """阻断指令测试"""
+    """阻断指令测试（v2.0）"""
 
-    def test_send_command_returns_false(self):
-        """send_command 始终返回 False"""
+    def test_send_command_returns_false_when_not_attached(self):
+        """未 attach 时 send_command 返回 False"""
         collector = _create_collector_mock_lib()
-        result = collector.send_command(MagicMock())
+        collector._attached = False
+        cmd = MagicMock()
+        cmd.target_pid = 100
+        result = collector.send_command(cmd)
         assert result is False
 
-    def test_send_command_logs_warning(self, caplog):
-        """send_command 记录警告日志"""
+    def test_send_command_logs_降级_warning(self, caplog):
+        """未初始化时 send_command 记录降级警告"""
         collector = _create_collector_mock_lib()
+        collector._attached = False
         with caplog.at_level(logging.WARNING):
             collector.send_command(MagicMock())
 
-        assert any("不支持阻断" in record.message or
-                    "第一版" in record.message
+        assert any("降级" in record.message or
+                    "无法执行阻断" in record.message
                     for record in caplog.records)
 
 

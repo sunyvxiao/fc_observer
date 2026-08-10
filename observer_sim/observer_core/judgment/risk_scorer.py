@@ -23,6 +23,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from models.event import NormalizedEvent, AgentContext
 from models.risk import RiskAssessment, DimensionScore, RiskLevel
 from observer_core.monitoring.rule_engine import MatchResult
+from observer_core.judgment.tuning_loader import get_tuning
 
 logger = logging.getLogger(__name__)
 
@@ -300,11 +301,21 @@ class RiskScorer:
         logger.debug(f"[RiskScorer] Registered dimension: {dim.name()} (weight={dim.weight})")
 
     def register_default_dimensions(self) -> None:
-        """注册四个默认维度"""
-        self.register_dimension(BasicRuleScore())
-        self.register_dimension(BasicBaselineScore())
-        self.register_dimension(BasicContextScore())
-        self.register_dimension(BasicSequenceScore())
+        """注册四个默认维度，权重从 tuning.yaml 加载"""
+        tuning = get_tuning()
+        scoring = tuning.get("scoring", {})
+        dims = scoring.get("dimensions", {})
+
+        self.register_dimension(BasicRuleScore(
+            _weight=dims.get("rule_score", {}).get("weight", 0.40)))
+        self.register_dimension(BasicBaselineScore(
+            _weight=dims.get("baseline_score", {}).get("weight", 0.25),
+            min_events=dims.get("baseline_score", {}).get("min_warm_events", 5)))
+        self.register_dimension(BasicContextScore(
+            _weight=dims.get("context_score", {}).get("weight", 0.20)))
+        self.register_dimension(BasicSequenceScore(
+            _weight=dims.get("sequence_score", {}).get("weight", 0.15),
+            min_events=dims.get("sequence_score", {}).get("min_events", 10)))
 
     def set_baseline(self, baseline: dict) -> None:
         """设置基线数据"""

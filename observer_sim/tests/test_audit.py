@@ -553,6 +553,79 @@ class TestPhase5Integration(unittest.TestCase):
         md_files = [f for f in os.listdir(reports_dir) if f.endswith(".md")]
         self.assertTrue(len(md_files) >= 4)  # 3 场景报告 + 1 汇总报告
 
+    def test_export_from_segments_basic(self):
+        """export_from_segments: 基本片段导出 Markdown 报告"""
+        exporter = ReportExporter(output_dir=self.tmpdir)
+        merged_data = {
+            "merged_stats": {
+                "total": 20,
+                "allow": 15,
+                "alert": 3,
+                "block": 2,
+                "risk_dist": {
+                    "LOW": 12, "MEDIUM": 5, "HIGH": 2, "CRITICAL": 1
+                },
+                "rule_hits": {"R001": 5, "R005": 2},
+                "max_score": 0.92,
+            },
+            "total_entry_ids": ["e1", "e2", "e3"],
+            "segment_count": 3,
+            "coverage": {"start_ns": 1000, "end_ns": 10000},
+            "gaps_filled": 2,
+        }
+
+        path = exporter.export_from_segments(
+            merged_data,
+            time_range=(1000, 10000),
+            scenario_name="集成测试-片段导出",
+        )
+        self.assertTrue(os.path.exists(path))
+
+        with open(path, "r") as f:
+            content = f.read()
+        self.assertIn("集成测试-片段导出", content)
+        self.assertIn("总事件数", content)
+        self.assertIn("20", content)
+        self.assertIn("告警", content)
+        self.assertIn("R001", content)
+
+    def test_export_from_segments_minimal(self):
+        """export_from_segments: 最小数据导出不崩溃"""
+        exporter = ReportExporter(output_dir=self.tmpdir)
+        merged_data = {
+            "merged_stats": {},
+            "segment_count": 0,
+            "coverage": {},
+            "gaps_filled": 0,
+        }
+        path = exporter.export_from_segments(merged_data)
+        self.assertTrue(os.path.exists(path))
+
+    def test_export_from_segments_markdown_format(self):
+        """export_from_segments: 输出为合法 Markdown 格式"""
+        exporter = ReportExporter(output_dir=self.tmpdir)
+        merged_data = {
+            "merged_stats": {
+                "total": 5,
+                "allow": 5,
+                "alert": 0,
+                "block": 0,
+                "risk_dist": {"LOW": 5, "MEDIUM": 0, "HIGH": 0, "CRITICAL": 0},
+                "rule_hits": {},
+                "max_score": 0.3,
+            },
+            "segment_count": 1,
+            "coverage": {},
+            "gaps_filled": 0,
+        }
+        path = exporter.export_from_segments(merged_data)
+        with open(path, "r") as f:
+            content = f.read()
+        # 验证 Markdown 基本结构
+        self.assertTrue(content.startswith("#"))  # 标题
+        self.assertIn("##", content)  # 子标题
+        self.assertIn("|", content)  # 表格
+
 
 if __name__ == "__main__":
     unittest.main()

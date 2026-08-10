@@ -1,10 +1,15 @@
 """
-conftest.py — pytest 配置 + unit_test 输出管理
+conftest.py — pytest 配置 + unit_test 输出管理 + Monitor 生命周期管理
 
 功能:
 1. 每次运行单元测试前清空 output/unit_test/ 中的旧结果
 2. 将最新的 pytest 运行结果写入 output/unit_test/
 3. 该文件夹始终只保留最近一次的测试结果
+4. 提供 Monitor 生命周期 fixture，自动管理测试中的 Monitor 启停
+
+注意:
+  录制和实时监测功能拥有独立的手动启停控制，
+  不应被自动启停机制干扰。自动启停仅用于需要 Monitor 的测试场景。
 """
 
 import os
@@ -16,6 +21,54 @@ import pytest
 PROJECT_DIR = os.path.dirname(os.path.abspath(__file__))
 if PROJECT_DIR not in sys.path:
     sys.path.insert(0, PROJECT_DIR)
+
+# 延迟导入，避免阻塞 pytest 插件加载
+_monitor_lifecycle_manager = None
+
+
+def _get_lifecycle_manager():
+    """延迟获取 MonitorLifecycleManager 单例"""
+    global _monitor_lifecycle_manager
+    if _monitor_lifecycle_manager is None:
+        from monitor_lifecycle import MonitorLifecycleManager
+        _monitor_lifecycle_manager = MonitorLifecycleManager.instance()
+    return _monitor_lifecycle_manager
+
+
+# ── Monitor 生命周期 fixtures ────────────────────────────────
+
+@pytest.fixture(scope="session", autouse=True)
+def monitor_session_cleanup():
+    """
+    Session 级 fixture: 测试会话开始前清理残留 Monitor，结束后清理。
+    autouse=True 确保不依赖显式引用。
+    """
+    mgr = _get_lifecycle_manager()
+    # 启动前清理 (不干扰正在运行的手动 Monitor)
+    mgr.startup_cleanup()
+    yield
+    # 会话结束后确保清理
+    mgr.shutdown()
+
+
+@pytest.fixture
+def monitor_for_test():
+    """
+    Function 级 fixture: 为需要 Monitor 的测试提供自动启停。
+
+    用法:
+        def test_xxx(monitor_for_test):
+            # Monitor 已启动并在测试结束后自动停止
+            mgr = MonitorLifecycleManager.instance()
+            assert mgr.status()["monitor_running"]
+    """
+    mgr = _get_lifecycle_manager()
+    mgr.startup_cleanup()
+    status = mgr.start_monitor()
+    if not status or not status.get("monitor_running"):
+        pytest.skip("Monitor 启动失败，跳过依赖 Monitor 的测试")
+    yield mgr
+    mgr.stop_monitor_forced()
 
 
 def _get_unit_test_dir() -> str:

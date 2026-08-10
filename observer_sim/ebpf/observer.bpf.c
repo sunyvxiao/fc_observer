@@ -1,11 +1,16 @@
 // SPDX-License-Identifier: GPL-2.0 OR BSD-3-Clause
 /*
- * observer.bpf.c — eBPF 内核探针程序（仅观测，第一版不含阻断）
+ * observer.bpf.c — eBPF 内核探针程序（v2.0：观测 + 阻断）
  *
- * 挂载三类 tracepoint 探针，捕获 Agent 进程的系统调用事件：
+ * 挂载三类 tracepoint 探针（观测），捕获 Agent 进程的系统调用事件：
  *   1. sys_enter_execve  — 命令执行（filename + argv）
  *   2. sys_enter_openat  — 文件操作（filename + flags）
  *   3. sys_enter_connect — 网络连接（sockaddr → IP:Port）
+ *
+ * 挂载三类 kprobe 探针（阻断），用户态通过 block_policy map 控制：
+ *   1. __x64_sys_execve  — 阻断命令执行 → EPERM
+ *   2. __x64_sys_openat  — 阻断文件操作 → EPERM
+ *   3. __x64_sys_connect — 阻断网络连接 → EPERM
  *
  * 事件通过 perf ring buffer 推送到用户态 Python 加载器。
  *
@@ -83,6 +88,26 @@ struct {
     __uint(value_size, sizeof(struct event_t));
     __uint(max_entries, 1);
 } event_buf SEC(".maps");
+
+/*
+ * Block policy map: pid → block_flags 位掩码
+ *
+ * 用户态通过 bpf_map_update_elem 写入/删除条目来控制阻断。
+ * block_flags 位定义:
+ *   Bit 0 (0x01) — BLOCK_EXECVE  阻断 execve
+ *   Bit 1 (0x02) — BLOCK_OPENAT  阻断 openat
+ *   Bit 2 (0x04) — BLOCK_CONNECT 阻断 connect
+ */
+#define BLOCK_EXECVE  0x01
+#define BLOCK_OPENAT  0x02
+#define BLOCK_CONNECT 0x04
+
+struct {
+    __uint(type, BPF_MAP_TYPE_HASH);
+    __uint(key_size, sizeof(__u32));
+    __uint(value_size, sizeof(__u64));
+    __uint(max_entries, 1024);
+} block_policy SEC(".maps");
 
 /* ============================================================
  * 辅助函数
@@ -213,6 +238,49 @@ int tracepoint__syscalls__sys_enter_connect(struct trace_event_raw_sys_enter *ct
     }
 
     bpf_perf_event_output(ctx, &events, BPF_F_CURRENT_CPU, e, sizeof(*e));
+    return 0;
+}
+
+/* ============================================================
+ * Kprobe 阻断探针（v2.0 新增）
+ *
+ * 每个 kprobe 查询 block_policy map，若当前 pid 的 block_flags
+ * 中对应位被置 1，则调用 bpf_override_return(ctx, -1) 让
+ * syscall 返回 -EPERM。否则返回 0（不影响正常执行）。
+ *
+ * kprobe 程序逻辑极简（仅查 map + override），降低 verifier 复杂度。
+ * ============================================================ */
+
+SEC("kprobe/__x64_sys_execve")
+int BPF_KPROBE(kprobe__execve)
+{
+    __u32 pid = bpf_get_current_pid_tgid() >> 32;
+    __u64 *flags = bpf_map_lookup_elem(&block_policy, &pid);
+    if (flags && (*flags & BLOCK_EXECVE)) {
+        bpf_override_return(ctx, -1);  /* -EPERM */
+    }
+    return 0;
+}
+
+SEC("kprobe/__x64_sys_openat")
+int BPF_KPROBE(kprobe__openat)
+{
+    __u32 pid = bpf_get_current_pid_tgid() >> 32;
+    __u64 *flags = bpf_map_lookup_elem(&block_policy, &pid);
+    if (flags && (*flags & BLOCK_OPENAT)) {
+        bpf_override_return(ctx, -1);  /* -EPERM */
+    }
+    return 0;
+}
+
+SEC("kprobe/__x64_sys_connect")
+int BPF_KPROBE(kprobe__connect)
+{
+    __u32 pid = bpf_get_current_pid_tgid() >> 32;
+    __u64 *flags = bpf_map_lookup_elem(&block_policy, &pid);
+    if (flags && (*flags & BLOCK_CONNECT)) {
+        bpf_override_return(ctx, -1);  /* -EPERM */
+    }
     return 0;
 }
 
