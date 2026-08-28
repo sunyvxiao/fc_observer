@@ -35,8 +35,11 @@ class TestFifoWriterBasic(unittest.TestCase):
 
     def test_constructor_stores_path(self):
         """构造时存储 fifo_path"""
-        writer = FifoWriter("/tmp/test_fifo")
-        self.assertEqual(writer._fifo_path, "/tmp/test_fifo")
+        # 构造器内部会将路径解析为绝对路径（防止 CWD 切换丢路径），
+        # 断言应与 os.path.abspath 结果一致，保证跨平台通过
+        raw = "/tmp/test_fifo"
+        writer = FifoWriter(raw)
+        self.assertEqual(writer._fifo_path, os.path.abspath(raw))
         writer.close()
 
     def test_initial_state_not_open(self):

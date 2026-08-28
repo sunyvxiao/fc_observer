@@ -2,20 +2,25 @@
 AgentViolationTracker — Agent 违规追踪器
 
 核心职责:
-1. 维护每个 Agent 的虚拟时钟滑动窗口违规计数
-2. 实现自动升级逻辑: Tier1×3 → Tier2, Tier2×2 → Tier3
+1. 维护每个 Agent 会话维度的虚拟时钟滑动窗口违规计数
+2. 实现自动升级逻辑: Tier1×5 → Tier2, Tier2×3 → Tier3
 3. 窗口过期后自动清除计数（基于虚拟时钟）
 
-升级机制 (定稿 5.4):
-- 同一 Agent 在虚拟时钟过去 5 分钟内:
-  - tier1_count >= 3 → 升级到 Tier2
-  - tier2_count >= 2 → 升级到 Tier3
+升级机制:
+- 同一 (Agent, 会话) 在虚拟时钟过去 5 分钟内:
+  - tier1_count >= 5 → 升级到 Tier2
+  - tier2_count >= 3 → 升级到 Tier3
+  （阈值从 tuning.yaml 的 escalation 节热加载）
 - 窗口过期后计数器自动清除
+
+修订 2.1: 追踪粒度由「仅 agent_id」改为「(agent_id, session_id)」。
+修复 E2E 实测发现的黑盒 Agent 全部会话共享同一 agent_id（如 workbuddy）
+时全局累积升级污染单事件判定的缺陷；不同会话的违规互不叠加。
 """
 
 import os
 import logging
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Tuple
 from dataclasses import dataclass, field
 
 import sys
@@ -38,8 +43,9 @@ class ViolationRecord:
 
 @dataclass
 class AgentViolationState:
-    """单个 Agent 的违规状态"""
+    """单个 Agent 会话维度的违规状态"""
     agent_id: str
+    session_id: Optional[str] = None
     violations: List[ViolationRecord] = field(default_factory=list)
     current_tier: ActionTier = ActionTier.TIER1
     is_terminated: bool = False  # Tier3 终止后标记
@@ -86,10 +92,16 @@ class AgentViolationTracker:
             "tier1_escalate_threshold", self.TIER1_ESCALATE_THRESHOLD)
         self.TIER2_ESCALATE_THRESHOLD = esc_cfg.get(
             "tier2_escalate_threshold", self.TIER2_ESCALATE_THRESHOLD)
-        self._agents: Dict[str, AgentViolationState] = {}
+        self._agents: Dict[Tuple[str, str], AgentViolationState] = {}
+
+    @staticmethod
+    def _key(agent_id: str, session_id: Optional[str]) -> Tuple[str, str]:
+        """追踪键: (agent_id, session_id)。无会话事件归空串会话。"""
+        return (agent_id or "", session_id or "")
 
     def record_violation(self, agent_id: str, tier: ActionTier,
-                         event_id: str, reason: str = "") -> ActionTier:
+                         event_id: str, reason: str = "",
+                         session_id: Optional[str] = None) -> ActionTier:
         """
         记录一次违规并检查是否需要升级。
 
@@ -98,19 +110,25 @@ class AgentViolationTracker:
             tier: 当前处置等级
             event_id: 关联事件 ID
             reason: 违规原因
+            session_id: 会话 ID（修订 2.1：升级计数按会话隔离）
 
         Returns:
             ActionTier: 实际应执行的等级（可能已升级）
         """
-        # 获取或创建 Agent 状态
-        if agent_id not in self._agents:
-            self._agents[agent_id] = AgentViolationState(agent_id=agent_id)
+        key = self._key(agent_id, session_id)
 
-        state = self._agents[agent_id]
+        # 获取或创建 Agent 会话状态
+        if key not in self._agents:
+            self._agents[key] = AgentViolationState(
+                agent_id=agent_id, session_id=session_id)
 
-        # 已终止的 Agent 不再处理
+        state = self._agents[key]
+
+        # 已终止的 Agent 会话不再处理
         if state.is_terminated:
-            logger.warning(f"[ViolationTracker] Agent {agent_id} already terminated")
+            logger.warning(
+                f"[ViolationTracker] Agent {agent_id} (session={session_id}) "
+                f"already terminated")
             return ActionTier.TIER3
 
         # 清理过期记录
@@ -131,8 +149,8 @@ class AgentViolationTracker:
 
         if effective_tier != tier:
             logger.info(
-                f"[ViolationTracker] Agent {agent_id} escalated: "
-                f"{tier.value} -> {effective_tier.value}"
+                f"[ViolationTracker] Agent {agent_id} (session={session_id}) "
+                f"escalated: {tier.value} -> {effective_tier.value}"
             )
 
         return effective_tier
@@ -148,9 +166,9 @@ class AgentViolationTracker:
         """
         检查是否需要升级。
 
-        升级规则 (定稿 5.4):
-        - Tier1 累计 >= 3 次 → 升级到 Tier2
-        - Tier2 累计 >= 2 次 → 升级到 Tier3
+        升级规则 (阈值从 tuning.yaml escalation 节热加载，默认值):
+        - Tier1 累计 >= 5 次 → 升级到 Tier2
+        - Tier2 累计 >= 3 次 → 升级到 Tier3
         """
         if current_tier == ActionTier.TIER3:
             return ActionTier.TIER3
@@ -158,7 +176,8 @@ class AgentViolationTracker:
         # 检查 Tier1 → Tier2 升级
         if state.tier1_count >= self.TIER1_ESCALATE_THRESHOLD:
             logger.info(
-                f"[ViolationTracker] Agent {state.agent_id}: "
+                f"[ViolationTracker] Agent {state.agent_id} "
+                f"(session={state.session_id}): "
                 f"Tier1 count={state.tier1_count} >= {self.TIER1_ESCALATE_THRESHOLD}, escalate to Tier2"
             )
             return ActionTier.TIER2
@@ -166,48 +185,65 @@ class AgentViolationTracker:
         # 检查 Tier2 → Tier3 升级
         if state.tier2_count >= self.TIER2_ESCALATE_THRESHOLD:
             logger.info(
-                f"[ViolationTracker] Agent {state.agent_id}: "
+                f"[ViolationTracker] Agent {state.agent_id} "
+                f"(session={state.session_id}): "
                 f"Tier2 count={state.tier2_count} >= {self.TIER2_ESCALATE_THRESHOLD}, escalate to Tier3"
             )
             return ActionTier.TIER3
 
         return current_tier
 
-    def mark_terminated(self, agent_id: str) -> None:
-        """标记 Agent 为已终止（Tier3 执行后）"""
-        if agent_id not in self._agents:
-            self._agents[agent_id] = AgentViolationState(agent_id=agent_id)
-        self._agents[agent_id].is_terminated = True
-        logger.info(f"[ViolationTracker] Agent {agent_id} marked as terminated")
+    def mark_terminated(self, agent_id: str,
+                        session_id: Optional[str] = None) -> None:
+        """标记 Agent 会话为已终止（Tier3 执行后）"""
+        key = self._key(agent_id, session_id)
+        if key not in self._agents:
+            self._agents[key] = AgentViolationState(
+                agent_id=agent_id, session_id=session_id)
+        self._agents[key].is_terminated = True
+        logger.info(f"[ViolationTracker] Agent {agent_id} "
+                    f"(session={session_id}) marked as terminated")
 
-    def is_terminated(self, agent_id: str) -> bool:
-        """检查 Agent 是否已终止"""
-        if agent_id in self._agents:
-            return self._agents[agent_id].is_terminated
+    def is_terminated(self, agent_id: str,
+                      session_id: Optional[str] = None) -> bool:
+        """检查 Agent 会话是否已终止"""
+        key = self._key(agent_id, session_id)
+        if key in self._agents:
+            return self._agents[key].is_terminated
         return False
 
-    def get_violation_count(self, agent_id: str, tier: ActionTier = None) -> int:
-        """获取 Agent 的违规计数"""
-        if agent_id not in self._agents:
+    def get_violation_count(self, agent_id: str, tier: ActionTier = None,
+                            session_id: Optional[str] = None) -> int:
+        """获取 Agent 会话的违规计数"""
+        key = self._key(agent_id, session_id)
+        if key not in self._agents:
             return 0
-        state = self._agents[agent_id]
+        state = self._agents[key]
         self._expire_old_records(state)
         if tier is None:
             return len(state.violations)
         return sum(1 for v in state.violations if v.tier == tier)
 
-    def get_agent_state(self, agent_id: str) -> Optional[AgentViolationState]:
-        """获取 Agent 的违规状态"""
-        return self._agents.get(agent_id)
+    def get_agent_state(self, agent_id: str,
+                        session_id: Optional[str] = None) -> Optional[AgentViolationState]:
+        """获取 Agent 会话的违规状态"""
+        return self._agents.get(self._key(agent_id, session_id))
 
     def get_all_agents(self) -> List[str]:
-        """获取所有被追踪的 Agent ID"""
-        return list(self._agents.keys())
+        """获取所有被追踪的 Agent ID（去重）"""
+        return list({key[0] for key in self._agents.keys()})
 
-    def reset(self, agent_id: str = None) -> None:
+    def reset(self, agent_id: str = None,
+              session_id: Optional[str] = None) -> None:
         """重置违规记录"""
         if agent_id:
-            if agent_id in self._agents:
-                del self._agents[agent_id]
+            if session_id is not None:
+                # 重置指定会话
+                self._agents.pop(self._key(agent_id, session_id), None)
+            else:
+                # 重置该 Agent 的全部会话
+                keys = [k for k in self._agents if k[0] == agent_id]
+                for k in keys:
+                    del self._agents[k]
         else:
             self._agents.clear()

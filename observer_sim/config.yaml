@@ -5,7 +5,7 @@
 # 运行模式 (新增)
 # ============================================================
 mode: "auto"
-# 可选值: "auto" | "simulation" | "strace" | "ebpf" | "file_replay" | "deep_agent"
+# 可选值: "auto" | "simulation" | "strace" | "ebpf" | "file_replay" | "deep_agent" | "mcp_report"
 
 # ============================================================
 # 管道配置 (新增，统一跨平台管道配置)
@@ -65,6 +65,18 @@ deep_agent:
   duration_s: 60                   # live 模式最大监控时长 (秒)
 
 # ============================================================
+# MCP 申报采集模式配置（Windows WorkBuddy 降级监测，P4）
+# 运行入口: python observer.py daemon --mode mcp_report
+# ============================================================
+mcp_report:
+  framework: "pydantic-deep"        # HookRegistry 框架名（工具→事件类型映射）
+  target_agent_id: "workbuddy"      # 默认 Agent 标识
+  poll_timeout_s: 0.2                # collector 消费 broker 的轮询间隔（秒）
+  host: "127.0.0.1"                  # MCP Server 监听地址（HTTP+SSE）
+  port: 8765                         # MCP Server 监听端口
+  jsonl_dir: null                    # 申报留痕目录（null = 不落盘，仅内存队列）
+
+# ============================================================
 # 以下为现有配置段，全部保留不做修改
 # ============================================================
 
@@ -122,6 +134,7 @@ output:
   graphs_dir: "output/graphs"                 # 行为图谱目录
   baselines_dir: "output/baselines"           # 基线快照目录
   audit_format: "jsonl"                       # 审计日志格式
+  retention_days: 30                          # L0 审计文件保留天数（按天滚动 + 惰性清理）
 
 # === 场景配置 (保留，37个测试场景) ===
 scenarios:

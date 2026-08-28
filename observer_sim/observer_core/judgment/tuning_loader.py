@@ -67,7 +67,7 @@ class TuningLoader:
                     },
                     "baseline_score": {
                         "weight": 0.25,
-                        "min_warm_events": 5,
+                        "min_warm_events": 10,
                         "safe_dirs": [
                             "/home/", "/project/", "/tmp/", "/var/log/",
                             "/usr/bin/git", "/usr/bin/python",
@@ -110,6 +110,17 @@ class TuningLoader:
             "report_cache": {
                 "auto_interval": 60,
                 "max_segments": 60,
+            },
+            "rollup": {
+                "enabled": True,
+                # 异常明细区收录阈值（L1 片段 anomalies 收录，与
+                # decision.thresholds.high_score 联动）
+                "anomaly_score_threshold": 0.6,
+                "cusum": {"k": 0.5, "h": 2.0},
+                "escalation": {
+                    "tier1_escalate_threshold": 5,
+                    "tier2_escalate_threshold": 3,
+                },
             },
         }
 

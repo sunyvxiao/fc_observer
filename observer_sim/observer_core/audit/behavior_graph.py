@@ -24,8 +24,18 @@ import sys
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from models.event import NormalizedEvent
 from models.risk import RiskAssessment, Decision, DecisionAction, ActionTier, BlockingResult
+from observer_core.audit.fingerprint_tracker import FingerprintTracker
 
 logger = logging.getLogger(__name__)
+
+# ── 跨 Agent 检测窗口与时间分桶索引 ─────────────────────────────
+CROSS_AGENT_WINDOW_NS = 1_000_000_000  # 1 秒窗口
+BUCKET_WIDTH_NS = 100_000_000          # 时间分桶宽度：100ms（窗口 = ±10 桶）
+
+
+def _bucket_id(timestamp_ns: int) -> int:
+    """时间戳 → 分桶 ID（100ms 一桶）。"""
+    return timestamp_ns // BUCKET_WIDTH_NS
 
 
 @dataclass
@@ -148,6 +158,8 @@ class BehaviorGraph:
         self._agent_summaries: Dict[str, AgentSummary] = {}
         self._agent_last_node: Dict[str, str] = {}  # agent_id -> last_node_id
         self._risk_scores: Dict[str, List[float]] = {}  # agent_id -> [scores]
+        # 时间分桶索引：bucket_id -> [node_id, ...]（T6 图谱性能治理，消除 O(n²)）
+        self._time_buckets: Dict[int, List[str]] = {}
 
     @property
     def node_count(self) -> int:
@@ -200,6 +212,10 @@ class BehaviorGraph:
         )
         self._nodes[event_id] = node
 
+        # 登记时间分桶索引（供跨 Agent 检测按相邻桶查询）
+        bucket = _bucket_id(event.timestamp_ns)
+        self._time_buckets.setdefault(bucket, []).append(event_id)
+
         # 更新 Agent 摘要
         self._update_agent_summary(agent_id, node, assessment, decision, blocking_result)
 
@@ -249,6 +265,11 @@ class BehaviorGraph:
             "ppid": event.raw.ppid,
             "agent_framework": event.raw.agent_framework,
         }
+        # L-T1: 动作指纹（供阶段 2.3 T3 图谱指纹边复用；
+        # 阶段 1 仅预置输出结构，不参与任何判定）
+        fingerprint = FingerprintTracker.fingerprint_event(event)[1]
+        if fingerprint:
+            meta["fingerprint"] = fingerprint
         if event.event_type == "exec":
             meta["executable"] = event.raw.executable
             meta["arguments"] = event.raw.arguments
@@ -305,24 +326,30 @@ class BehaviorGraph:
 
         如果最近 1000ms (1_000_000_000 ns) 内有其他 Agent 的活动，
         则建立 cross_agent 边。
-        """
-        CROSS_AGENT_WINDOW_NS = 1_000_000_000  # 1 秒窗口
 
-        for node_id, node in self._nodes.items():
-            if node_id == new_node_id:
-                continue
-            if node.agent_id == new_agent_id:
-                continue
-            # 检查时间窗口
-            time_diff = abs(timestamp_ns - node.timestamp_ns)
-            if time_diff <= CROSS_AGENT_WINDOW_NS:
-                self._edges.append(BehaviorEdge(
-                    source_id=node_id,
-                    target_id=new_node_id,
-                    edge_type="cross_agent",
-                    weight=0.5,
-                    description=f"跨 Agent 关联: {node.agent_id} -> {new_agent_id}",
-                ))
+        性能：借助时间分桶索引只遍历窗口覆盖的相邻桶（±10 桶），
+        与全量遍历算法行为完全等价（见 tests/test_behavior_graph_index.py）。
+        """
+        first_bucket = _bucket_id(timestamp_ns - CROSS_AGENT_WINDOW_NS)
+        last_bucket = _bucket_id(timestamp_ns + CROSS_AGENT_WINDOW_NS)
+
+        for bucket in range(first_bucket, last_bucket + 1):
+            for node_id in self._time_buckets.get(bucket, ()):
+                if node_id == new_node_id:
+                    continue
+                node = self._nodes[node_id]
+                if node.agent_id == new_agent_id:
+                    continue
+                # 检查时间窗口（双保险：分桶只收窄候选集，判定仍按精确时间差）
+                time_diff = abs(timestamp_ns - node.timestamp_ns)
+                if time_diff <= CROSS_AGENT_WINDOW_NS:
+                    self._edges.append(BehaviorEdge(
+                        source_id=node_id,
+                        target_id=new_node_id,
+                        edge_type="cross_agent",
+                        weight=0.5,
+                        description=f"跨 Agent 关联: {node.agent_id} -> {new_agent_id}",
+                    ))
 
     def get_cross_agent_edges(self) -> List[BehaviorEdge]:
         """获取所有跨 Agent 边"""
@@ -372,3 +399,4 @@ class BehaviorGraph:
         self._agent_summaries.clear()
         self._agent_last_node.clear()
         self._risk_scores.clear()
+        self._time_buckets.clear()

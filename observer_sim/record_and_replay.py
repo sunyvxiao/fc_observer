@@ -14,6 +14,11 @@ record_and_replay.py — 录制-回放工作流 CLI 便捷入口
 
     # 指定自定义场景
     python record_and_replay.py --scenario scenarios/deep_agent/da04_production_demo.yaml
+
+    # test_report 轻量测试报告模式（录制/回放均支持）：
+    # 仅记录 L0 原始事件，不触发 L1→L2→L3 分层聚合，结束后一次性输出报告
+    python record_and_replay.py --no-rollup
+    python record_and_replay.py --replay-only <file.jsonl> --no-rollup
 """
 
 import sys
@@ -70,12 +75,16 @@ def _is_monitor_running():
     return MonitorLifecycleManager.instance().status()["monitor_running"]
 
 
-def _start_monitor(record=False):
-    """启动 Monitor 守护进程 (委托给生命周期管理器)"""
+def _start_monitor(record=False, no_rollup=False):
+    """启动 Monitor 守护进程 (委托给生命周期管理器)
+
+    no_rollup: test_report 轻量测试报告模式——仅记录 L0 原始事件，
+        不触发 L1→L2→L3 分层聚合，结束后一次性输出报告（默认关闭）。
+    """
     mgr = MonitorLifecycleManager.instance()
     # 先清理残留
     mgr.startup_cleanup()
-    status = mgr.start_monitor(record=record)
+    status = mgr.start_monitor(record=record, no_rollup=no_rollup)
     return status is not None and status.get("monitor_running", False)
 
 
@@ -162,6 +171,10 @@ def main():
                         help="场景 YAML 文件路径 (默认: da04_production_demo.yaml)")
     parser.add_argument("--speed", type=float, default=3.0,
                         help="回放速度倍率 (默认: 3.0)")
+    parser.add_argument("--no-rollup", action="store_true", default=False,
+                        help="test_report 轻量测试报告模式：仅记录 L0 原始事件，"
+                             "不触发 L1→L2→L3 分层聚合，结束后一次性输出报告"
+                             "（默认关闭，走完整生产分层路径）")
     args = parser.parse_args()
 
     os.chdir(_project_dir())
@@ -180,9 +193,11 @@ def main():
                 sys.exit(1)
 
             print(f"\n  回放文件: {replay_path}")
+            if args.no_rollup:
+                print("  模式: test_report 轻量测试报告（仅 L0 记录，结束后一次性出报告）")
 
             # 启动 Monitor（非录制模式）
-            if not _start_monitor(record=False):
+            if not _start_monitor(record=False, no_rollup=args.no_rollup):
                 print("ERROR: Monitor 启动失败", file=sys.stderr)
                 sys.exit(1)
             time.sleep(0.5)
@@ -207,9 +222,11 @@ def main():
                 sys.exit(1)
 
             print(f"\n  场景文件: {scenario}")
+            if args.no_rollup:
+                print("  模式: test_report 轻量测试报告（仅 L0 记录，结束后一次性出报告）")
 
             # 启动 Monitor（录制模式）
-            if not _start_monitor(record=True):
+            if not _start_monitor(record=True, no_rollup=args.no_rollup):
                 print("ERROR: Monitor 启动失败", file=sys.stderr)
                 sys.exit(1)
             time.sleep(0.5)

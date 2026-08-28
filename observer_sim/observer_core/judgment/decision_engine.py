@@ -6,14 +6,20 @@ DecisionEngine — 分级研判引擎
 2. 实现研判矩阵: 风险等级 × 规则动作 → 处置动作
 3. 风险定级: ALLOW/ALERT/BLOCK + TIER1/TIER2/TIER3
 
-研判矩阵 (定稿 4.2):
+研判矩阵 (修订 2.1 — E2E 实测修订):
+规则命中必产生对应处置（修复 block/alert 命中被风险等级降级为 ALLOW 的脱节问题），
+风险等级只决定处置强度（TIER）:
 ┌──────────┬──────────┬──────────┬──────────┐
 │ 风险\规则 │ 命中block │ 命中alert │ 未命中   │
 ├──────────┼──────────┼──────────┼──────────┤
-│ HIGH     │ BLOCK    │ BLOCK    │ ALERT    │
-│ MEDIUM   │ ALERT    │ ALERT    │ ALLOW    │
-│ LOW      │ ALLOW    │ ALLOW    │ ALLOW    │
+│ CRITICAL │ BLOCK T3 │ BLOCK T3 │ BLOCK T2 │
+│ HIGH     │ BLOCK T2 │ BLOCK T2 │ ALERT T1 │
+│ MEDIUM   │ BLOCK T1 │ ALERT T1 │ ALLOW T1 │
+│ LOW      │ BLOCK T1 │ ALERT T1 │ ALLOW T1 │
 └──────────┴──────────┴──────────┴──────────┘
+
+说明: BLOCK@TIER1 为软阻断（留痕+告警，无真实拦截通道，同 TIER1 语义）；
+同会话内违规累积达阈值仍经 ViolationTracker 升级 TIER2/TIER3。
 """
 
 import os
@@ -40,15 +46,19 @@ class DecisionEngine:
 
     # 研判矩阵: (risk_level, rule_action) → (decision_action, tier)
     # rule_action: "block" / "alert" / "allow"
+    # 修订原则: block/alert 规则命中必产生对应处置，不再被风险等级降级
     JUDGMENT_MATRIX = {
+        (RiskLevel.CRITICAL, "block"): (DecisionAction.BLOCK, ActionTier.TIER3),
+        (RiskLevel.CRITICAL, "alert"): (DecisionAction.BLOCK, ActionTier.TIER3),
+        (RiskLevel.CRITICAL, "allow"): (DecisionAction.BLOCK, ActionTier.TIER2),
         (RiskLevel.HIGH, "block"): (DecisionAction.BLOCK, ActionTier.TIER2),
         (RiskLevel.HIGH, "alert"): (DecisionAction.BLOCK, ActionTier.TIER2),
         (RiskLevel.HIGH, "allow"): (DecisionAction.ALERT, ActionTier.TIER1),
-        (RiskLevel.MEDIUM, "block"): (DecisionAction.ALERT, ActionTier.TIER1),
+        (RiskLevel.MEDIUM, "block"): (DecisionAction.BLOCK, ActionTier.TIER1),
         (RiskLevel.MEDIUM, "alert"): (DecisionAction.ALERT, ActionTier.TIER1),
         (RiskLevel.MEDIUM, "allow"): (DecisionAction.ALLOW, ActionTier.TIER1),
-        (RiskLevel.LOW, "block"): (DecisionAction.ALLOW, ActionTier.TIER1),
-        (RiskLevel.LOW, "alert"): (DecisionAction.ALLOW, ActionTier.TIER1),
+        (RiskLevel.LOW, "block"): (DecisionAction.BLOCK, ActionTier.TIER1),
+        (RiskLevel.LOW, "alert"): (DecisionAction.ALERT, ActionTier.TIER1),
         (RiskLevel.LOW, "allow"): (DecisionAction.ALLOW, ActionTier.TIER1),
     }
 

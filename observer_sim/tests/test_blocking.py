@@ -99,6 +99,58 @@ class TestAgentViolationTracker(unittest.TestCase):
         self.assertIn("agent-A", self.tracker.get_all_agents())
         self.assertIn("agent-B", self.tracker.get_all_agents())
 
+    def test_session_isolated_escalation(self):
+        """修订 2.1: 同一 agent 不同会话的违规互不叠加，不会跨会话升级"""
+        # 会话 s1 累计 4 次 TIER1（未达升级阈值）
+        for i in range(4):
+            self.clock.advance(100)
+            tier = self.tracker.record_violation(
+                "workbuddy", ActionTier.TIER1, f"evt_s1_{i}",
+                session_id="s1")
+            self.assertEqual(tier, ActionTier.TIER1)
+
+        # 会话 s2 累计 4 次 TIER1（同样不升级——不能叠加 s1 的计数）
+        for i in range(4):
+            self.clock.advance(100)
+            tier = self.tracker.record_violation(
+                "workbuddy", ActionTier.TIER1, f"evt_s2_{i}",
+                session_id="s2")
+            self.assertEqual(tier, ActionTier.TIER1)
+
+        # 同一会话 s1 第 5 次才升级
+        self.clock.advance(100)
+        tier = self.tracker.record_violation(
+            "workbuddy", ActionTier.TIER1, "evt_s1_5", session_id="s1")
+        self.assertEqual(tier, ActionTier.TIER2)
+        self.assertEqual(
+            self.tracker.get_violation_count("workbuddy", session_id="s2"), 4)
+
+    def test_session_terminated_isolated(self):
+        """修订 2.1: 会话 A 终止不影响同 agent 会话 B"""
+        self.clock.advance(100)
+        self.tracker.mark_terminated("workbuddy", session_id="s1")
+        self.assertTrue(self.tracker.is_terminated("workbuddy", session_id="s1"))
+        self.assertFalse(self.tracker.is_terminated("workbuddy", session_id="s2"))
+
+        # 终止会话再申报 → TIER3；其他会话正常
+        tier = self.tracker.record_violation(
+            "workbuddy", ActionTier.TIER1, "evt_x", session_id="s1")
+        self.assertEqual(tier, ActionTier.TIER3)
+        tier2 = self.tracker.record_violation(
+            "workbuddy", ActionTier.TIER1, "evt_y", session_id="s2")
+        self.assertEqual(tier2, ActionTier.TIER1)
+
+    def test_reset_agent_all_sessions(self):
+        """修订 2.1: reset(agent_id) 清除该 agent 全部会话"""
+        self.clock.advance(100)
+        self.tracker.record_violation("agent-1", ActionTier.TIER1, "evt_1",
+                                      session_id="s1")
+        self.tracker.record_violation("agent-1", ActionTier.TIER1, "evt_2",
+                                      session_id="s2")
+        self.tracker.reset("agent-1")
+        self.assertEqual(self.tracker.get_violation_count("agent-1", session_id="s1"), 0)
+        self.assertEqual(self.tracker.get_violation_count("agent-1", session_id="s2"), 0)
+
     def test_reset_tracker(self):
         """重置追踪器"""
         self.clock.advance(100)

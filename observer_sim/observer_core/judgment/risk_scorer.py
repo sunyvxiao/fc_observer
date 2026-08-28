@@ -120,7 +120,9 @@ class BasicBaselineScore(IRiskDimension):
     SAFE_COMMANDS = ["git", "python", "pytest", "pip", "npm", "node", "make",
                      "cmake", "gcc", "javac", "docker"]
 
-    def __init__(self, _weight: float = 0.25, min_events: int = 5):
+    def __init__(self, _weight: float = 0.25, min_events: int = 10):
+        # min_events 与 tuning.yaml 的 baseline.min_warm_events 语义统一（以 10 为准），
+        # 实际打分是否预热由 BaselineChecker.is_warm 决定
         self._weight_val = _weight
         self._min_events = min_events
 
@@ -310,7 +312,7 @@ class RiskScorer:
             _weight=dims.get("rule_score", {}).get("weight", 0.40)))
         self.register_dimension(BasicBaselineScore(
             _weight=dims.get("baseline_score", {}).get("weight", 0.25),
-            min_events=dims.get("baseline_score", {}).get("min_warm_events", 5)))
+            min_events=dims.get("baseline_score", {}).get("min_warm_events", 10)))
         self.register_dimension(BasicContextScore(
             _weight=dims.get("context_score", {}).get("weight", 0.20)))
         self.register_dimension(BasicSequenceScore(

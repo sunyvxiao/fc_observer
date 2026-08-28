@@ -21,7 +21,8 @@ scoring:
     baseline_score:
       weight: 0.25              # D2: 基线偏离分权重
       description: "基于行为基线的偏离度评分"
-      min_warm_events: 5         # 基线预热所需的最小事件数
+      min_warm_events: 10        # 基线预热所需的最小事件数
+                                 # （与 baseline.min_warm_events 语义统一，以 10 为准）
       safe_dirs:                  # 安全目录前缀（不触发偏离）
         - "/home/"
         - "/project/"
@@ -153,3 +154,24 @@ baseline:
 report_cache:
   auto_interval: 60              # 自动片段生成间隔（秒）
   max_segments: 60               # 最大保留片段数（1小时 = 60 × 60s）
+
+# =============================================================================
+# 分层日志滚动 (RollupEngine, 阶段 3 L-T6/L-T7)
+# =============================================================================
+rollup:
+  enabled: true                  # 分层滚动开关（关闭则 GC 仅最小闭环转存）
+
+  # 异常明细区收录阈值（L1/L2/L3 anomalies 透传链收录条件；
+  # 与 decision.thresholds.high_score 联动，MonitorDaemon 启动时注入 ReportCacheManager）
+  anomaly_score_threshold: 0.6
+
+  # CUSUM 基线漂移检测（L3 天级审计，单侧）
+  # S_t = max(0, S_{t-1} + (x_t - mu_0) - k)；S_t >= h → 漂移告警
+  cusum:
+    k: 0.5                       # 参考漂移幅度（每小时允许偏差）
+    h: 2.0                       # 决策阈值（累计超限即告警）
+
+  # 小时级违规累计升级阈值（复用 escalation 节语义，L2 级）
+  escalation:
+    tier1_escalate_threshold: 5
+    tier2_escalate_threshold: 3

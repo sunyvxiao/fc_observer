@@ -34,7 +34,8 @@ def _make_raw_event(event_id: str, agent_id: str, event_type: str,
                     timestamp_ns: int = 0, pid: int = 10001,
                     executable: str = None, arguments: list = None,
                     file_path: str = None, file_op: str = None,
-                    remote_addr: str = None, remote_port: int = None) -> RawEvent:
+                    remote_addr: str = None, remote_port: int = None,
+                    session_id: str = None) -> RawEvent:
     """创建测试用 RawEvent"""
     return RawEvent(
         event_id=event_id,
@@ -44,6 +45,7 @@ def _make_raw_event(event_id: str, agent_id: str, event_type: str,
         ppid=1,
         agent_id=agent_id,
         agent_framework="LangChain",
+        session_id=session_id,
         executable=executable,
         arguments=arguments,
         file_path=file_path,
@@ -248,6 +250,22 @@ class TestAuditLogger(unittest.TestCase):
         self.assertEqual(self.logger.entry_count, 1)
         self.assertIsNotNone(entry)
         self.assertEqual(entry.event_id, "evt-1")
+
+    def test_log_event_writes_session_id(self):
+        """修订 2.1: 审计记录落 session_id（降级监测会话化留痕）"""
+        self.logger.start_scenario("scenario-01")
+        event = _make_normalized_event("evt-1", "workbuddy", "exec",
+                                       executable="/usr/bin/git",
+                                       session_id="fc-sess-001")
+        self.logger.log_event(event, description="exec: git")
+        self.logger.close()
+
+        entries = self.logger.read_entries()
+        self.assertEqual(len(entries), 1)
+        self.assertEqual(entries[0].session_id, "fc-sess-001")
+        # 旧记录无 session_id → 反序列化为 None（向后兼容）
+        legacy = AuditEntry.from_json_line(json.dumps({"event_id": "old", "agent_id": "a"}))
+        self.assertIsNone(legacy.session_id)
 
     def test_read_entries(self):
         """读取审计日志条目"""
@@ -581,7 +599,9 @@ class TestPhase5Integration(unittest.TestCase):
         )
         self.assertTrue(os.path.exists(path))
 
-        with open(path, "r") as f:
+        # 导出器以 UTF-8 写入，读取时必须显式指定编码
+        # （Windows 默认 locale 编码为 GBK，直接读会 UnicodeDecodeError）
+        with open(path, "r", encoding="utf-8") as f:
             content = f.read()
         self.assertIn("集成测试-片段导出", content)
         self.assertIn("总事件数", content)
@@ -619,12 +639,204 @@ class TestPhase5Integration(unittest.TestCase):
             "gaps_filled": 0,
         }
         path = exporter.export_from_segments(merged_data)
-        with open(path, "r") as f:
+        with open(path, "r", encoding="utf-8") as f:
             content = f.read()
         # 验证 Markdown 基本结构
         self.assertTrue(content.startswith("#"))  # 标题
         self.assertIn("##", content)  # 子标题
         self.assertIn("|", content)  # 表格
+
+
+class TestDailyReportExport(unittest.TestCase):
+    """L-T12: L3 天级深度报告导出 + L0 下钻索引测试。"""
+
+    def setUp(self):
+        self.tmpdir = tempfile.mkdtemp(prefix="daily_report_")
+        self.exporter = ReportExporter(output_dir=self.tmpdir)
+        from observer_core.audit.rollup_engine import (
+            RollupEngine, bucket_start_ns, HOUR_NS)
+        self.engine = RollupEngine(output_dir=self.tmpdir)
+        self.HOUR_NS = HOUR_NS
+        self.bucket_start_ns = bucket_start_ns
+
+    def tearDown(self):
+        shutil.rmtree(self.tmpdir, ignore_errors=True)
+
+    def _make_l2(self, hour_bucket, anomalies=None, fp_edges=None,
+                 stats=None, entry_ids=None):
+        hour_start = self.bucket_start_ns(hour_bucket)
+        return {
+            "type": "l2_hour_log",
+            "format_version": 1,
+            "hour_bucket_id": hour_bucket,
+            "hour_start_ns": hour_start,
+            "hour_end_ns": hour_start + self.HOUR_NS,
+            "start_ns": hour_start,
+            "end_ns": hour_start + self.HOUR_NS - 1,
+            "created_at": "2025-01-01T00:00:00",
+            "segment_ids": [f"seg_{hour_bucket}"],
+            "stats": stats or {"total": 1, "allow": 1, "alert": 0,
+                             "block": 0,
+                             "risk_dist": {"LOW": 1, "MEDIUM": 0,
+                                           "HIGH": 0, "CRITICAL": 0},
+                             "rule_hits": {}, "max_score": 0.1},
+            "entry_ids": entry_ids or [],
+            "anomalies": anomalies or [],
+            "fingerprint_edges": fp_edges or [],
+            "sequence_alerts": [], "escalation": {}, "fp_links": [],
+            "partial": False,
+        }
+
+    def _make_edge(self, event_id, ts_ns, fp, agent, event_type,
+                   file_path=None, remote_addr=None):
+        return {
+            "fingerprint": fp, "event_id": event_id, "agent_id": agent,
+            "event_type": event_type, "timestamp_ns": ts_ns,
+            "file_path": file_path, "remote_addr": remote_addr,
+        }
+
+    def _make_anomaly(self, event_id, ts_ns, agent, event_type,
+                      decision="ALERT", score=0.8):
+        return {
+            "event_id": event_id, "agent_id": agent,
+            "event_type": event_type, "timestamp_ns": ts_ns,
+            "decision_action": decision, "decision_tier": "TIER1",
+            "blocked": False, "risk_score": score,
+        }
+
+    def test_export_daily_report_structure(self):
+        """L3 报告包含概览/漂移/串谋/序列/升级/指纹/异常/建议/下钻九节。"""
+        day_bucket = 1000
+        first_hour = day_bucket * 24
+        l2s = [self._make_l2(first_hour + h, entry_ids=[f"e{h}"])
+               for h in range(24)]
+        l3 = self.engine.rollup_day(l2s)
+        path = self.exporter.export_daily_report(l3)
+        self.assertTrue(os.path.exists(path))
+        with open(path, "r", encoding="utf-8") as f:
+            content = f.read()
+        for section in ("概览", "CUSUM", "串谋", "序列", "升级",
+                        "指纹", "异常明细", "处置建议", "L0 下钻"):
+            self.assertIn(section, content, f"缺少报告章节: {section}")
+        self.assertIn("e0", content)  # entry_id 下钻索引
+
+    def test_export_daily_report_collusion_chain(self):
+        """m05 式串谋链在 L3 报告中完整重建（agents/路径/外传地址）。"""
+        day_bucket = 1000
+        first_hour = day_bucket * 24
+        hour0 = self.bucket_start_ns(first_hour)
+        hour4 = self.bucket_start_ns(first_hour + 4)
+        e_write = self._make_edge("w1", hour0 + 100, "fp-w", "agent-a",
+                                  "file_open",
+                                  file_path="/tmp/stage/temp_data.json")
+        e_read = self._make_edge("r1", hour4 + 100, "fp-r", "agent-b",
+                                 "file_open",
+                                 file_path="/tmp/stage/temp_data.json")
+        e_net = self._make_edge("n1", hour4 + 200, "fp-net", "agent-b",
+                                "net_conn", remote_addr="203.0.113.42")
+        l2s = [self._make_l2(first_hour + 0, fp_edges=[e_write])]
+        l2s += [self._make_l2(first_hour + 4,
+                              fp_edges=[e_read, e_net],
+                              anomalies=[self._make_anomaly(
+                                  "n1", hour4 + 200, "agent-b", "net_conn")])]
+        l2s += [self._make_l2(first_hour + h) for h in range(24) if h not in (0, 4)]
+        l3 = self.engine.rollup_day(l2s)
+        self.assertTrue(l3["collusion_chains"],
+                        f"串谋链未检出: {l3['collusion_chains']}")
+        path = self.exporter.export_daily_report(l3)
+        with open(path, "r", encoding="utf-8") as f:
+            content = f.read()
+        self.assertIn("/tmp/stage/temp_data.json", content)
+        self.assertIn("agent-a", content)
+        self.assertIn("agent-b", content)
+        self.assertIn("203.0.113.42", content)
+        self.assertIn("传递路径", content)
+
+    def test_export_daily_report_drift_alerts(self):
+        """CUSUM 漂移告警进入 L3 报告漂移表。"""
+        day_bucket = 1000
+        first_hour = day_bucket * 24
+        l2s = []
+        for h in range(24):
+            stats = {"total": 1, "allow": 1, "alert": 0, "block": 0,
+                     "risk_dist": {"LOW": 1, "MEDIUM": 0, "HIGH": 0,
+                                   "CRITICAL": 0},
+                     "rule_hits": {}, "max_score": 0.1}
+            if h >= 12:
+                stats = {"total": 50, "allow": 48, "alert": 2, "block": 0,
+                         "risk_dist": {"LOW": 48, "MEDIUM": 2, "HIGH": 0,
+                                       "CRITICAL": 0},
+                         "rule_hits": {}, "max_score": 0.3}
+            l2s.append(self._make_l2(first_hour + h, stats=stats))
+        l3 = self.engine.rollup_day(l2s)
+        self.assertTrue(l3["drift_alerts"])
+        path = self.exporter.export_daily_report(l3)
+        with open(path, "r", encoding="utf-8") as f:
+            content = f.read()
+        self.assertIn("CUSUM 基线漂移告警", content)
+        self.assertIn("event_rate", content)
+        self.assertIn("基线来源", content)
+
+    def test_l0_drilldown_index_and_reconstruct(self):
+        """L0 下钻：entry_id → audit_*.jsonl:行号 索引 + 原始事件还原。"""
+        audit_dir = os.path.join(self.tmpdir, "audit")
+        os.makedirs(audit_dir, exist_ok=True)
+        l0_path = os.path.join(audit_dir, "audit_demo_20250611.jsonl")
+        lines = [
+            {"event_id": "ev_a", "agent_id": "agent-a",
+             "event_type": "file_open", "timestamp_ns": 123,
+             "description": "read /data/customers/contacts.csv"},
+            {"event_id": "ev_b", "agent_id": "agent-b",
+             "event_type": "net_conn", "timestamp_ns": 456,
+             "description": "connect 203.0.113.42"},
+        ]
+        with open(l0_path, "w", encoding="utf-8") as f:
+            for obj in lines:
+                f.write(json.dumps(obj, ensure_ascii=False) + "\n")
+        # 干扰文件：非 audit_ 前缀不得进入索引
+        with open(os.path.join(audit_dir, "other.txt"), "w",
+                  encoding="utf-8") as f:
+            f.write("{\"event_id\": \"noise\"}")
+        l0_before = open(l0_path, "r", encoding="utf-8").read()
+
+        day_bucket = 1000
+        first_hour = day_bucket * 24
+        l2s = [self._make_l2(first_hour + h,
+                             entry_ids=["ev_a", "ev_b"] if h == 0 else [])
+               for h in range(24)]
+        l3 = self.engine.rollup_day(l2s)
+        path = self.exporter.export_daily_report(l3, audit_dir=audit_dir)
+        with open(path, "r", encoding="utf-8") as f:
+            content = f.read()
+        # 索引指向 L0 文件与行号
+        self.assertIn("ev_a -> audit_demo_20250611.jsonl:1", content)
+        self.assertIn("ev_b -> audit_demo_20250611.jsonl:2", content)
+        self.assertNotIn("noise", content)
+        # 三红线：L0 文件内容未被触碰
+        l0_after = open(l0_path, "r", encoding="utf-8").read()
+        self.assertEqual(l0_before, l0_after,
+                         "L0 文件不得被报告生成链路修改")
+        # 原始事件还原：按报告索引读回 L0 行
+        with open(l0_path, "r", encoding="utf-8") as f:
+            l0_lines = f.readlines()
+        restored = json.loads(l0_lines[0])
+        self.assertEqual(restored["event_id"], "ev_a")
+        self.assertEqual(restored["agent_id"], "agent-a")
+        self.assertEqual(restored["description"],
+                         "read /data/customers/contacts.csv")
+
+    def test_export_daily_report_minimal(self):
+        """最小 L3（无告警无链）导出不崩溃且提示无信号。"""
+        day_bucket = 1000
+        first_hour = day_bucket * 24
+        l2s = [self._make_l2(first_hour + h) for h in range(24)]
+        l3 = self.engine.rollup_day(l2s)
+        path = self.exporter.export_daily_report(l3)
+        self.assertTrue(os.path.exists(path))
+        with open(path, "r", encoding="utf-8") as f:
+            content = f.read()
+        self.assertIn("未检出", content)
+        self.assertIn("维持常规监测", content)
 
 
 if __name__ == "__main__":

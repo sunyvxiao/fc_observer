@@ -320,6 +320,59 @@ class TestDecisionEngine(unittest.TestCase):
         self.assertEqual(decision.action, DecisionAction.ALLOW)
         self.assertEqual(decision.tier, ActionTier.TIER1)
 
+    def test_medium_block_decision_soft_block(self):
+        """修订 2.1: MEDIUM + block → BLOCK @ TIER1（主判定不再被降级为 ALERT）"""
+        assessment = RiskAssessment(
+            overall_score=0.4,
+            risk_level=RiskLevel.MEDIUM,
+            matched_rule_ids=["R002"],
+            highest_rule_action="block",
+        )
+        decision = self.engine.decide(assessment)
+
+        self.assertEqual(decision.action, DecisionAction.BLOCK)
+        self.assertEqual(decision.tier, ActionTier.TIER1)
+
+    def test_low_alert_decision(self):
+        """修订 2.1: LOW + alert → ALERT @ TIER1（不再被降级为 ALLOW）"""
+        assessment = RiskAssessment(
+            overall_score=0.18,
+            risk_level=RiskLevel.LOW,
+            matched_rule_ids=["R019"],
+            highest_rule_action="alert",
+        )
+        decision = self.engine.decide(assessment)
+
+        self.assertEqual(decision.action, DecisionAction.ALERT)
+        self.assertEqual(decision.tier, ActionTier.TIER1)
+
+    def test_low_block_decision_soft_block(self):
+        """修订 2.1: LOW + block → BLOCK @ TIER1（不再被降级为 ALLOW）"""
+        assessment = RiskAssessment(
+            overall_score=0.2,
+            risk_level=RiskLevel.LOW,
+            matched_rule_ids=["R001"],
+            highest_rule_action="block",
+        )
+        decision = self.engine.decide(assessment)
+
+        self.assertEqual(decision.action, DecisionAction.BLOCK)
+        self.assertEqual(decision.tier, ActionTier.TIER1)
+
+    def test_critical_block_decision(self):
+        """修订 2.1: CRITICAL + block → BLOCK @ TIER3（关闭自动升级也保底）"""
+        assessment = RiskAssessment(
+            overall_score=0.95,
+            risk_level=RiskLevel.CRITICAL,
+            matched_rule_ids=["R001"],
+            highest_rule_action="block",
+        )
+        engine = DecisionEngine(enable_auto_escalation=False)
+        decision = engine.decide(assessment)
+
+        self.assertEqual(decision.action, DecisionAction.BLOCK)
+        self.assertEqual(decision.tier, ActionTier.TIER3)
+
     def test_critical_score_auto_escalate(self):
         """评分 > 0.9 → 强制 TIER3"""
         assessment = RiskAssessment(

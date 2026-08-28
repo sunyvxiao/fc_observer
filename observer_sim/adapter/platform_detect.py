@@ -138,6 +138,16 @@ def detect_and_create_collector(config: dict, mode_override: str = None):
         except ImportError:
             raise RuntimeError("DeepAgent 采集器未实现")
 
+    elif mode == "mcp_report":
+        # MCP 申报模式（Windows WorkBuddy 降级监测）:
+        # 创建 McpReportCollector；broker 需运行侧注入
+        # （observer daemon --mode mcp_report 启动时注入同队列的 broker）。
+        try:
+            from collector.mcp_report_collector import McpReportCollector
+            return McpReportCollector(config)
+        except ImportError:
+            raise RuntimeError("MCP 申报采集器未实现（collector.mcp_report_collector）")
+
     else:  # auto
         if sys.platform == "win32":
             logger.info("检测到 Windows 平台，启用模拟模式")

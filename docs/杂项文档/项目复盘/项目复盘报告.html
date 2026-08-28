@@ -1,0 +1,644 @@
+<!DOCTYPE html>
+<html xmlns:o="urn:schemas-microsoft-com:office:office"
+      xmlns:w="urn:schemas-microsoft-com:office:word"
+      xmlns="http://www.w3.org/TR/REC-html40">
+<head>
+<meta charset="UTF-8">
+<meta name="ProgId" content="Word.Document">
+<meta name="Generator" content="Observer-Sim DocGen">
+<title>项目复盘报告</title>
+<!--[if gte mso 9]><xml>
+<w:WordDocument>
+<w:View>Print</w:View>
+<w:Zoom>100</w:Zoom>
+<w:DoNotOptimizeForBrowser/>
+</w:WordDocument>
+</xml><![endif]-->
+<style>
+/* ===== 页面设置：A4 纵向，上下 2.54cm，左右 3.18cm ===== */
+@page {
+  size: 595.3pt 841.9pt;
+  margin: 72.0pt 90.0pt 72.0pt 90.0pt;
+  mso-page-orientation: portrait;
+}
+body { font-family: 宋体, SimSun; font-size: 12.0pt; line-height: 150%; }
+p { margin: 0; padding: 0; }
+
+/* 正文：小四宋体，1.5倍行距，首行缩进2字符，两端对齐 */
+p.body { font-family: 宋体; font-size: 12.0pt; line-height: 150%;
+         text-indent: 24.0pt; text-align: justify; margin-top: 3.0pt; margin-bottom: 3.0pt; }
+p.noid { font-family: 宋体; font-size: 12.0pt; line-height: 150%; text-align: justify;
+         margin-top: 3.0pt; margin-bottom: 3.0pt; }
+
+/* 一级标题：黑体三号加粗居中 */
+h1 { font-family: 黑体, SimHei; font-size: 16.0pt; font-weight: bold; text-align: center;
+     line-height: 150%; margin: 12.0pt 0 8.0pt 0; mso-outline-level: 1; }
+/* 二级标题：黑体四号加粗左对齐 */
+h2 { font-family: 黑体, SimHei; font-size: 14.0pt; font-weight: bold; text-align: left;
+     line-height: 150%; margin: 10.0pt 0 6.0pt 0; mso-outline-level: 2; }
+/* 三级标题：宋体小四加粗 */
+h3 { font-family: 宋体, SimSun; font-size: 12.0pt; font-weight: bold; text-align: left;
+     line-height: 150%; margin: 8.0pt 0 4.0pt 0; mso-outline-level: 3; }
+/* 四级小标题：宋体小四加粗 */
+h4 { font-family: 宋体, SimSun; font-size: 12.0pt; font-weight: bold; text-align: left;
+     line-height: 150%; margin: 6.0pt 0 3.0pt 0; }
+
+/* 表格 */
+table { border-collapse: collapse; margin: 6.0pt auto; }
+th { background: #D9D9D9; font-weight: bold; font-family: 宋体; font-size: 10.5pt;
+     border: 1.0pt solid #7F7F7F; padding: 3.0pt 6.0pt; text-align: center; }
+td { font-family: 宋体; font-size: 10.5pt; border: 1.0pt solid #7F7F7F;
+     padding: 3.0pt 6.0pt; vertical-align: top; }
+
+/* 表题：黑体小五居中 */
+p.caption { font-family: 黑体, SimHei; font-size: 9.0pt; font-weight: bold;
+            text-align: center; margin: 6.0pt 0 3.0pt 0; }
+
+/* 图题：宋体小五居中 */
+p.figcaption { font-family: 宋体; font-size: 9.0pt; text-align: center; margin: 3.0pt 0 8.0pt 0; }
+
+/* 引用块 */
+blockquote { margin: 6.0pt 28.0pt; padding: 4.0pt 8.0pt;
+             border-left: 2.0pt solid #808080; font-family: 楷体, KaiTi; font-size: 10.5pt; }
+
+/* 问答 */
+p.q { font-family: 宋体; font-size: 12.0pt; font-weight: bold; text-indent: 0; margin-top: 6.0pt; }
+p.a { font-family: 宋体; font-size: 12.0pt; text-indent: 0; margin: 2.0pt 0 6.0pt 12.0pt; }
+
+/* 框图通用 */
+.diagram { margin: 10.0pt auto; }
+.diagram td { font-size: 9.0pt; }
+.box { border: 1.0pt solid #404040; padding: 5.0pt 8.0pt; text-align: center; background: #F2F6FA; }
+.layer { background: #DDE6EF; font-weight: bold; text-align: center; border: 1.0pt solid #404040; padding: 3.0pt; }
+.arrow { text-align: center; font-size: 11.0pt; color: #1F4E79; }
+.arrow td { border: none; background: #FFFFFF; }
+.section { margin-top: 10.0pt; }
+
+/* 列表 */
+ul, ol { margin: 4.0pt 0 6.0pt 24.0pt; }
+li { font-family: 宋体; font-size: 12.0pt; line-height: 150%; text-align: justify; }
+</style>
+</head>
+<body>
+
+<!-- ==================== 封面标题 ==================== -->
+<h1 style="font-size:22.0pt; margin-top:40.0pt;">项目复盘报告</h1>
+<p class="caption" style="font-size:12.0pt; margin-bottom:20.0pt;">Agent 监测系统 · 输入 / 数据处理 / 交互输出 / 需求对齐 全景复盘</p>
+
+<p class="noid" style="text-align:center; color:#555;">（本报告由"智能排版 + 图表生成 + 格式规范"提示词 v2.0 生成）</p>
+<p class="noid" style="text-align:center; color:#555; margin-bottom:24.0pt;">【目录占位：在 Word 中通过"引用 → 目录 → 自动目录（3 级）"插入】</p>
+
+<!-- ==================== 第一章 项目输入 ==================== -->
+<h1>1　项目输入</h1>
+
+<p class="body">该项目的输入既有实时 Agent 的监测数据，也有各种测试输入，实现了对市面上大多数 Agent 的兼容，并具备自我复盘与测试功能。</p>
+
+<h2>1.1　输入来源</h2>
+
+<p class="caption">表 1-1　输入通道总览</p>
+<table>
+<tr><th>序号</th><th>输入通道</th><th>数据形态</th><th>运行方式</th><th>平台</th></tr>
+<tr><td>1</td><td>YAML 场景文件</td><td>预定义事件序列（37 个经典场景）</td><td>SimulationCollector（模拟模式）</td><td>全平台</td></tr>
+<tr><td>2</td><td>JSONL 事件文件</td><td>逐行事件记录（回放）</td><td>FileReplayCollector（文件回放）</td><td>全平台</td></tr>
+<tr><td>3</td><td>CSV 事件文件</td><td>表格式事件记录（回放）</td><td>FileReplayCollector（文件回放）</td><td>全平台</td></tr>
+<tr><td>4</td><td>DeepAgent YAML 场景</td><td>Agent 工具调用序列（5 个场景）</td><td>DeepAgentCollector（simulation）</td><td>全平台</td></tr>
+<tr><td>5</td><td>实时 Agent 工具调用</td><td>pydantic-deep Hook 回调流</td><td>DeepAgentCollector（live，需 API Key）</td><td>Linux/Docker</td></tr>
+<tr><td>6</td><td>FIFO 管道事件流</td><td>JSON Lines 实时流</td><td>monitor_daemon.py 守护进程</td><td>Linux</td></tr>
+<tr><td>7</td><td>真实系统调用</td><td>内核 syscall（execve/openat/connect）</td><td>StraceCollector / EbpfCollector</td><td>仅 Linux</td></tr>
+</table>
+
+<h3>1.1.1　问答</h3>
+
+<p class="q">Q1：经典 YAML 场景文件与 DeepAgent YAML 场景文件的异同？</p>
+<p class="a">A：经典场景回答"系统发生了什么"（what syscall happened），DeepAgent 场景回答"Agent 调用了什么工具"（what tool the agent invoked）。二者的设计目的，一个是为了检测项目对系统的监测，另一个是为了检测项目对 Agent 的监测。经典场景模拟的是"系统调用事实"，DeepAgent 场景模拟的是"Agent 行为意图"。</p>
+
+<p class="q">Q2：YAML 场景文件与 JSONL 事件文件的异同？</p>
+<p class="a">A：YAML 是场景剧本——用 delay_ms 表达步骤间的相对时序，由 VirtualClock 推进生成绝对时间戳；JSONL 是事实日志——每行自带 timestamp_ns 绝对时间戳（capabilities 中 time_source="file_timestamp"）。YAML 场景文件是"导演的剧本"——定义行为序列的意图、时序、角色和预期结局；JSONL 事件文件是"监控录像带"——只记录发生了什么事实，无意图、无预期、无角色表，但可以无限拼接、跨平台搬运、事后反复回放。前者是剧本，后者是录像带，需要一个播放器来转化。</p>
+
+<p class="q">Q3：关于播放器？</p>
+<p class="a">A：播放器与录像机解耦——record_from_collector() 接受任意 ICollector，同一个录像机既能录模拟剧本，也能录真实 strace/eBPF 事件，这是"真实 Agent 行为录制"的技术基础。边播放边录像——录制不是离线拷贝，而是与实时处理同源，保证"回放结果 = 实时结果"的同构性。时间维物化——VirtualClock 是转化枢纽，把相对时序烧录为绝对时间戳。容错优先——每条 flush、# 注释头、会话目录隔离，保证录像带在任何时刻中断都可读可回放。</p>
+
+<p class="q">Q4：JSONL 事件文件与 CSV 事件文件的关系？</p>
+<p class="a">A：前者包含后者，后者为前者的压缩。</p>
+
+<p class="q">Q5：FIFO 管道事件流的定位？</p>
+<p class="a">A：YAML 是上游"剧本"；JSONL 与 FIFO 是同一种数据格式（RawEvent JSON Lines 协议）的两种载体——JSONL 是"录像带"（持久化文件），FIFO 是"直播流"（一次性管道）。它是系统中唯一的实时在线输入通道，本质价值在于进程解耦——让真实 Agent 以零依赖方式把行为事件实时送进常驻的 Monitor 守护进程，是模拟系统走向"真实生产监测"的部署形态。YAML/JSONL 服务"事后"（预演/回放），FIFO 服务"当下"（实时研判+阻断）。FIFO 管道事件流是演出，JSONL 事件文件是录像，两者转化需要一个录像机。</p>
+
+<p class="q">Q6：关于录像机？</p>
+<p class="a">A："JSONL 可以理解为事件流（含 FIFO 流）的录像"——这个能力由两套录制机制共同实现：采集器路线——EventRecorder/SessionRecorder 把进程内 RawEvent 迭代器录成 JSONL；生产路线——monitor_daemon 的 --record 旁路录制把 FIFO 管道流直接录成 JSONL（在解析前落盘，零损失）。两者产物格式完全一致、都可回放，区别只是"录像机架设的位置"：一台在源头（采集器旁），一台在传输线上（Monitor 侧）。</p>
+
+<h3>1.1.2　几种输入来源的关系图</h3>
+
+<p class="body">概述：剧本（YAML）→ 播放器 → 事实流（RawEvent）→ {落盘成 JSONL 录像带 | 直送 FIFO 直播流}；录像带 → 回放器 → 事实流（重演）；直播流 → 守护进程 → 实时研判 + 旁路再录像。所有路径归一于 RawEvent → observer_core，六路输入殊途同归。</p>
+
+<p class="figcaption">图 1-1　输入全景与上下游关系</p>
+<table class="diagram">
+<tr><td class="layer" colspan="4">上游剧本层</td></tr>
+<tr>
+  <td class="box" colspan="2">经典 YAML 场景（37 个 · 事件级剧本）</td>
+  <td class="box" colspan="2">DeepAgent YAML 场景（5 个 · 工具级剧本）</td>
+</tr>
+<tr class="arrow"><td colspan="2">↓</td><td colspan="2">↓</td></tr>
+<tr><td class="layer" colspan="4">行为产生层</td></tr>
+<tr>
+  <td class="box">SimulationCollector（VirtualClock 播放）</td>
+  <td class="box">DeepAgentCollector（simulation 播放）</td>
+  <td class="box">真实 pydantic-deep Agent（Docker 内 + Hook 捕获）</td>
+  <td class="box">strace / eBPF 采集器（观测真实 syscall）</td>
+</tr>
+<tr class="arrow"><td colspan="2"></td><td colspan="2">Hook 工具调用 ⇢（虚线）</td></tr>
+<tr class="arrow"><td>↓</td><td>↓</td><td>↓</td><td>↓</td></tr>
+<tr><td class="layer" colspan="4">事实层</td></tr>
+<tr><td class="box" colspan="4">RawEvent 统一事件流（14 字段，event_type 必填）</td></tr>
+<tr class="arrow"><td colspan="4">↓</td></tr>
+<tr><td class="layer" colspan="4">载体层</td></tr>
+<tr>
+  <td class="box">JSONL 文件（录像带 · 一等公民）</td>
+  <td class="box">CSV 文件（兼容格式 · 降级）</td>
+  <td class="box" colspan="2">FIFO 管道（直播流 · 实时在线）</td>
+</tr>
+<tr class="arrow">
+  <td colspan="2">⇢ FileReplayCollector 回放（虚线）</td>
+  <td colspan="2">monitor_daemon 实时消费 / 旁路录制 --record</td>
+</tr>
+<tr><td class="layer" colspan="4">消费层</td></tr>
+<tr><td class="box" colspan="4">observer_core 全链路（归一化 → 规则 → 评分 → 研判 → 阻断 → 审计）</td></tr>
+</table>
+
+<h2>1.2　输入格式</h2>
+
+<p class="body">所有输入最终归一化为 RawEvent 统一模型（14 个字段），这是核心格式契约：</p>
+
+<p class="caption">表 1-2　RawEvent 字段规范</p>
+<table>
+<tr><th>字段</th><th>类型</th><th>必填</th><th>说明</th></tr>
+<tr><td>event_type</td><td>string</td><td>是</td><td>唯一必填字段，取值：exec / file_open / net_conn</td></tr>
+<tr><td>event_id</td><td>string</td><td>否</td><td>事件标识（缺失自动生成 replay_evt_XXXXXX）</td></tr>
+<tr><td>timestamp_ns</td><td>int</td><td>否</td><td>纳秒时间戳（默认 0）</td></tr>
+<tr><td>pid</td><td>int</td><td>否</td><td>进程 ID（默认 0）</td></tr>
+<tr><td>ppid</td><td>int</td><td>否</td><td>父进程 ID（默认 0）</td></tr>
+<tr><td>agent_id</td><td>string</td><td>否</td><td>Agent 标识（默认取采集器配置值）</td></tr>
+<tr><td>agent_framework</td><td>string</td><td>否</td><td>数据来源标识（默认 "file_replay"）</td></tr>
+<tr><td>executable</td><td>string</td><td>否</td><td>可执行文件路径（exec 事件）</td></tr>
+<tr><td>arguments</td><td>string[]</td><td>否</td><td>命令行参数列表（exec 事件）</td></tr>
+<tr><td>file_path</td><td>string</td><td>否</td><td>文件路径（file_open 事件）</td></tr>
+<tr><td>file_op</td><td>string</td><td>否</td><td>文件操作：read/write/delete/rename/chmod</td></tr>
+<tr><td>remote_addr</td><td>string</td><td>否</td><td>远程地址（net_conn 事件）</td></tr>
+<tr><td>remote_port</td><td>int</td><td>否</td><td>远程端口（net_conn 事件）</td></tr>
+<tr><td>protocol</td><td>string</td><td>否</td><td>协议：TCP/UDP（net_conn 事件）</td></tr>
+</table>
+
+<p class="noid" style="font-weight:bold;">三条关键结论</p>
+<p class="body">1）最小输入门槛极低：只要 {"event_type": "exec"} 一个字段即可被系统接受（其余 13 个字段全部自动填充默认值）。</p>
+<p class="body">2）事件类型决定了专属字段语义：exec 需要 executable/arguments，file_open 需要 file_path/file_op，net_conn 需要 remote_addr/remote_port/protocol——但缺了也能解析，只是规则匹配可能不命中。</p>
+<p class="body">3）所有通道殊途同归：无论 YAML、JSONL、CSV、Hook 回调还是 FIFO 流，最终都以 RawEvent 迭代器形态进入 observer_core 全链路（归一化 → 规则匹配 → 风险评分 → 研判 → 阻断 → 审计），这是"零改动约束"得以成立的基石。</p>
+
+<h2>1.3　输入捕获/读取</h2>
+
+<p class="body">统一入口：所有输入都汇入一个"采集器工厂"。统一代码路径如下：</p>
+
+<p class="figcaption">图 1-2　采集器统一入口代码路径</p>
+<table class="diagram">
+<tr><td class="box">main.py / app.py / monitor_daemon.py</td></tr>
+<tr class="arrow"><td>↓</td></tr>
+<tr><td class="box">adapter/platform_detect.py　detect_and_create_collector(config, mode)<br>按 config.yaml 的 mode 字段分流（auto/simulation/strace/ebpf/file_replay/deep_agent）</td></tr>
+<tr class="arrow"><td>↓</td></tr>
+<tr><td class="box">某个 ICollector 实现 ── start() ──▶ Iterator[RawEvent] ──▶ observer_core 全链路</td></tr>
+</table>
+
+<p class="body">ICollector 定义了 5 个抽象方法（attach / start / send_command / detach / get_process_tree），上层只认识 start() → Iterator[RawEvent] 这一种形态——这就是"如何进入项目"的统一答案：变成 RawEvent 生成器。但"捕获和读取"的机制，六种输入各不相同，按捕获原理分为五大类：</p>
+
+<h3>1.3.1　五类捕获</h3>
+
+<h4>1.3.1.1　程序内"播放"——文件被 Python 直接读入内存</h4>
+<p class="body">1）YAML 场景文件 → SimulationCollector：捕获点——无捕获，是"剧本朗读"——YAML 通过 yaml.safe_load 变成 Python dict；文件发现——main.py 用 glob.glob(scenarios_dir/category/*.yaml) 批量收集。</p>
+<p class="body">2）DeepAgent YAML 场景 → DeepAgentCollector(simulation)：机制同 A1（yaml.safe_load → 遍历 tool_calls 序列），区别只在于构造出的 RawEvent 语义是"工具调用"而非"syscall"，且经由 AgentBridge 的映射表转换。</p>
+
+<h4>1.3.1.2　程序内"钩子捕获"——Hook 回调直接拦截</h4>
+<p class="body">1）实时 Agent 工具调用 → DeepAgentCollector(live)：这是唯一事件发生在程序内部、靠注册回调捕获的通道。关键代码（deep_agent_collector.py _start_live）：Agent 在后台 daemon 线程跑，主线程只做队列消费，通过 while self._running or bridge.pending_count &gt; 0 控制生命周期。</p>
+
+<h4>1.3.1.3　外部进程观测——用系统工具"旁听"真实 syscall</h4>
+<p class="body">1）strace → StraceCollector（Linux 降级方案）：捕获点——操作系统 ptrace 机制（strace 是载体）；读取方式——subprocess.Popen + 行缓冲（bufsize=1）+ 后台读线程。</p>
+<p class="body">2）eBPF → EbpfCollector（Linux 首选方案）：捕获点——Linux 内核（tracepoint 全局观测，非单进程，无需 ptrace）；读取方式——perf ring buffer 轮询（用户态↔内核态共享内存环形缓冲）。</p>
+
+<h4>1.3.1.4　文件读取——把"录像带"读回来重放</h4>
+<p class="body">1）文件读取（JSONL/CSV 回放）：捕获点——无，文件是之前录制的产物，读取是"纯 I/O"。与 A 类的本质区别：A 类读的是剧本（要现场构造事件），D 类读的是事实记录（直接反序列化）。</p>
+
+<h4>1.3.1.5　管道流——跨进程实时消费</h4>
+<p class="body">1）FIFO 命名管道 → monitor_daemon（独立守护进程，不走 ICollector 体系）：捕获点——事件由 Agent 进程主动写入（推模型），monitor 被动接收；会话语义——Agent 断开（EOF）即会话结束 → oneshot 退出 / daemon 模式循环等待下一 Agent。</p>
+
+<h3>1.3.2　全局对照</h3>
+
+<p class="caption">表 1-3　输入捕获全局对照</p>
+<table>
+<tr><th>输入</th><th>捕获原理</th><th>读取技术</th><th>进入点</th><th>实时性</th></tr>
+<tr><td>YAML 场景</td><td>无（剧本）</td><td>yaml.safe_load 整读入内存</td><td>SimulationCollector.start() 现场构造</td><td>模拟时间</td></tr>
+<tr><td>DeepAgent 场景</td><td>无（剧本）</td><td>yaml.safe_load</td><td>DeepAgentCollector._start_simulation()</td><td>模拟时间</td></tr>
+<tr><td>DeepAgent live</td><td>程序内 Hook 回调</td><td>回调 + 线程安全队列</td><td>AgentBridge.on_tool_call → 队列 → yield</td><td>真实实时</td></tr>
+<tr><td>strace</td><td>OS ptrace</td><td>subprocess.Popen + 行缓冲读线程</td><td>StraceCollector._read_loop → 解析 → yield</td><td>准实时</td></tr>
+<tr><td>eBPF</td><td>内核 tracepoint</td><td>ctypes+libbpf + perf ring buffer</td><td>EbpfCollector 缓冲消费 → yield</td><td>准实时</td></tr>
+<tr><td>JSONL/CSV</td><td>无（录像回放）</td><td>json.loads / csv 逐行读</td><td>FileReplayCollector.start()</td><td>文件时间戳</td></tr>
+<tr><td>FIFO 流</td><td>跨进程管道推送</td><td>open() 阻塞读 + from_json_line</td><td>monitor_daemon._read_fifo_session</td><td>真实实时</td></tr>
+</table>
+
+<h3>1.3.3　问答</h3>
+
+<p class="q">Q1：strace（Linux 降级方案）与 eBPF（Linux 首选方案）的异同及设计目的？</p>
+<p class="a">A：strace 是过渡方案，eBPF 是"条件具备才启用"的终局方案；降级链 eBPF → strace → simulation 保证了系统在任何 Linux 环境都能以退一档的能力运行。</p>
+<p class="a">(1) 能力分层——"完整闭环"与"最小可用"：eBPF 是首选方案，是唯一能同时满足观测 + 阻断的手段。安全监测系统要落地"三级防御"（L2 越界阻断、L3 攻击终止），必须在 syscall 入口处拦截，这只有 eBPF 能做到，所以 eBPF 承载了系统的最终形态。strace 是降级备选，只解决"真实观测"这一半问题，阻断返回 False 并明确提示"请使用 eBPF 模式"；其定位是快速建立真实数据通道，让 observer_core 的规则/研判/审计链路先跑在真实 syscall 数据上。</p>
+<p class="a">(2) 环境兼容性兜底——eBPF 的苛刻前置条件：eBPF 需要内核 ≥ 5.x 且带 BTF、libbpf ≥ 1.4 已安装、进程有 CAP_BPF/CAP_PERFMON、字节码已预编译。真实部署中这四条任何一条不满足（旧内核、无特权容器、未编译字节码）eBPF 就起不来。strace 几乎在任何 Linux 上都存在且部署成本为零。_check_ebpf_capability() 的存在证明设计者明确意识到了这一点。</p>
+<p class="a">(3) 渐进式开发路线的载体：回顾项目文档中的开发排期（eBPF 开发计划），路线是"先 strace 打通链路 → 再 eBPF 补齐阻断"。strace 实现简单（一个 subprocess + 几个正则），可以最快验证"真实进程 → RawEvent → observer_core"整条链路；eBPF 实现复杂（ctypes 绑定、字节码编译、ring buffer、kprobe 生命周期管理），适合在链路已被验证的基础上迭代。两者共用 ICollector 接口，意味着上层代码一行不用改——这正是抽象接口设计价值的最直观体现。</p>
+<p class="a">(4) strace 的独立教学价值：项目是"模拟学习系统"（教学演示定位）。strace 的文本输出可读性极强——学生可以直接看到 execve("/bin/ls", ["ls", "-la"]) = 0 这样的原始 syscall 行，理解"观测→解析→事件化"的完整过程；而 eBPF 是二进制 ring buffer，对学习者而言是黑盒。strace 保住了"白盒可理解性"这条产品线。</p>
+
+<p class="q">Q2：如何设计数据输入层实现与 Agent 的解耦？</p>
+<p class="a">A：解耦设计手法总结（五层）：</p>
+
+<p class="caption">表 1-4　数据输入层解耦设计手法</p>
+<table>
+<tr><th>层次</th><th>手法</th><th>代码证据</th></tr>
+<tr><td>进程级</td><td>monitor 与 Agent 是两个独立进程，FIFO 是唯一纽带</td><td>monitor_daemon.py 独立入口 + agent_fifo_writer.py 独立入口</td></tr>
+<tr><td>依赖级</td><td>Agent 侧零依赖（仅标准库）/ 零依赖（外部观测）</td><td>fifo_writer 文件头声明；strace/eBPF 根本不进 Agent</td></tr>
+<tr><td>协议级</td><td>RawEvent JSON Lines 纯文本协议，语言无关</td><td>json.dumps(event, ensure_ascii=False)</td></tr>
+<tr><td>可选级</td><td>监测集成是开关 + 静默降级，缺席不阻塞业务</td><td>run_agent.py if args.fifo + except ImportError</td></tr>
+<tr><td>接口级</td><td>监测端 ICollector 抽象，采集手段可互换</td><td>上层只见 start() → Iterator[RawEvent]</td></tr>
+</table>
+
+<p class="q">Q3：该方案能成功接入市面上大多数生产级 Agent 吗？生产可用性如何？</p>
+<p class="a">A：评估结论——方案能成功接入市面上大多数生产级 Agent，但有一个定位需要修正：</p>
+<p class="a">(1) C 档（Hook）从"可选通道"升级为"主通道"：因为主流 Agent 全都有 hook，且语义同构。项目现有的 HookRegistry 设计（YAML 驱动、capture_mode、param_rules）与业界实践完全吻合，落地优先级应大幅提升（当前它还停在未接线的半成品状态）。</p>
+<p class="a">(2) A 档（eBPF）从"备选"升级为"安全底线"：hook 可被配置禁用、可被恶意 Agent 关闭，eBPF 内核观测是唯一不可绕过的通道——混合监测的"校验"意义比此前评估的更大。</p>
+<p class="a">(3) MCP 通道定位为辅助：标准化程度最高、一次适配多家复用，但依赖 Agent 主动调用，只适合做补充上报。</p>
+<p class="a">(4) 需要补一个"适配器生命周期管理"：各框架 hook 格式演进快（Codex 三个月三次大改版），YAML 里的 version 字段应配合"过期检测 + 升级提示"机制。</p>
+
+<h2>1.4　发现的缺陷以及改进方向</h2>
+
+<h3>1.4.1　混合监测逻辑改进</h3>
+<p class="body">基于前几轮复盘暴露的短板（eBPF 归属缺失、strace 可感知、FIFO 有侵入），互补方案的核心思想是："内置上报定归属，外部观测做验证，上报引导过滤，双向交叉校验"。</p>
+<p class="noid" style="font-weight:bold;">关键改进点（按优先级）</p>
+<p class="body">(1) 补上 eBPF 的归属过滤（最高优先级，前几轮已确认是欠账）：在 observer.bpf.c 观测探针中增加 target_pid map 查询（模式照抄已有的 block_policy kprobe 逻辑），未命中即 return 0 不上报；数据源——由 monitor_daemon 在收到 FIFO 上报的第一条事件（含 pid 字段）时写入该 map（上报引导过滤）；备选维度——事件结构体已有 uid 字段，支持按 UID 过滤（同 UID 多进程场景）。</p>
+<p class="body">(2) 双源事件流的关联与交叉校验（核心增值能力）：关联键——pid + 时间窗。FIFO 工具级事件（"调用了 execute"）应与 eBPF syscall 级事件（"execve 发生"）在时间上对应。不一致场景 = 高危信号：Agent 上报"只读了文件"，但 syscall 显示有 O_WRONLY 写入 → 上报伪造；syscall 事件无对应工具调用 → 绕过上报的隐蔽行为（Agent 被攻击后自行执行命令）。这是"无感监测"与"可信监测"的结合点：解耦不意味着只信一头。</p>
+<p class="body">(3) 阻断能力借道 eBPF：FIFO/Hook 上报发现越界 → 研判层发 Command → 经 ebpf_command_sender 更新 block_policy map → kprobe 返回 EPERM；strace 环境则降级为"仅告警"（其能力边界已明确）。</p>
+<p class="body">(4) 降级链保持三级可用性：eBPF+FIFO（完整：观测+校验+阻断）→ strace+FIFO（观测+校验，无阻断，ptrace 可感知风险提示）→ 仅 FIFO（最小可用：有归属、无 syscall 佐证）。</p>
+<p class="body">改进方向不是"选一种"，而是把 FIFO/Hook 当作 Agent 的身份声明层、把 eBPF 当作事实校验层：用上报解决归属、用内核观测解决信任、用交叉校验把"Agent 声称的行为"与"系统记录的行为"对齐——不一致就是风险。补齐 eBPF 的 PID 过滤是打通这条互补链路的第一步，也是最关键的一步。</p>
+
+<h3>1.4.2　Agent 通用接口改进</h3>
+<p class="body">项目中已经有为通用接入设计的组件，但尚未接入主链路。</p>
+<p class="noid" style="font-weight:bold;">成为通用监测系统的关键改进（按优先级）</p>
+<p class="body">(1) 落地 HookRegistry：AgentBridge 的硬编码 _tool_map 改为从 registry 加载，让"加框架不改代码"真正成立。</p>
+<p class="body">(2) 建立 hook_configs/：先把 pydantic-deep.yaml 补上作为第一个样例（把现有 40+ 映射迁入 YAML）。</p>
+<p class="body">(3) 定义 FrameworkAdapter 协议：标准化"框架 Hook 事件 → RawEvent"的翻译层，每个新框架只写翻译逻辑。</p>
+<p class="body">(4) MCP 通道：实现 MCP Server 包装（PRD 里提过的 MCP 透明代理），让 Codex、Claude Code 等支持 MCP 的 Agent 走统一标准接口。</p>
+
+<h3>1.4.3　通用化降级措施</h3>
+<p class="body">该系统设计框架支持"不在 Linux 上运行的黑盒 Agent"，RawEvent 统一模型的用途——"浅层监测"在本架构中天然被支持，且能实现大部分功能。</p>
+
+<p class="caption">表 1-5　降级支持的通道矩阵</p>
+<table>
+<tr><th>场景</th><th>可用通道</th><th>监测深度</th></tr>
+<tr><td>Linux 开源 Agent</td><td>Hook + FIFO + eBPF</td><td>全深度（含阻断、交叉校验）</td></tr>
+<tr><td>Windows 黑盒 Agent（WorkBuddy）</td><td>仅 MCP 通道（+ 有限的 Windows 命名管道上报）</td><td>浅层</td></tr>
+<tr><td>Windows 可改造 Agent</td><td>FIFO 上报（命名管道）</td><td>中层</td></tr>
+<tr><td>Linux 黑盒 Agent</td><td>eBPF/strace 外部观测</td><td>深层（无工具语义但有 syscall 事实）</td></tr>
+</table>
+
+<p class="body">为了支持浅层监测，可以在不改变核心框架的前提下进行增量开发。Todo 清单（按实施顺序）：</p>
+<p class="body"><b>T1. 新增"MCP 申报接收器"接入侧机器：</b>新建 observer_sim/mcp_bridge/mcp_report_server.py（依赖官方 mcp Python SDK）；暴露 3 个申报工具供 Agent 调用——report_exec（申报命令执行）、report_file_op（申报文件读写）、report_net_conn（申报网络连接）；Agent 侧零改代码——WorkBuddy 等黑盒 Agent 只需在 mcp.json 里配置本 Server（WorkBuddy 有可视化 MCP 配置界面，已调研确认）。</p>
+<p class="body"><b>T2. 申报数据 → RawEvent 构造器（复用 RawEventFactory）：</b>统一三处现有 dict→RawEvent 映射，新建 RawEventFactory；工具名→事件类型映射复用 HookRegistry，新增 hook_configs/mcp.yaml 框架配置；申报数据的特殊语义处理——timestamp_ns = 接收时刻、pid = 申报值或 0、agent_framework = "mcp"（作为"申报事件"的标记，供下游识别浅层监测语义）。</p>
+<p class="body"><b>T3. 输出通道：实现 ICollector 接口（与六台现有采集器同构）：</b>新增 collector/mcp_report_collector.py，实现 ICollector 接口；内部消费 MCP 工具调用产生的申报事件，start() → Iterator[RawEvent]；这样 main.py / monitor_daemon / 录制回放全部零改动接入——这是最关键的设计决策。</p>
+<p class="body"><b>T4. Windows 实时链路：monitor_daemon 管道跨平台化（仅当需要 Windows 实时监测时）：</b>现状——monitor_daemon 用 Linux FIFO 语义（open(fifo_path) + /tmp 默认路径）；改动——读端改用 pipe_factory.py（已有 Windows 命名管道实现），Linux 保持 FIFO 不变；兜底方案——Windows 下退化为"文件轮询"或"进程内直连"（T3 的 ICollector 形态天然支持进程内直连，可暂不做管道）。</p>
+<p class="body"><b>T5. 配置扩展（config.yaml + mode 枚举）：</b>mode 新增 "mcp_report" 选项（platform_detect 工厂加一个分支，约 5 行）；config.yaml 新增 mcp_report 段——工具命名前缀、申报超时、是否要求 pid 字段等。</p>
+<p class="body"><b>T6. 浅层监测的语义保护（防止误用）：</b>报告中自动标注数据可信级别——agent_framework == "mcp" 的事件在报告头注明"申报数据，无内核佐证"；BlockingCoordinator 对 MCP 源事件的阻断降级为"伪阻断"（MCP 工具返回 allow=false + 告警），并明确日志提示"Agent 可选择不听"；这是把上一轮分析的"定位边界（合规留痕 vs 安全防护）"固化到代码里。</p>
+<p class="body"><b>T7. 测试与文档：</b>测试——MCP 工具调用 → RawEvent → 全链路管线 → 报告（可复用现有 test_hook_registry.py 的模式）；文档——docs/杂项文档/ 新增接入指南，附 WorkBuddy mcp.json 配置示例。</p>
+
+<!-- ==================== 第二章 数据处理 ==================== -->
+<h1>2　数据处理</h1>
+
+<p class="body">该项目的所有数据输入都已经统一为了一个统一的数据结构，整个数据处理部分可以理解为：对单一种类数据的处理 + 用户抉择的简单模型。</p>
+
+<h2>2.1　五组机器</h2>
+<p class="body">整个系统可以抽象为 5 组共 20+ 台"处理机器"。以下按数据流方向完整列举。</p>
+
+<h3>2.1.1　接入侧机器（把外界的东西变成 RawEvent）</h3>
+<p class="caption">表 2-1　第一组：接入侧机器</p>
+<table>
+<tr><th>机器</th><th>昵称</th><th>输入</th><th>处理</th><th>输出</th></tr>
+<tr><td>SimulationCollector</td><td>播放器</td><td>YAML 剧本（相对时序 delay_ms + 事件字段）</td><td>遍历 event_sequence，用 VirtualClock 把相对时间物化为绝对时间戳，现场构造事件</td><td>RawEvent 流</td></tr>
+<tr><td>DeepAgentCollector(simulation)</td><td>播放器·工具版</td><td>DeepAgent YAML（tool_calls 序列）</td><td>同上，但语义是"工具调用"，经工具映射表翻译</td><td>RawEvent 流</td></tr>
+<tr><td>AgentBridge</td><td>钩子捕手</td><td>pydantic-deep Hook 回调（tool_name + tool_input）</td><td>40+ 工具名→事件类型映射，参数提取，构造 RawEvent</td><td>队列 / FIFO 上的 RawEvent</td></tr>
+<tr><td>FileReplayCollector</td><td>磁带播放器</td><td>JSONL/CSV 录像带</td><td>逐行反序列化、校验、补默认值</td><td>RawEvent 流</td></tr>
+<tr><td>StraceCollector</td><td>旁听器</td><td>strace 子进程的文本行</td><td>正则解析 execve/openat/connect 三类行，过滤失败调用</td><td>RawEvent 流</td></tr>
+<tr><td>EbpfCollector</td><td>内核探针</td><td>perf ring buffer 二进制 event_t</td><td>ctypes 结构体映射、argv 缓冲区还原、字节序转换</td><td>RawEvent 流</td></tr>
+<tr><td>FifoWriter</td><td>报信员</td><td>RawEvent dict</td><td>json.dumps + 写管道（自动 flush）</td><td>FIFO 上的 JSON 行</td></tr>
+<tr><td>PipeReader / monitor 读环</td><td>接信员</td><td>FIFO 字节流</td><td>按行分割、from_json_line 解析</td><td>RawEvent 对象</td></tr>
+</table>
+
+<h3>2.1.2　第二组：透明中间件机器（不改变数据，只分身/计时）</h3>
+<p class="caption">表 2-2　第二组：透明中间件机器</p>
+<table>
+<tr><th>机器</th><th>昵称</th><th>输入</th><th>处理</th><th>输出</th></tr>
+<tr><td>EventRecorder</td><td>录像机</td><td>任意 RawEvent 流</td><td>原样写入 events.jsonl，同时原样透传（一条流两个分身）</td><td>JSONL 文件 + 原事件流</td></tr>
+<tr><td>SessionRecorder</td><td>场记</td><td>会话元信息 + 录像机</td><td>建 records/&lt;时间戳&gt;/ 目录、写 meta.yaml、编排录像机</td><td>会话目录</td></tr>
+<tr><td>VirtualClock</td><td>时钟</td><td>delay_ms 相对偏移</td><td>累加推进、生成绝对 timestamp_ns</td><td>时间戳</td></tr>
+<tr><td>monitor 旁路录制</td><td>直播录像机</td><td>FIFO 原始行</td><td>解析前原样落盘（保真度最高）</td><td>records/&lt;ts&gt;/events.jsonl</td></tr>
+</table>
+
+<h3>2.1.3　核心管线机器（observer_core 的 9 台，唯一主链路）</h3>
+<p class="caption">表 2-3　第三组：核心管线机器</p>
+<table>
+<tr><th>序</th><th>机器</th><th>输入</th><th>处理</th><th>输出</th></tr>
+<tr><td>1</td><td>EventNormalizer 归一化器</td><td>RawEvent</td><td>关联 AgentContext、登记进程树节点、exec 拼接 command_string</td><td>NormalizedEvent</td></tr>
+<tr><td>2</td><td>BaselineChecker 基线采集器</td><td>NormalizedEvent（仅 normal Agent）</td><td>累计命令频率、路径前缀等统计模型</td><td>基线模型 dict</td></tr>
+<tr><td>3</td><td>RuleEngine 规则匹配器</td><td>NormalizedEvent</td><td>按 event_type 分桶，子串/精确/正则/glob 四种模式匹配</td><td>MatchResult（命中规则集）</td></tr>
+<tr><td>4</td><td>RiskScorer 评分器</td><td>(事件, 匹配结果, 上下文, 基线)</td><td>多维度加权评分（含基线偏离度）</td><td>RiskAssessment（分数+等级）</td></tr>
+<tr><td>5</td><td>DecisionEngine 决策器</td><td>RiskAssessment</td><td>阈值比较（critical 0.9 / high 0.6）</td><td>Decision（ALLOW/ALERT/BLOCK/TERMINATE）</td></tr>
+<tr><td>6</td><td>BlockingCoordinator 阻断执行器</td><td>(事件, Decision)</td><td>按 Tier1/2/3 分发，生成并发送 Command</td><td>BlockingResult</td></tr>
+<tr><td>7</td><td>ICommandSender 指令发送器</td><td>Command</td><td>Mock 版：记录归档；eBPF 版：更新内核 block_policy map</td><td>执行回执</td></tr>
+<tr><td>8</td><td>BehaviorGraph 图谱记录器</td><td>(事件, 评分, 决策, 阻断结果)</td><td>建节点/边，形成 Agent 行为关系图</td><td>行为图谱</td></tr>
+<tr><td>9</td><td>AuditLogger 审计员</td><td>上述全部上下文 + 耗时</td><td>写结构化审计 JSONL（合规证据链）</td><td>审计日志文件</td></tr>
+</table>
+
+<h3>2.1.4　产出侧机器（把处理结果变成人看的东西）</h3>
+<p class="caption">表 2-4　第四组：产出侧机器</p>
+<table>
+<tr><th>机器</th><th>昵称</th><th>输入</th><th>处理</th><th>输出</th></tr>
+<tr><td>ReportExporter</td><td>报告撰写器</td><td>审计日志 + 行为图谱 + 统计</td><td>聚合、渲染（含进度条、分布图字符画）</td><td>Markdown 报告</td></tr>
+<tr><td>ChainReportBuilder</td><td>链式分析师</td><td>多事件序列</td><td>识别跨事件攻击链（如"下载→执行"）</td><td>链式攻击报告</td></tr>
+<tr><td>ReportCacheManager</td><td>去重员</td><td>报告片段</td><td>指纹去重、会话片段合并</td><td>去重后的报告</td></tr>
+<tr><td>ReplayEngine</td><td>回放导演</td><td>会话目录</td><td>组织"加载→播放→管线→报告"全流程</td><td>回放分析结果</td></tr>
+</table>
+
+<h3>2.1.5　编排与展示机器</h3>
+<p class="caption">表 2-5　第五组：编排与展示机器</p>
+<table>
+<tr><th>机器</th><th>昵称</th><th>输入</th><th>处理</th><th>输出</th></tr>
+<tr><td>MonitorDaemon</td><td>值班室</td><td>FIFO 事件</td><td>组织第三组 9 台机器的全链路，会话语义（断开=会话结束），信号处理</td><td>实时研判 + 报告 + 统计</td></tr>
+<tr><td>app.py</td><td>前台</td><td>HTTP 请求</td><td>编排场景运行、SSE 推送、报告树管理</td><td>Web 页面</td></tr>
+</table>
+
+<h2>2.2　机器间的关系</h2>
+
+<p class="figcaption">图 2-1　五组机器数据流关系</p>
+<table class="diagram">
+<tr><td class="layer">第一组 接入：六路 → RawEvent</td></tr>
+<tr class="arrow"><td>↓（可插入第二组 录像机/场记 透明分身）</td></tr>
+<tr><td class="layer">第三组 核心管线 9 台（串行固定）</td></tr>
+<tr><td class="box">归一化器 → 基线 → 匹配器 → 评分器 → 决策器 → 阻断执行 → 图谱 → 审计</td></tr>
+<tr class="arrow"><td>↓</td></tr>
+<tr><td class="layer">第四组 产出：报告撰写 / 链式分析 / 去重</td></tr>
+<tr class="arrow"><td>↓</td></tr>
+<tr><td class="layer">第五组 编排：MonitorDaemon（实时）/ main.py（离线）/ app.py（Web）——同一组机器，不同导演</td></tr>
+</table>
+
+<h2>2.3　发现的缺陷以及改进方向</h2>
+
+<h3>2.3.1　处理机器的合并</h3>
+<p class="noid" style="font-weight:bold;">必要性评估：中等偏低</p>
+<p class="body">(1) 机器数量多 ≠ 复杂度高。系统的真实复杂度来源是 6 种采集模式（业务需求）和三级阻断语义（安全需求），而不是机器数量。合并机器不减少业务复杂度——所以"为精简而合并"没有必要。</p>
+<p class="body">(2) 重复代码的实际体量：B/C/D 三处重复各约 30-80 行，总计 200 行左右，在一个 2.6 万行的项目中占比 &lt;1%。不改也能运行，改了是工程卫生问题而非正确性问题。</p>
+<p class="body">(3) 教学项目的特殊性：每台机器独立成文件、命名直观（"录像机""播放器""审计员"），本身就是教学资产——白盒可读性是设计目标之一。激进合并（比如把五组合成两三个大模块）会损害这一目标。</p>
+<p class="body">有共性、有合并空间，但合并的正确姿势是"抽骨架"（基类/编排器）而非"减机器"。必要性中等：建议做 B 的基类抽取和 D 的 Pipeline 编排器两处（预防链路分叉风险是真正的理由），C 可做可不做；核心 9 台机器和 6 个采集器的独立性应当保持——它们的存在是架构意图，不是冗余。</p>
+<p class="body">如果要做，优先级排序：D（Pipeline 编排器）&gt; B（QueuedCollectorBase）&gt; C（RawEventFactory）——因为 D 防的是"链路分叉"这一真实风险，B 防的是"三处同改"，C 只是消除小重复。</p>
+
+<h3>2.3.2　长期日志维护方案</h3>
+<p class="noid" style="font-weight:bold;">高必要性，生产落地的前提</p>
+<p class="body">该改进使系统能够实现对 Agent 的长期维护，并识别"分散式串谋攻击"。依赖关系：T1/T2/T3 可并行（地基）→ T4 完成后 T5（片段扩展）→ T6/T7/T8（rollup 与挖掘，依赖 T4/T5）→ T9/T10/T11（与阶段二可并行，最终合并调参）→ T12（收尾）。核心设计红线（贯穿所有 todo 的约束）：异常明细全保留、指纹边全透传、L0 永不删除——这是"压缩计算量"与"保住攻击链重建能力"的平衡点，任何一项实现都不能违反。</p>
+
+<p class="noid" style="font-weight:bold;">阶段一：地基加固——L0 与数据指纹（先决条件）</p>
+<p class="body"><b>T1. 新增数据指纹追踪模块：</b>目标——实现文件内容指纹（哈希）+ 敏感标签的污点传播（taint），让跨 Agent、跨时间的攻击链靠数据血缘而非时间窗口维系。改动——新建 observer_sim/observer_core/monitoring/fingerprint_tracker.py；在归一化管线 file_open(read) 事件上打指纹、file_open(write) 继承上游标签、net_conn 携带标签检查。验收——m05 场景（4 小时间隔跨 Agent 外传）能被指纹关联识别，输出完整攻击链。</p>
+<p class="body"><b>T2. BehaviorGraph 时间分桶索引（消除 O(n²)）：</b>目标——把 _detect_cross_agent_edges 的全量遍历改为按时间戳分桶（1 秒/桶），只查相邻 2~3 个桶，并支持无时间限制的指纹边。改动——observer_sim/observer_core/audit/behavior_graph.py。验收——百万节点规模下每条事件的 cross_agent 检测耗时从 O(n) 降为 O(窗口)，新增 fingerprint 边类型。</p>
+<p class="body"><b>T3. L0 原始流水保留策略：</b>目标——AuditLogger 按天分文件 + 保留期配置（默认 90 天），确立"L0 是事实来源、永不删除"的原则。改动——observer_sim/observer_core/audit/audit_logger.py、config.yaml（新增 retention_days）。验收——L0 文件按天滚动，保留期内任意 entry_id 可下钻还原原始事件。</p>
+
+<p class="noid" style="font-weight:bold;">阶段二：分层滚动摘要金字塔（核心）</p>
+<p class="body"><b>T4. 修复 ReportCacheManager 的 GC 缺陷：</b>目标——片段超过 60 段上限时不再直接删除，而是先 rollup 为 L2 小时日志再清理。改动——observer_sim/observer_core/audit/report_cache.py 的 _gc_segments。验收——旧片段删除前必有对应 L2 日志存在，数据无丢失。</p>
+<p class="body"><b>T5. L1 片段格式扩展（不对称概括）：</b>目标——片段在现有 stats + entry_ids 基础上新增"异常明细区"（ALERT/BLOCK/高分事件的完整字段+决策链）和"指纹边区"（全量透传，不聚合）。改动——report_cache.py 的 _generate_segment、merge_segments 透传新区。验收——异常明细与指纹边从 L1 一路透传到 L3，任一时刻不丢失。</p>
+<p class="body"><b>T6. L2 小时日志生成器：</b>目标——每小时以 60 个 L1 片段为输入做小时级审计——分钟级序列模式检测、违规累计与升级、指纹关联分析，产出 L2 小时日志。改动——新建 observer_sim/observer_core/audit/rollup_engine.py（L1→L2 rollup）。验收——L2 日志能重建小时级攻击链；计算量 = O(60 片段) 而非 O(60N 事件)。</p>
+<p class="body"><b>T7. L3 天级审计引擎：</b>目标——每天以 24 个 L2 日志为输入做天级审计——基线漂移检测（CUSUM）、跨 Agent 串谋全图分析，产出天级深度报告。改动——rollup_engine.py（L2→L3 rollup）。验收——长期分散蓄谋攻击（小时~天级间隔）在天级审计中被检出。</p>
+<p class="body"><b>T8. 实现 evolution 预留接口（模式挖掘闭环）：</b>目标——实现 IPatternMiner（PrefixSpan/马尔可夫链挖掘攻击序列模式）+ IStrategyGenerator（挖出的模式生成 YAML 规则回喂 RuleEngine），挂接在 L3 天级审计执行。改动——新建 observer_sim/evolution/pattern_miner.py、strategy_generator.py；evolution/interfaces.py 不变。验收——m05 类攻击被挖掘为规则后，下次实时运行可被 RuleEngine 直接拦截（闭环验证）。</p>
+
+<p class="noid" style="font-weight:bold;">阶段三：窗口分层与慢速检测（准确性）</p>
+<p class="body"><b>T9. 分层窗口参数化：</b>目标——把单一窗口（10 条/60 秒）拆为热窗口（秒~分钟，序列检测）、温窗口（15~30 分钟，聚合特征）、冷窗口（天级，基线漂移），全部进 rules/tuning.yaml 热加载。改动——event_normalizer.py、tuning.yaml（新增 windows 配置节）。验收——三类攻击（突发/链式/分散）各有匹配的检测窗口，参数改后无需重启生效。</p>
+<p class="body"><b>T10. 时间衰减累加器（慢速违规积分）：</b>目标——新增小时级半衰期的风险积分累加器，捕获"每步都低于阈值但持续累积"的慢速攻击；与现有 5 分钟快窗（AgentViolationTracker）构成双速计数。改动——新建 observer_sim/observer_core/judgment/decay_accumulator.py，接入 RiskScorer 输出。验收——轻微可疑行为（单步 &lt;0.1 分）持续累积后能触发关注告警，正常行为积分自然衰减归零。</p>
+<p class="body"><b>T11. 场景基准集参数标定：</b>目标——用现有 40+ 场景（normal/anomalous/boundary/multi_agent/extreme）做参数扫描基准——对攻击场景测检测延迟、对 normal 场景测误报率，画权衡曲线定参数。改动——新增 observer_sim/tests/benchmark_window_tuning.py（或 scripts 目录）。验收——产出一份参数标定报告（各窗口大小 + 延迟/误报数据），作为 T9 参数默认值依据。</p>
+
+<p class="noid" style="font-weight:bold;">阶段四：报告输出联动（收尾）</p>
+<p class="body"><b>T12. 三级报告输出体系：</b>目标——L1 分钟简报（自动片段）、L2 小时摘要（export_from_segments 已有雏形）、L3 天级深度报告（含攻击链重建 + 挖掘出的新模式 + 处置建议）三级联动输出。改动——report_exporter.py 扩展天级报告模板；monitor_daemon.py 挂接 rollup 调度。验收——三种报告按各自周期自动生成，天级报告可从聚合异常下钻到 L0 原始事件。</p>
+
+<h3>2.3.3　多层安全机制升级【大方向一】</h3>
+<p class="body">方向定位：实时环的能力扩展。在现有"规则引擎 + 四维评分"基础上，新增覆盖四个攻击复杂性维度（多步、跨主体、跨时间、隐蔽）的检测层。贯穿原则：每层保持确定性、单事件 O(1)~O(窗口)、毫秒级、可复现审计，不引入 LLM。</p>
+<p class="body"><b>T1. 稀有度评分层（覆盖"未知单步攻击"）：</b>把基线"见没见过"的二值判断升级为连续稀有度评分（TF-IDF 式频率分布），信号并入 D2 基线分。攻击对策：伪装成正常命令的低频高危行为组合。</p>
+<p class="body"><b>T2. 序列状态机层（覆盖"多步链式攻击"）：</b>新增轻量状态机模块，只跟踪高危状态转换（如 sudo → 写 authorized_keys → ssh 登录），不做规则化组合匹配。攻击对策：m04 类权限提升链、多步攻击链。</p>
+<p class="body"><b>T3. 数据血缘层（覆盖"跨主体 + 跨时间攻击"，核心）：</b>实现文件内容指纹 + 敏感标签的污点传播（A 读敏感 → 写中转 → B 读中转 → 外联），在 BehaviorGraph 增加无时间限制的 fingerprint 边。攻击对策：m05 类分散蓄谋、m02 类跨 Agent 串谋。</p>
+<p class="body"><b>T4. 时序漂移层（覆盖"慢速累积攻击"）：</b>新增小时级半衰期风险积分累加器 + CUSUM 基线漂移检测，与现有 5 分钟违规快窗构成双速计数。攻击对策：每步低于阈值但持续累积的慢攻击。</p>
+<p class="body"><b>T5. 分层窗口参数化（支撑 T1~T4 的时间基础）：</b>把单窗口（10 条/60 秒）拆为热/温/冷三层窗口，全部进 tuning.yaml 热加载；用 40+ 场景基准集扫描标定参数。</p>
+<p class="body"><b>T6. 图谱性能治理（消除实时路径的 O(n²)）：</b>BehaviorGraph 时间分桶索引替代全量遍历、节点落盘与内存热区间、基线 set 上限（LRU）、进程树 GC。意义：多层机制叠加后，实时路径仍保持可扩展。</p>
+<p class="body"><b>T7. 交叉验证闭环（覆盖"主动隐蔽"）：</b>补上 eBPF 观测探针的 PID 过滤，实现"上报引导过滤 + 双源比对 + 不一致告警"的声明-验证-阻断闭环。攻击对策：黑盒 Agent 不上报、清除痕迹的隐蔽行为。</p>
+<p class="noid" style="font-weight:bold;">依赖与优先级：</b>T5（窗口基础）+ T6（性能基础）→ 先行，其余层的承载地基；T3（数据血缘）→ 优先级最高，弥补分散蓄谋/串谋的最大盲区；T1/T2/T4 → 可并行推进；T7 → 依赖混合监测架构现状，最后收口。</p>
+
+<h3>2.3.4　Agent 辅助自进化【大方向二】</h3>
+<p class="body">方向定位：离线进化环的实现。把"从历史行为中自动学习新的威胁定义"落地为一条流水线：确定性统计挖掘先筛候选 → 内置 agent 做语义解释与规则生成 → 产出回喂实时层。贯穿原则：agent 永不直接处置，只产出规则建议与分析报告；实时环确定性不受 agent 可用性影响。</p>
+<p class="body"><b>T8. ITraceStore 落地（追踪数据存储，地基）：</b>实现 ITraceStore 接口——将每个事件的处理链路（TraceRecord）持久化，支持按 agent/事件类型/风险等级/时间范围查询。意义：为挖掘和回测提供统一数据源；实现可选 SQLite（起步）或时序库（规模化）。</p>
+<p class="body"><b>T9. L1/L2/L3 分层滚动摘要（agent 的输入基础，地基）：</b>落地三级日志金字塔——L1 分钟片段（含异常明细+指纹边）→ L2 小时日志 → L3 天级聚合；修复 ReportCacheManager GC 缺陷（rollup 后再删），L0 原始流水按保留期留存。意义：把全量数据压缩到 agent 可消化的规模。</p>
+<p class="body"><b>T10. IPatternMiner 实现（统计挖掘先行）：</b>实现确定性模式挖掘——序列模式挖掘（PrefixSpan/马尔可夫链）+ 频率异常检测，从 L3 数据产出候选异常模式列表。原则：统计先筛、agent 再判。</p>
+<p class="body"><b>T11. 内置分析 agent（LLM 语义层）：</b>实现离线分析 agent，输入 = 候选模式 + L3 聚合数据 + 行为图谱快照，输出三类：①候选模式的语义解释 ②YAML 规则草稿 ③攻击链解读报告。实现基础：复用项目已有 LLM 生态（AgentBridge、deep-agents-demo）。能力边界：只读分析 + 产出建议，无任何处置接口。</p>
+<p class="body"><b>T12. IStrategyGenerator 的 agent 实现（规则生成与格式化）：</b>把 agent 生成的规则草稿结构化为 RuleEngine 可加载的 YAML（校验 rule_id/priority/action/match_mode/patterns 等字段合法性），实现 export_to_yaml。衔接：生成物进入方向三的验证闸门，而非直接上线。</p>
+<p class="body"><b>T13. 回测验证器（进化链的必要环节，衔接方向三）：</b>在历史数据上回测候选规则，计算 false_positive_rate / false_negative_rate（ValidationResult 字段已预留）；超阈值即拒绝上线。意义：这是"agent 辅助自进化"与"验证闸门"两个方向的交汇点，也是幻觉兜底的第一道防线。</p>
+<p class="body"><b>T14. 进化调度器（编排收口）：</b>把 L3 天级审计 → 挖掘 → agent 分析 → 规则生成 → 回测 → 人工审核队列编排为每日自动流水线。验收：每天自动跑一轮完整进化流水线，产出"候选规则清单 + 天级深度报告"。</p>
+<p class="noid" style="font-weight:bold;">依赖与优先级：</b>T8 + T9（数据地基）→ 并行先行；T10（统计层）→ 依赖 T8/T9；T11/T12（agent 层）→ 依赖 T10；T13（回测）→ 与 T11/T12 衔接，属方向三；T14（调度）→ 最后收口。</p>
+
+<h3>2.3.5　验证闸门与人工审核【大方向三】</h3>
+<p class="body">方向定位：双环之间唯一通道的安全阀。所有离线环产出（agent 生成的规则、挖掘出的模式）在进入实时环之前，必须经过"自动回测闸门 + 人工审核"两道关卡。贯穿原则：离线产出未经闸门绝不可能影响实时判定；agent 永不直接处置。这是整个自进化体系"可信"的根本保障。</p>
+<p class="body"><b>T15. 回测执行器（验证闸门核心）：</b>实现候选规则的自动回测——复用项目现成的场景回放基础设施（SimulationCollector 回放场景库）：用 normal 场景测误报率、anomalous/multi_agent 场景测漏报率，计算 ValidationResult 已预留的 false_positive_rate / false_negative_rate / tested_traces。意义：40+ 场景库天然构成回测基准集，无需另建测试数据。</p>
+<p class="body"><b>T16. 阈值闸门与分级处理（幻觉第一道兜底）：</b>定义上线门槛（如误报率 ≤ X% 且漏报率 ≤ Y%，阈值进 tuning.yaml 可配）；回测结果三档分流——通过 → 进入审核队列；临界 → 标红人工复核；拒绝 → 归档留痕。意义：agent 产生幻觉时，坏规则在此被确定性拦截。</p>
+<p class="body"><b>T17. 规则版本管理与热加载上线（含回滚）：</b>规则库版本化——default_policy.yaml 已有 version 字段与 change_summary 变更记录机制，扩展为：审核通过的规则合并入规则库、版本号递增、热加载生效；新增一键回滚——新规则上线后若线上误报率异常上升，回退上一版本。意义：让"上线"可逆，人工审核的决策压力因此可控。</p>
+<p class="body"><b>T18. 人工审核工作台（人是最终责任人）：</b>审核队列接口/界面，每条候选规则展示三件套——规则草稿 + 回测报告（两项比率+命中样例）+ 攻击链证据（可下钻到 L0 原始事件）；审核状态机 pending → approved / rejected，所有审核决策留痕（谁、何时、依据什么批准）。意义：人工审核不是橡皮图章，而是依据证据的决策。</p>
+<p class="body"><b>T19. 双环安全阀的架构级硬约束（贯穿所有环节）：</b>架构层面封死旁路——①agent 模块只读分析、无任何处置接口；②离线环产出物的唯一出口是 T16+T18 组成的闸门；③实时环代码中不存在任何来自离线产物的直接写入路径（用代码评审+测试固化）。验收：构造"恶意/幻觉规则绕过"测试用例，全部被闸门拦截。</p>
+<p class="noid" style="font-weight:bold;">依赖与优先级：</b>T15（回测）→ 基础，先于一切；T16（阈值分流）→ 依赖 T15；T17（版本+回滚）→ 与 T15 可并行；T18（审核工作台）→ 依赖 T15/T16；T19（硬约束）→ 与 T15~T18 并行设计，最后用测试收口。</p>
+
+<!-- ==================== 第三章 用户交互与输出 ==================== -->
+<h1>3　用户交互与输出</h1>
+
+<h2>3.1　用户交互界面</h2>
+<p class="body">该项目的用户交互有 Web 和 CLI 两种方式。Web 和 CLI 功能基本重合，Web 用作系统正常使用和演示时的界面，CLI 用作系统维护测试时的交互接口。</p>
+
+<h3>3.1.1　交互的功能</h3>
+<p class="body">现状：定位理念（Web 演示为主、CLI 维护测试为辅）是标准的双层入口设计，本身正确。但"功能基本重合"不准确——实际上 CLI 是 Web 功能的一个子集：</p>
+
+<p class="caption">表 3-1　Web 与 CLI 交互功能对照</p>
+<table>
+<tr><th>功能</th><th>Web</th><th>CLI</th></tr>
+<tr><td>场景运行流水线</td><td>✅（单场景/全量/SSE 流）</td><td>✅（--scenario/--category）</td></tr>
+<tr><td>采集模式切换（simulation/strace/ebpf/auto）</td><td>❌ 无此接口</td><td>✅ --mode（唯一独有）</td></tr>
+<tr><td>实时监测守护进程</td><td>✅ 6 视图之一</td><td>❌</td></tr>
+<tr><td>录制与回放</td><td>✅ 双模式 Tab</td><td>❌</td></tr>
+<tr><td>Agent 模拟测试</td><td>✅</td><td>❌</td></tr>
+<tr><td>文件管理/报告删除</td><td>✅</td><td>❌</td></tr>
+<tr><td>单元测试运行</td><td>✅ /api/tests/run</td><td>❌</td></tr>
+</table>
+
+<h3>3.1.2　数据流</h3>
+<p class="noid" style="font-weight:bold;">第 1 层：实时过程输出（UI 内）</p>
+<p class="body">事件日志流（SSE 逐条推送，含状态着色）；运行进度与统计（allow/alert/block 计数）；场景分析面板——每个场景的四要素：analysis_panels.py 中 37 个场景各有 (目的, 风险发现, 归因分析, 处置策略)，如 a07 反弹 Shell 场景：目的"检测并硬中断反弹 Shell"→ 风险发现"命中 /dev/tcp 模式，评分&gt;0.9 CRITICAL"→ 归因"经典反弹 Shell 模式 + 外联高端口"→ 处置"Tier3 硬中断终止进程树"；报告预览（运行结束后场景报告内嵌显示）。</p>
+<p class="noid" style="font-weight:bold;">第 2 层：文件产出（output/ 目录，时间戳分类归档）</p>
+<p class="body">流式审计 JSONL、Markdown 场景报告、行为图谱 JSON、因果链报告、基线快照、阻断证据文件、全量运行汇总报告。</p>
+<p class="noid" style="font-weight:bold;">第 3 层：文件管理视图</p>
+<p class="body">文件树浏览 + 内容查看 + 删除，让输出产物本身成为可交互对象。</p>
+
+<h3>3.1.3　设计目的</h3>
+<p class="body">交互设计遵循"总览 → 选择 → 运行 → 观察 → 理解 → 沉淀"的六步下钻路径；输出设计遵循"过程可见（SSE 流）→ 因果可懂（分析面板）→ 证据可查（四形态报告）→ 产物可管（文件管理）"的四层递进。全部功能与输出最终收敛到一个目的：这个系统本身是教学内容——输出让它演示"怎么监测"，交互让它解释"为什么这么判"。</p>
+
+<h2>3.2　发现的缺陷以及改进方向</h2>
+
+<h3>3.2.1　入口统一与输出整理改进方案（测试系统）【U 系列】</h3>
+<p class="noid" style="font-weight:bold;">方案核心：能力层统一 + 输出层抽象（不新增功能，只整理输出）</p>
+
+<p class="caption">表 3-2　入口统一方案对比</p>
+<table>
+<tr><th>现状</th><th>目标</th></tr>
+<tr>
+  <td>app.py（编排+HTTP+输出）<br>main.py（编排+CLI 输出）<br>monitor_daemon.py（编排+FIFO）<br>demo.py（编排+演示输出）</td>
+  <td>→ PipelineRunner（共享编排，唯一事实来源）<br>　├─ TextSink（CLI 输出器）<br>　├─ SSESink（Web 输出器）<br>　└─ 薄入口：observer run/serve/daemon/test</td>
+</tr>
+</table>
+
+<p class="noid" style="font-weight:bold;">合并基准（按"真实&gt;模拟、实时&gt;演示"选取最强实现）</p>
+<p class="body">事件处理核心——取 StreamScenarioRunner（step_data 含四维风险分解、分析面板、报告文件清单——信息最全）；真实监测能力——取 monitor_daemon 的 generate_report_dedup 指纹去重 + ReportCache（真实监测需求）；真实采集能力——取 main.py 的 --mode 四采集器切换（真实&gt;模拟）；报告生成——三者同构，取最完整的 StreamScenarioRunner 版本。</p>
+<p class="noid" style="font-weight:bold;">Todo 项</p>
+<p class="body"><b>U1. 抽取 PipelineRunner（共享编排核心）：</b>新建 observer_sim/pipeline_runner.py——组件初始化 + process_event()（9 步管线，返回 step_data）+ 报告生成（含 dedup 参数）；以 StreamScenarioRunner 为基准，吸收 main.py 的采集器参数化、monitor_daemon 的去重。验收：删除三处重复编排，三个入口全部调用同一实例。</p>
+<p class="body"><b>U2. 统一参数（消除漂移）：</b>冷启动/窗口/权重等一律读 tuning.yaml 单一来源；基线收集条件统一（方案：仅 normal 前缀 agent 收集，攻击场景不被污染）；采集器选择下沉到 PipelineRunner。验收：同一场景在 Web 与 CLI 跑出的评分与判定逐事件一致。</p>
+<p class="body"><b>U3. 输出层抽象（IOutputSink，功能同构的关键）：</b>定义 on_step(step_data) / on_done(result) / on_error 三接口；TextSink（CLI）——进度行 + 四要素分析面板文本（信息同构，仅无图形）+ 汇总；SSESink（Web）——现有 SSE 事件不变。验收：CLI 与 Web 信息量同构，仅呈现形式不同。</p>
+<p class="body"><b>U4. 入口统一为子命令（薄壳）：</b>observer run/serve/daemon 三个子命令替代 main.py/app.py/monitor_daemon.py 的入口逻辑；demo.py 并入 run，删除 demo.py。验收：6 个入口收敛为 1 个可执行 + 3 个子命令。</p>
+<p class="body"><b>U5. 测试入口统一：</b>observer test api|sse|unit 子命令——api/sse 冒烟测试自动拉起服务 → 测试 → 关闭；unit 转调 pytest。验收：单命令完成全量回归（CI 可直接调用）。</p>
+<p class="body"><b>U6. 旧注释与矛盾清理：</b>修正 app.py 过时注释、violation_tracker docstring 阈值（3/2 → 5/3）等已发现的注释-代码矛盾。验收：全局注释与实际代码一致。</p>
+<p class="noid" style="font-weight:bold;">生产系统（长期规划，仅提纲）</p>
+<p class="body">在上述统一基础上增量挂载：observer run --profile production——TextSink 输出摘要化、关闭教学组件、挂接生产化能力（分层日志 rollup、GC、L0 保留期）。依赖顺序：U1 → U2 → U3 → U4/U5 → U6 收尾。整个方案不触碰 observer_core 检测逻辑，纯输出层整理——Web 与 CLI 判定结果逐事件一致即为方案成功的唯一硬标准。</p>
+
+<h3>3.2.2　功能审计与统一入口编入方案（简要概述）【U 系列】</h3>
+<p class="noid" style="font-weight:bold;">统一 CLI 入口的完整子命令树</p>
+<p class="body">observer serve（Web 服务，原 app.py）；observer run（场景流水线，原 main.py）；observer demo（交互式演示，原 demo.py，彩色 TextSink）；observer daemon（实时监测守护进程，原 monitor_daemon.py）；observer record / replay（录制/回放）；observer agent-sim（Agent 模拟进程）；observer files tree|view|delete|delete-category（文件管理，新增）；observer reports list|view|delete（报告管理，新增）；observer samples list|workspace|task|file（真实样例浏览，新增）；observer env-check（环境预检）；observer gen-scenarios（场景生成）；observer test api|sse|unit（测试统一）。</p>
+<p class="noid" style="font-weight:bold;">Todo 项（编号接续 U 系列）</p>
+<p class="body"><b>U7. 文件与报告管理下沉为共享模块（用户点名项）：</b>把 app.py 的 _get_files_tree / _serve_file_view / _handle_files_delete / _handle_files_delete_category / _get_report_list / _serve_report_file / _handle_reports_delete 逻辑抽取为 observer_sim/file_manager.py 共享模块（含路径安全校验）；Web 端改为调用该模块；CLI 新增 observer files/reports 子命令，功能与 Web 完全同构。验收：Web 文件管理行为零变化，CLI 可完成 Web 能做的一切文件/报告操作。</p>
+<p class="body"><b>U8. 样例浏览与演示能力收敛：</b>Web 的 demo/workspace-tree / task-instruction / scenario-samples / file-content 逻辑抽取为 samples_browser.py，CLI 新增 observer samples 子命令；demo.py 的交互式菜单 + 彩色逐事件输出并入 observer demo；demo.py 删除。验收：observer demo 完整复现 demo.py 的全部交互能力。</p>
+<p class="body"><b>U9. 隐藏功能纳入 + 不对称补齐：</b>check_env.py → observer env-check；generate_scenarios.py → observer gen-scenarios；补齐 Web 侧缺失的 CLI 独有能力——observer run --mode 采集器切换同步暴露为 Web 场景运行的采集模式选择参数；n01 基线快照保存并入 PipelineRunner。验收：全功能清单中每个功能至少在一个统一入口可访问。</p>
+<p class="body"><b>U10. 录制-回放验证化改造：</b>录制格式扩展基线快照 + 回放确定性参数 + 判定快照比对器，作为方向三 T15 回测执行器的数据源基础。</p>
+<p class="noid" style="font-weight:bold;">与既有方案的衔接</p>
+<p class="body">本方案是 U1~U6 的功能覆盖清单补充：U7/U8 提供"哪些功能必须编入"的完整清单，U9 保证"没有功能被入口遗忘"。执行顺序不变：U1 能力层统一在前（文件管理模块的抽取不依赖它，可与 U1 并行），U7~U9 在 U4 入口统一时一并挂载。验收总标准：审计表逐项核对——每个功能在 observer 单一入口下可达，Web 与 CLI 信息同构。</p>
+
+<!-- ==================== 第四章 功能需求对齐 ==================== -->
+<h1>4　功能需求对齐</h1>
+
+<h2>4.1　五大核心能力 × 实现状态对照（主对齐线）</h2>
+
+<p class="caption">表 4-1　五大核心能力实现状态对照</p>
+<table>
+<tr><th>产品核心能力</th><th>需求含义</th><th>实现状态</th><th>覆盖度</th></tr>
+<tr><td>1. 无障碍接入</td><td>0 业务代码修改、跨所有 Agent 框架</td><td>C++ 探针（外部观测）+ FIFO/Hook（内置上报）+ 4 种采集器统一 RawEvent</td><td>✅ 完全</td></tr>
+<tr><td>2. 无感知 Runtime 观测</td><td>OS 层捕获副作用：命令/文件/网络</td><td>三类探针 + 归一化 + 进程树；Windows 模拟探针 + Linux eBPF/strace 真实采集</td><td>✅ 完全</td></tr>
+<tr><td>3. 实时主动阻断</td><td>评分→毫秒研判→执行前拦截、分级处置</td><td>四维评分 → 研判矩阵 → 三级梯度阻断（模拟：命名管道；生产：eBPF 返回 EPERM）</td><td>✅ 完全</td></tr>
+<tr><td>4. 全链路审计追责</td><td>行为图谱、时间线、风险定位、完整证据链</td><td>流式 JSONL + 行为图谱 + 链式因果报告 + MD 报告四形态并存</td><td>✅ 完全</td></tr>
+<tr><td>5. 本地自进化防御</td><td>Trace 沉淀→数据挖掘→策略生成→上线验证</td><td>ITraceStore/IPatternMiner/IStrategyGenerator 接口预留未实现</td><td>⚠️ 接口预留</td></tr>
+</table>
+
+<p class="body"><b>自进化是唯一明确未落地的核心能力</b>——PRD 自己标注"⚠️ 接口预留"，属于有意为之的边界。这正好对应前几轮"双环演进"方向二的 todo（T8~T14），说明需求对齐分析与我们之前的改进方向是互相印证的。</p>
+
+<h2>4.2　五个痛点需求 × 解决方案对照</h2>
+
+<p class="caption">表 4-2　痛点需求与解决方案对照</p>
+<table>
+<tr><th>痛点（需求）</th><th>承诺的解决方案</th><th>实现情况</th></tr>
+<tr><td>Agent 做了什么？无法感知</td><td>全链路行为采集</td><td>✅ 每条命令/文件/网络事件完整记录</td></tr>
+<tr><td>哪些行为危险？难以判断</td><td>智能四维风险评估</td><td>✅ 已实现（但复杂攻击盲区是已分析的能力短板）</td></tr>
+<tr><td>发现危险如何阻止？</td><td>三级梯度阻断</td><td>✅ 递进式防护 + 5 分钟窗口自动升级</td></tr>
+<tr><td>事后如何追溯定责？</td><td>全链路审计 + 因果链</td><td>✅ 每步决策有据可查、可生成可读报告</td></tr>
+<tr><td>多 Agent 串谋怎么办？</td><td>跨 Agent 关联检测</td><td>⚠️ 部分（1 秒窗口检测，m05 时间分散串谋是盲区）</td></tr>
+</table>
+
+<h2>4.3　四大应用场景 × 对齐情况</h2>
+
+<p class="caption">表 4-3　应用场景对齐情况</p>
+<table>
+<tr><th>应用场景（需求）</th><th>实现载体</th><th>覆盖度</th></tr>
+<tr><td>AI Coding Agent 研发防护</td><td>n01~n08 开发场景 + deep-agents-demo 真实 Agent 集成</td><td>✅ 完全</td></tr>
+<tr><td>业务自动化 Agent 权限管控</td><td>da04"Q3 商业报表分析"业务样例（94% 准确率验证）</td><td>⚠️ 演示级（生产权限管控属未来生产模式）</td></tr>
+<tr><td>Multi Agent 串谋/越权检测</td><td>m01~m05 场景 + 跨 Agent 行为图谱</td><td>⚠️ 部分（窗口局限）</td></tr>
+<tr><td>Agent 合规审计取证</td><td>JSONL 审计 + 报告 + 录制回放（留存复现）</td><td>✅ 演示级完全（L0 长期保留属生产化）</td></tr>
+</table>
+
+<h2>4.4　三大差异化卖点 × 对齐情况</h2>
+
+<p class="caption">表 4-4　差异化卖点对齐情况</p>
+<table>
+<tr><th>卖点（需求）</th><th>实现情况</th></tr>
+<tr><td>数据本地不上云</td><td>✅ 全部输出本地文件，零云端依赖</td></tr>
+<tr><td>内核级感知</td><td>⚠️ 部分——eBPF 已实现（Linux），Windows 为模拟探针</td></tr>
+<tr><td>消除 Agent 伪装欺骗空间</td><td>⚠️ 部分——"声明-验证-阻断"交叉校验架构已设计，但 eBPF 的 PID 引导过滤尚未补全（前几轮已发现）</td></tr>
+</table>
+
+<h2>4.5　需求对齐总结：三类结论</h2>
+
+<p class="noid" style="font-weight:bold;">超额完成项（实现超过 PRD 规格）</p>
+<p class="body">规则：15 条 → 23 条；场景：3 个 → 37 个；测试：规划单元测试 → 367 个全通过；平台：Windows 单机 → Windows/Linux 统一架构（4 种采集模式）；演示：CLI 单模式 → Web 平台（SSE）+ 交互式 CLI + 录制回放三重演示。</p>
+
+<p class="noid" style="font-weight:bold;">按需完成项</p>
+<p class="body">观测、阻断、审计、数据本地化四大能力均与需求严格对齐，且实现细节（研判矩阵、四级处置）比 PRD 规格更进一步。</p>
+
+<p class="noid" style="font-weight:bold;">明确缺口项（需求侧自知 + 复盘确认）</p>
+<p class="body">1）自进化——接口预留未实现（PRD 明示"仅定义，不实现"）→ 对应改进方向二；2）复杂攻击检测——串谋/分散蓄谋盲区（需求承诺"跨 Agent 关联检测"但窗口限制实现不完整）→ 对应改进方向一；3）生产级能力——权限管控、长期留存、内核级感知的 Windows 侧 → 对应生产模式长期规划。</p>
+
+<p class="noid" style="font-weight:bold;">结论</p>
+<p class="body">需求实现的主线（五大能力 × 五痛点）对齐度很高——4/5 核心能力完全落地，唯一缺口"自进化"是设计上预留而非遗漏；真正的不对齐不在"功能有无"，而在"能力深浅"：需求承诺的跨 Agent 检测、内核级感知、生产权限管控在演示级实现中打了折扣，这些正是前几轮改进方向（多层安全机制升级、双环演进、生产模式）所覆盖的——功能需求对齐分析的缺口清单与改进方向清单完全吻合，说明复盘闭环是自洽的。</p>
+
+<h2>4.6　录制-回放功能的设计</h2>
+
+<h3>4.6.1　演进史实确认</h3>
+<p class="body">这个设计在项目里是自洽的。录制-回放的起源是 PRD 降级清单第 3 项（"C++ 反向管道降级为纯 Python 模拟模式"）和 FileReplayCollector 的输入兼容。但项目描述第 9 节已经把它升级为独立功能，三个客户价值中就有"历史审计数据可回放复现，支持合规审查"——说明设计者已经意识到它不只服务于模拟。现在把它定位到"自进化 + 验证闸门"的服务层，是这条演进线的自然延伸。</p>
+
+<h3>4.6.2　设计合理性评估</h3>
+<p class="body">合理，但三个用途要精确分工：</p>
+
+<p class="caption">表 4-5　录制-回放用途分工</p>
+<table>
+<tr><th>用途</th><th>录制-回放的角色</th><th>能否胜任</th></tr>
+<tr><td>训练（自进化迭代）</td><td>作为挖掘输入</td><td>⚠️ 不是主输入——单个录制是一个会话序列，训练需要多个会话的聚合（这是 ITraceStore + L3 聚合日志的角色，方向二 T8/T9）。回放只能贡献"样本池"</td></tr>
+<tr><td>验证（验证闸门）</td><td>作为回测基准集</td><td>✅ 主战场——候选规则在同一录制上回放，计算误报/漏报率；规则版本 A/B 在同一录制上回放比对判定差异，就是规则迭代的 A/B 测试</td></tr>
+<tr><td>审核（人工审核）</td><td>作为可复现证据</td><td>✅ 但有条件——录制提供"行为事实"，审核人还要"判定依据"（为什么这样判），后者来自审计链/报告；两者合起来才是完整证据</td></tr>
+<tr><td>稳定性测试</td><td>作为回归基准</td><td>✅ 极佳——同一录制 + 固定参数 → 判定快照逐事件比对，任何行为漂移都会现形</td></tr>
+</table>
+
+<h3>4.6.3　结论与改进【U 系列】</h3>
+<p class="body">设计合理——录制-回放从"模拟降级件"演进为"验证基础设施"是标准且正确的路径，与双环架构咬合紧密：它是验证闸门（T15 回测执行器）的真实数据源、稳定性回归的 golden test 工具、人工审核的取证复现器。它能完成需求，但前提是把分工摆正：训练靠聚合（TraceStore/L3），验证靠回放（录制库），审核靠"回放复现 + 审计链依据"；同时补齐三个保真度前提（基线快照录制、时钟确定性、状态初始化），否则回放复现的判定不可信，闸门建立在失真结论上。</p>
+<p class="body"><b>U10. 录制-回放验证化改造</b>——录制格式扩展基线快照 + 回放确定性参数 + 判定快照比对器，作为方向三 T15 回测执行器的数据源基础。</p>
+
+<p class="figcaption">图 4-1　录制-回放完整回路</p>
+<table class="diagram">
+<tr><td class="layer" colspan="3">生产环境</td></tr>
+<tr>
+  <td class="box">真实 Agent 进程（零依赖 FifoWriter）</td>
+  <td class="arrow">JSON Lines 实时写入 →</td>
+  <td class="box">FIFO 管道（/tmp/observer_monitoring_pipe）</td>
+</tr>
+<tr class="arrow"><td></td><td colspan="2">阻塞读取 ↓</td></tr>
+<tr>
+  <td class="box" colspan="3">monitor_daemon 守护进程 ── 实时研判+阻断 ──▶ observer_core 全链路（OBS1）</td>
+</tr>
+<tr class="arrow"><td colspan="3">旁路录制 --record（解析前落盘）↓</td></tr>
+<tr><td class="box" colspan="3">records/*.jsonl 录像带</td></tr>
+<tr class="arrow"><td colspan="3">test.py --replay / ReplayEngine ↓</td></tr>
+<tr><td class="layer" colspan="3">回放环境</td></tr>
+<tr>
+  <td class="box" colspan="2">FileReplayCollector（加载 JSONL/CSV）</td>
+  <td class="box">observer_core 全链路（OBS2，与实时链路同一套）</td>
+</tr>
+<tr><td class="layer" colspan="3">模拟环境</td></tr>
+<tr>
+  <td class="box">YAML 场景（剧本）</td>
+  <td class="box">SimulationCollector（播放器）</td>
+  <td class="box">SessionRecorder（records/&lt;timestamp&gt;/）</td>
+</tr>
+<tr class="arrow"><td colspan="2">RawEvent 流（分身）→</td><td>RawEvent 流 → observer_core 全链路（OBS3）</td></tr>
+<tr><td class="box" colspan="3" style="background:#FDF6E3;">OBS1 ⇢ 同构：回放结果 = 实时结果 ⇢ OBS2　·　OBS3 ⇢ 同构 ⇢ OBS2</td></tr>
+</table>
+
+<p class="body" style="margin-top:20.0pt; color:#555; text-align:center;">—— 报告结束 ——</p>
+
+</body>
+</html>

@@ -1,6 +1,9 @@
 #!/usr/bin/env python3
 """
-demo.py — 方寸观察者模拟学习系统 交互式演示脚本
+demo.py — observer demo 的实现模块（U4/U8）
+
+统一入口为 observer.py（python observer.py demo ...），本文件是 demo 子命令的
+实现模块，同时保留独立运行能力（__main__ 与 observer demo 转发语义一致）。
 
 功能:
 1. 主菜单: 单元测试 / 全量模拟 / 分类浏览
@@ -10,10 +13,15 @@ demo.py — 方寸观察者模拟学习系统 交互式演示脚本
 5. 支持 37 个测试场景（5 个分类）
 
 用法:
-    python demo.py                          # 交互式模式
-    python demo.py --auto                   # 自动播放模式
-    python demo.py --scenario n01           # 指定场景
-    python demo.py --category anomalous     # 按分类运行
+    python observer.py demo                  # 交互式模式
+    python observer.py demo --auto           # 自动播放模式
+    python observer.py demo --scenario n01   # 指定场景
+    python observer.py demo --category anomalous   # 按分类运行
+    python demo.py [同参数]                  # 直接运行（兼容）
+
+U8: 逐事件流水线已接入 PipelineRunner（observer_core/pipeline_runner.py），
+与 app.py / main.py / monitor_daemon.py 共用同一编排实现；演示层保留
+彩色逐事件打印、统计聚合、reverse_cmd 读取（cmd_sender 前后对比）。
 """
 
 import sys
@@ -52,6 +60,9 @@ from observer_core.audit.behavior_graph import BehaviorGraph
 from observer_core.audit.audit_logger import AuditLogger
 from observer_core.audit.report_exporter import ReportExporter
 from observer_core.audit.output_path_manager import RunOutputManager, infer_category
+from observer_core.audit.output_sink import DefaultOutputSink
+from observer_core.audit.file_manager import OutputFileManager
+from observer_core.pipeline_runner import PipelineRunner
 from collector.simulation_collector import SimulationCollector
 from adapter.platform_detect import detect_and_create_collector
 
@@ -171,7 +182,8 @@ class ScenarioRunner:
         self._mode_name = self.collector.capabilities().name if hasattr(self.collector, 'capabilities') else "Simulation"
         self.engine = RuleEngine()
         self.engine.load_rules(os.path.join(self.base_dir, 'rules', 'default_policy.yaml'))
-        self.baseline = BaselineChecker(min_warm_events=5)
+        # 不传 min_warm_events，统一从 tuning.yaml 读取（baseline.min_warm_events=10）
+        self.baseline = BaselineChecker()
         self.scorer = RiskScorer()
         self.scorer.register_default_dimensions()
         self.decision_engine = DecisionEngine()
@@ -180,8 +192,31 @@ class ScenarioRunner:
         self.cmd_sender.connect('mock_pipe')
         self.blocking_coord = BlockingCoordinator(clock=self.clock, sender=self.cmd_sender, output_dir=self.output_dir)
         self.behavior_graph = BehaviorGraph()
-        self.audit_logger = AuditLogger(output_dir=self.output_dir)
+        self.audit_logger = AuditLogger(
+            output_dir=self.output_dir,
+            # L-T3: L0 审计文件保留天数（来自 config.yaml output.retention_days）
+            retention_days=config.get("output", {}).get("retention_days"),
+        )
         self.report_exporter = ReportExporter(output_dir=self.output_dir)
+        # U3: 输出编排收敛至 OutputSink（run 目录在 run_scenario 的 begin_run 中创建）
+        self.sink = DefaultOutputSink(
+            base_output_dir=self.output_dir,
+            audit_logger=self.audit_logger,
+            report_exporter=self.report_exporter,
+            behavior_graph=self.behavior_graph,
+            blocking_coord=self.blocking_coord,
+        )
+        # U8: 全链路流水线（与 app.py / main.py / monitor_daemon.py 共用 PipelineRunner）
+        self.runner = PipelineRunner(
+            normalizer=self.normalizer,
+            rule_engine=self.engine,
+            baseline_checker=self.baseline,
+            scorer=self.scorer,
+            decision_engine=self.decision_engine,
+            blocking_coord=self.blocking_coord,
+            behavior_graph=self.behavior_graph,
+            audit_logger=self.audit_logger,
+        )
         self._run_mgr: Optional[RunOutputManager] = None
         self.stats = self._empty_stats()
 
@@ -225,28 +260,23 @@ class ScenarioRunner:
         return data['scenario'], path
 
     def run_event(self, raw, event_num, total):
-        """处理单个事件（接受 RawEvent，由 Collector 提供）"""
-        norm = self.normalizer.normalize(raw)
-        if 'normal' in raw.agent_id:
-            self.baseline.collect(norm)
-        match = self.engine.match(norm)
-        context = self.normalizer.get_agent_context(raw.agent_id)
-        self.scorer.set_baseline(self.baseline.get_baseline_dict())
-        assessment = self.scorer.assess(norm, match, context)
-        decision = self.decision_engine.decide(assessment, event_id=raw.event_id, agent_id=raw.agent_id)
+        """处理单个事件（接受 RawEvent，由 Collector 提供）。
+
+        U8: 全链路流水线由 PipelineRunner.process_event 执行（与 app.py 相同）；
+        演示层保留 cmd_sender 前后对比读取 reverse_cmd 与彩色逐事件打印。
+        """
         cmd_count_before = len(self.cmd_sender.sent_commands)
-        blocking_result = self.blocking_coord.execute(norm, decision)
+        result = self.runner.process_event(raw)
         cmd_count_after = len(self.cmd_sender.sent_commands)
+        norm = result.norm
+        match = result.match
+        assessment = result.assessment
+        decision = result.decision
+        blocking_result = result.blocking_result
         escalated = blocking_result.tier != decision.tier
         reverse_cmd = None
         if cmd_count_after > cmd_count_before:
             reverse_cmd = self.cmd_sender.sent_commands[-1]
-        matched_rule_ids = [r.rule_id for r in match.matched_rules]
-        desc = self._build_event_desc(norm)
-        self.behavior_graph.add_event(norm, assessment=assessment, decision=decision,
-                                       blocking_result=blocking_result, matched_rules=matched_rule_ids)
-        self.audit_logger.log_event(norm, assessment=assessment, decision=decision,
-                                     blocking_result=blocking_result, matched_rules=matched_rule_ids, description=desc)
         if not self.silent:
             self._print_event_pipeline(raw, norm, match, assessment, decision,
                                         blocking_result, reverse_cmd, escalated, event_num, total)
@@ -337,14 +367,11 @@ class ScenarioRunner:
         scenario, scenario_file = self.load_scenario(scenario_path_or_name)
         category = infer_category(scenario_file)
         scenario_id = scenario['id']
-        self._run_mgr = RunOutputManager(self.output_dir, category, scenario_id)
-        self.audit_logger.set_output_dir(self._run_mgr.audit_dir)
-        self.report_exporter.set_output_dir(self._run_mgr.report_dir)
-        self.blocking_coord.set_output_dir(self._run_mgr.evidence_dir)
         self.stats = self._empty_stats()
         self.behavior_graph.reset()
         self.cmd_sender.clear()
-        self.audit_logger.start_scenario(scenario_id)
+        # U3: 创建 run 目录 + 设输出目录 + 开始审计（OutputSink 统一编排）
+        self._run_mgr = self.sink.begin_run(category, scenario_id)
         if not self.silent:
             print_header(f"\u573a\u666f: {scenario['name']}")
             print(C(f"\u63cf\u8ff0: {scenario['description']}", Colors.DIM))
@@ -372,33 +399,26 @@ class ScenarioRunner:
         return scenario_id, category, self.stats.copy()
 
     def _generate_reports(self, scenario):
-        scenario_id = scenario['id']
-        scenario_name = scenario['name']
         print()
-        print(C("--- \u751f\u6210\u8f93\u51fa\u6587\u4ef6 ---", Colors.CYAN))
-        report_path = self.report_exporter.export_scenario_report(
-            scenario_id=scenario_id, scenario_name=scenario_name,
-            audit_logger=self.audit_logger, behavior_graph=self.behavior_graph,
-            scenario_description=scenario.get('description', ''),
-            expected_result=scenario.get('expected_result', ''))
-        rel_report = os.path.relpath(report_path, self.base_dir)
-        print(C(f"   [MD]  \u98ce\u9669\u5206\u6790\u62a5\u544a: {rel_report}", Colors.GREEN))
-        self.stats['report_files'].append(rel_report)
-        graph_path = self._run_mgr.graph_filepath(f'graph_{scenario_id}.json')
-        self.behavior_graph.save_json(graph_path)
-        rel_graph = os.path.relpath(graph_path, self.base_dir)
-        print(C(f"   [JSON] \u884c\u4e3a\u56fe\u8c31:    {rel_graph}", Colors.GREEN))
-        self.stats['report_files'].append(rel_graph)
-        audit_file = self.audit_logger.current_file
+        print(C("--- 生成输出文件 ---", Colors.CYAN))
+        # U3: 报告导出/图谱保存/证据写入收敛至 OutputSink（行为与下沉前一致）
+        outputs = self.sink.finalize(scenario, self.stats)
+        if outputs["report_path"]:
+            rel_report = os.path.relpath(outputs["report_path"], self.base_dir)
+            print(C(f"   [MD]  风险分析报告: {rel_report}", Colors.GREEN))
+            self.stats['report_files'].append(rel_report)
+        if outputs["graph_path"]:
+            rel_graph = os.path.relpath(outputs["graph_path"], self.base_dir)
+            print(C(f"   [JSON] 行为图谱:    {rel_graph}", Colors.GREEN))
+            self.stats['report_files'].append(rel_graph)
+        audit_file = outputs["audit_file"]
         if audit_file:
             rel_audit = os.path.relpath(audit_file, self.base_dir)
-            print(C(f"   [JSONL] \u5ba1\u8ba1\u65e5\u5fd7:   {rel_audit}", Colors.GREEN))
+            print(C(f"   [JSONL] 审计日志:   {rel_audit}", Colors.GREEN))
             self.stats['report_files'].append(rel_audit)
-        if self.stats['block'] > 0:
-            evidence_path = self.blocking_coord.save_evidence(
-                filepath=self._run_mgr.evidence_filepath(f'evidence_{scenario_id}.json'))
-            rel_evidence = os.path.relpath(evidence_path, self.base_dir)
-            print(C(f"   [JSON] \u963b\u65ad\u8bc1\u636e:    {rel_evidence}", Colors.GREEN))
+        if outputs["evidence_path"]:
+            rel_evidence = os.path.relpath(outputs["evidence_path"], self.base_dir)
+            print(C(f"   [JSON] 阻断证据:    {rel_evidence}", Colors.GREEN))
             self.stats['report_files'].append(rel_evidence)
 
     def _print_analysis_panel(self, scenario):
@@ -710,40 +730,11 @@ def _category_submenu(cat_dir):
         _delete_records_menu(cat_dir)
 
 
-def _count_dir_contents(path):
-    """统计目录下的时间戳子目录数和文件总数"""
-    if not os.path.isdir(path):
-        return 0, 0
-    ts_dirs = 0
-    file_count = 0
-    for entry in os.listdir(path):
-        entry_path = os.path.join(path, entry)
-        if os.path.isdir(entry_path):
-            ts_dirs += 1
-            for dp, dn, fn in os.walk(entry_path):
-                file_count += len(fn)
-    return ts_dirs, file_count
-
-
 def _confirm_delete(prompt_msg):
     """删除确认提示，返回 True 表示用户确认"""
     print()
     ans = input(C(prompt_msg, Colors.YELLOW)).strip().lower()
     return ans == 'y'
-
-
-def _do_delete_dirs(paths):
-    """删除指定的时间戳子目录列表，返回 (删除目录数, 删除文件数)"""
-    deleted_dirs = 0
-    deleted_files = 0
-    for p in paths:
-        if os.path.isdir(p):
-            # 统计文件数
-            for dp, dn, fn in os.walk(p):
-                deleted_files += len(fn)
-            shutil.rmtree(p)
-            deleted_dirs += 1
-    return deleted_dirs, deleted_files
 
 
 def _print_delete_stats(deleted_dirs, deleted_files):
@@ -755,9 +746,10 @@ def _print_delete_stats(deleted_dirs, deleted_files):
 
 
 def _delete_records_menu(cat_dir):
-    """删除测试记录子菜单"""
+    """删除测试记录子菜单（统计/删除复用 OutputFileManager，交互菜单保留）"""
     base_dir = os.path.dirname(os.path.abspath(__file__))
     reports_dir = os.path.join(base_dir, 'output', 'reports')
+    fm = OutputFileManager(base_dir, os.path.dirname(base_dir))
     cat_labels = {
         'normal': 'Normal', 'anomalous': 'Anomalous',
         'boundary': 'Boundary', 'multi_agent': 'Multi-Agent', 'extreme': 'Extreme',
@@ -779,24 +771,12 @@ def _delete_records_menu(cat_dir):
         if choice == '0' or choice == '':
             return
         elif choice == '1':
-            # 清空全部测试记录
-            ts_dirs_list = []
-            total_ts = 0
-            total_files = 0
+            # 清空全部测试记录（场景枚举与统计复用 OutputFileManager）
+            scenario_paths = []
             for cat in ['normal', 'anomalous', 'boundary', 'multi_agent', 'extreme']:
-                cat_path = os.path.join(reports_dir, cat)
-                if not os.path.isdir(cat_path):
-                    continue
-                for scenario_dir_name in os.listdir(cat_path):
-                    scenario_path = os.path.join(cat_path, scenario_dir_name)
-                    if os.path.isdir(scenario_path):
-                        n_dirs, n_files = _count_dir_contents(scenario_path)
-                        total_ts += n_dirs
-                        total_files += n_files
-                        for entry in os.listdir(scenario_path):
-                            entry_path = os.path.join(scenario_path, entry)
-                            if os.path.isdir(entry_path):
-                                ts_dirs_list.append(entry_path)
+                scenario_paths.extend(
+                    sp for _c, _n, sp in fm.list_scenario_dirs([cat]))
+            ts_dirs_list, total_ts, total_files = fm.collect_ts_dirs(scenario_paths)
             if total_ts == 0:
                 print(C("\n\u672a\u627e\u5230\u53ef\u5220\u9664\u7684\u6d4b\u8bd5\u8bb0\u5f55", Colors.YELLOW))
                 continue
@@ -804,7 +784,7 @@ def _delete_records_menu(cat_dir):
             if not _confirm_delete("\u786e\u8ba4\u5220\u9664\uff1f\u6b64\u64cd\u4f5c\u4e0d\u53ef\u6062\u590d [y/N]:"):
                 print(C("\u5df2\u53d6\u6d88", Colors.DIM))
                 continue
-            d_dirs, d_files = _do_delete_dirs(ts_dirs_list)
+            d_dirs, d_files = fm.delete_ts_dirs(ts_dirs_list)
             _print_delete_stats(d_dirs, d_files)
 
         elif choice == '2':
@@ -818,15 +798,10 @@ def _delete_records_menu(cat_dir):
             ]
             print()
             for i, (key, label, color) in enumerate(cat_options, 1):
-                cat_path = os.path.join(reports_dir, key)
-                ts_count = 0
-                if os.path.isdir(cat_path):
-                    for sd in os.listdir(cat_path):
-                        sp = os.path.join(cat_path, sd)
-                        if os.path.isdir(sp):
-                            n, _ = _count_dir_contents(sp)
-                            ts_count += n
-                print(C(f"  {i}. {label} ({ts_count} \u4e2a\u65f6\u95f4\u6233\u76ee\u5f55)", color))
+                # 统计复用 OutputFileManager（目录枚举 + 时间戳统计）
+                scenario_paths = [sp for _c, _n, sp in fm.list_scenario_dirs([key])]
+                _tl, ts_count, _tf = fm.collect_ts_dirs(scenario_paths)
+                print(C(f"  {i}. {label} ({ts_count} 个时间戳目录)", color))
             print(C("  0. \u8fd4\u56de", Colors.DIM))
             print()
             cc = input(C("\u9009\u62e9\u5206\u7c7b [0-5]: ", Colors.CYAN)).strip()
@@ -841,20 +816,9 @@ def _delete_records_menu(cat_dir):
             if not os.path.isdir(target_path):
                 print(C(f"\u5206\u7c7b\u76ee\u5f55\u4e0d\u5b58\u5728: {target_cat}", Colors.YELLOW))
                 continue
-            # 收集要删除的目录
-            ts_dirs_list = []
-            total_ts = 0
-            total_files = 0
-            for scenario_dir_name in os.listdir(target_path):
-                scenario_path = os.path.join(target_path, scenario_dir_name)
-                if os.path.isdir(scenario_path):
-                    n_dirs, n_files = _count_dir_contents(scenario_path)
-                    total_ts += n_dirs
-                    total_files += n_files
-                    for entry in os.listdir(scenario_path):
-                        entry_path = os.path.join(scenario_path, entry)
-                        if os.path.isdir(entry_path):
-                            ts_dirs_list.append(entry_path)
+            # 收集要删除的目录（复用 OutputFileManager）
+            scenario_paths = [sp for _c, _n, sp in fm.list_scenario_dirs([target_cat])]
+            ts_dirs_list, total_ts, total_files = fm.collect_ts_dirs(scenario_paths)
             if total_ts == 0:
                 print(C(f"\n\u5206\u7c7b [{cat_labels.get(target_cat)}] \u4e0b\u672a\u627e\u5230\u53ef\u5220\u9664\u7684\u6d4b\u8bd5\u8bb0\u5f55", Colors.YELLOW))
                 continue
@@ -862,7 +826,7 @@ def _delete_records_menu(cat_dir):
             if not _confirm_delete("\u786e\u8ba4\u5220\u9664\uff1f\u6b64\u64cd\u4f5c\u4e0d\u53ef\u6062\u590d [y/N]:"):
                 print(C("\u5df2\u53d6\u6d88", Colors.DIM))
                 continue
-            d_dirs, d_files = _do_delete_dirs(ts_dirs_list)
+            d_dirs, d_files = fm.delete_ts_dirs(ts_dirs_list)
             _print_delete_stats(d_dirs, d_files)
 
         elif choice == '3':
@@ -871,15 +835,10 @@ def _delete_records_menu(cat_dir):
             sc = input(C("\u8f93\u5165\u573a\u666f ID (\u5982 e01, a03): ", Colors.CYAN)).strip().lower()
             if not sc:
                 continue
-            # 在所有分类中搜索匹配的场景目录
-            matched_scenario_paths = []
-            for cat in ['normal', 'anomalous', 'boundary', 'multi_agent', 'extreme']:
-                cat_path = os.path.join(reports_dir, cat)
-                if not os.path.isdir(cat_path):
-                    continue
-                for scenario_dir_name in os.listdir(cat_path):
-                    if sc in scenario_dir_name:
-                        matched_scenario_paths.append((cat, scenario_dir_name, os.path.join(cat_path, scenario_dir_name)))
+            # 在所有分类中搜索匹配的场景目录（模糊匹配复用 OutputFileManager）
+            matched_scenario_paths = fm.list_scenario_dirs(
+                ['normal', 'anomalous', 'boundary', 'multi_agent', 'extreme'],
+                scenario_filter=sc)
             if not matched_scenario_paths:
                 print(C(f"\n\u672a\u627e\u5230\u5339\u914d\u7684\u573a\u666f\u8bb0\u5f55: {sc}", Colors.YELLOW))
                 continue
@@ -888,7 +847,7 @@ def _delete_records_menu(cat_dir):
             total_ts = 0
             total_files = 0
             for cat, sname, spath in matched_scenario_paths:
-                n_dirs, n_files = _count_dir_contents(spath)
+                n_dirs, n_files = fm.count_dir_contents(spath)
                 total_ts += n_dirs
                 total_files += n_files
                 print(C(f"  [{cat}] {sname}: {n_dirs} \u4e2a\u65f6\u95f4\u6233\u76ee\u5f55, {n_files} \u4e2a\u6587\u4ef6", Colors.WHITE))
@@ -899,14 +858,10 @@ def _delete_records_menu(cat_dir):
             if not _confirm_delete("\u786e\u8ba4\u5220\u9664\uff1f\u6b64\u64cd\u4f5c\u4e0d\u53ef\u6062\u590d [y/N]:"):
                 print(C("\u5df2\u53d6\u6d88", Colors.DIM))
                 continue
-            # 收集并删除
-            ts_dirs_list = []
-            for cat, sname, spath in matched_scenario_paths:
-                for entry in os.listdir(spath):
-                    entry_path = os.path.join(spath, entry)
-                    if os.path.isdir(entry_path):
-                        ts_dirs_list.append(entry_path)
-            d_dirs, d_files = _do_delete_dirs(ts_dirs_list)
+            # 收集并删除（复用 OutputFileManager）
+            ts_dirs_list, _t, _f = fm.collect_ts_dirs(
+                [spath for _c, _n, spath in matched_scenario_paths])
+            d_dirs, d_files = fm.delete_ts_dirs(ts_dirs_list)
             _print_delete_stats(d_dirs, d_files)
 
 

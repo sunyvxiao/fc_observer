@@ -1,5 +1,8 @@
 #!/usr/bin/env python3
-"""generate_scenarios.py - 批量生成37个测试场景YAML文件"""
+"""generate_scenarios.py - 批量生成37个测试场景YAML文件
+
+已挂载至 observer samples 子命令（U9）：python observer.py samples gen-scenarios
+"""
 import os, yaml
 
 BASE = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'scenarios')

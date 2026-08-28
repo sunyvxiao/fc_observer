@@ -34,6 +34,8 @@ class RawEvent:
     ppid: int
     agent_id: str
     agent_framework: str
+    # MCP 申报会话（黑盒 Agent 会话维度；探针事件为 None）
+    session_id: Optional[str] = None
     # ProcessProbe 字段
     executable: Optional[str] = None
     arguments: Optional[List[str]] = None
@@ -55,6 +57,7 @@ class RawEvent:
             "ppid": self.ppid,
             "agent_id": self.agent_id,
             "agent_framework": self.agent_framework,
+            "session_id": self.session_id,
             "executable": self.executable,
             "arguments": self.arguments,
             "file_path": self.file_path,
@@ -75,6 +78,7 @@ class RawEvent:
             ppid=data.get("ppid", 0),
             agent_id=data.get("agent_id", ""),
             agent_framework=data.get("agent_framework", ""),
+            session_id=data.get("session_id"),
             executable=data.get("executable"),
             arguments=data.get("arguments"),
             file_path=data.get("file_path"),

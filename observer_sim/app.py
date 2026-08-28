@@ -1,19 +1,25 @@
 """
-app.py — 方寸观察者模拟学习系统 Web 模式
+app.py — observer serve 的实现模块（U4）
+
+统一入口为 observer.py（python observer.py serve ...），本文件是 serve 子命令的
+实现模块，同时保留独立运行能力（__main__ 打印一行提示后继续启动，
+与 observer serve 转发语义一致）。
 
 功能:
   - ThreadingHTTPServer 提供 HTTP 服务（每请求独立线程）
   - 14 个 API 端点（JSON / SSE / 静态文件）
-  - StreamScenarioRunner 适配层（将 ScenarioRunner 流程 yield 为 step_data）
+  - StreamScenarioRunner 适配层（将场景流水线 yield 为 step_data）
   - SSE 实时推送场景运行过程
   - 路径安全校验（防路径遍历攻击）
   - 零 pip install 依赖，全部使用 Python 标准库
 
 用法:
-    python app.py              # 启动 Web 服务器 (localhost:8080)
-    python app.py --port 9090  # 指定端口
+    python observer.py serve           # 启动 Web 服务器 (localhost:8080)
+    python observer.py serve --port 9090   # 指定端口
+    python app.py --port 9090          # 直接运行（兼容，打印入口提示）
 
-与 CLI 模式 (demo.py) 并存，互不干扰。observer_core/ 零改动。
+Web 模式与 CLI 模式 (main.py)、守护进程模式 (monitor_daemon.py) 并存，
+共享 observer_core/ 核心组件。
 """
 
 import sys
@@ -33,9 +39,13 @@ from datetime import datetime
 from http.server import ThreadingHTTPServer, BaseHTTPRequestHandler
 
 # 抑制 logging 的 stderr 输出
-logging.basicConfig(level=logging.WARNING, format='%(message)s')
-for handler in logging.root.handlers:
-    handler.stream = open(os.devnull, 'w', encoding='utf-8')
+# （pytest 运行时跳过：把 handler.stream 换成 devnull 文件对象会破坏
+#  pytest logging 插件的捕获流，导致 teardown 时 getvalue() 报错，
+#  见 tests/test_pipeline_consistency.py）
+if "pytest" not in sys.modules:
+    logging.basicConfig(level=logging.WARNING, format='%(message)s')
+    for handler in logging.root.handlers:
+        handler.stream = open(os.devnull, 'w', encoding='utf-8')
 
 # 添加项目路径
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -55,12 +65,31 @@ from observer_core.audit.behavior_graph import BehaviorGraph
 from observer_core.audit.audit_logger import AuditLogger
 from observer_core.audit.report_exporter import ReportExporter
 from observer_core.audit.output_path_manager import RunOutputManager
+from observer_core.audit.output_sink import DefaultOutputSink
+from observer_core.audit.file_manager import OutputFileManager
+from observer_core.pipeline_runner import PipelineRunner
 from collector.simulation_collector import SimulationCollector
 from monitor_lifecycle import MonitorLifecycleManager
 
 # ── 全局常量 ──────────────────────────────────────────────────
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 PROJECT_DIR = os.path.dirname(BASE_DIR)          # ~/projects/observer_sim
+
+
+def _mcp_monitoring_extra_roots():
+    """推导 MCP 申报产物目录（output/mcp_monitoring）作为文件管理扩展安全根。
+
+    只读 workbuddy_connect.yaml（observer.output_dir，相对 project_dir 拼接）；
+    配置缺失/目录不存在时返回 None，不影响四区默认行为。
+    """
+    try:
+        from connect_workbuddy import (DEFAULT_CONFIG, load_config, _out_paths)
+        out_dir = _out_paths(load_config(DEFAULT_CONFIG))[0]
+        if os.path.isdir(out_dir):
+            return {"mcp_monitoring": os.path.realpath(out_dir)}
+    except Exception:  # noqa: BLE001
+        pass
+    return None
 SCENARIOS_DIR = os.path.join(BASE_DIR, "scenarios")
 REPORTS_DIR = os.path.realpath(os.path.join(BASE_DIR, "output", "reports"))
 STATIC_DIR = os.path.join(BASE_DIR, "static")
@@ -92,13 +121,79 @@ run_all_progress = {"completed": 0, "total": 0, "current_scenario": "", "status"
 # 注意: Monitor 任务计数已迁移至 MonitorLifecycleManager, 参见 monitor_lifecycle.py
 
 
+# ── 环境检测会话级缓存（与 CLI console.py 同构；复用 check_env / platform_detect）──
+_ENV_CACHE = {"light": None, "full": None}
+_PLATFORM = None
+
+
+def _get_platform():
+    """平台信息（复用 adapter.platform_detect.PlatformInfo.detect，会话级缓存）"""
+    global _PLATFORM
+    if _PLATFORM is None:
+        from adapter.platform_detect import PlatformInfo
+        _PLATFORM = PlatformInfo.detect()
+    return _PLATFORM
+
+
+def _env_items(light: bool, refresh: bool = False):
+    """环境检测项（复用 check_env.run_checks，会话级缓存；refresh=True 强制重检）"""
+    key = "light" if light else "full"
+    if _ENV_CACHE[key] is None or refresh:
+        from check_env import run_checks as _run_checks
+        _ENV_CACHE[key] = _run_checks(light=light)
+    return _ENV_CACHE[key]
+
+
+def _mode_hint() -> str:
+    """采集模式提示（与 CLI 主菜单状态行同规则）"""
+    plat = _get_platform()
+    if plat.is_windows:
+        return "采集 simulation (auto)"
+    if plat.has_ebpf:
+        return "采集 ebpf (auto)"
+    if plat.has_strace:
+        return "采集 strace (auto，eBPF 不可用)"
+    return "采集 simulation (auto 降级)"
+
+
+def _env_payload(items, light: bool) -> dict:
+    """环境检测项列表 → JSON 摘要（含逐项状态）"""
+    passed = sum(1 for i in items if i.passed)
+    return {
+        "mode": "light" if light else "full",
+        "total": len(items),
+        "passed": passed,
+        "failed": len(items) - passed,
+        "items": [
+            {"name": i.name, "passed": i.passed, "detail": i.detail, "section": i.section}
+            for i in items
+        ],
+        "checked_at": datetime.now().isoformat(),
+    }
+
+
+def _platform_gate(feature: str):
+    """分级平台守卫（与 CLI console.py _env_gate 对齐）。
+
+    必然失败级: Windows 下 daemon / record-replay（依赖 Linux FIFO 命名管道）。
+    返回 (allowed: bool, error_message: str)。
+    """
+    plat = _get_platform()
+    if feature in ("daemon", "record-replay") and plat.is_windows:
+        return False, (
+            "当前为 Windows 环境，该功能依赖 Linux FIFO 命名管道（os.mkfifo），不支持。"
+            " 该功能仅限 Linux 环境使用 · 依据: 环境检测 #平台=windows"
+        )
+    return True, ""
+
+
 # ── StreamScenarioRunner 适配层 ──────────────────────────────
-# Phase 2 实现。当前为占位存根。
 class StreamScenarioRunner:
     """
     app.py 专用适配层。
-    复用 ScenarioRunner 的组件初始化逻辑，但将命令式流程转为生成器。
-    不修改 ScenarioRunner 和 observer_core/ 的任何代码。
+    自行初始化全套监测组件（归一化/规则/评分/研判/阻断/审计），
+    并将命令式处理流程改为生成器，逐步 yield 结构化 step_data 供 SSE 推送。
+    不依赖 demo.py 的 ScenarioRunner。
     """
 
     def __init__(self, base_dir, output_dir, category, scenario_id):
@@ -112,7 +207,8 @@ class StreamScenarioRunner:
         self.normalizer = EventNormalizer(clock=self.clock, window_size=10)
         self.engine = RuleEngine()
         self.engine.load_rules(os.path.join(base_dir, 'rules', 'default_policy.yaml'))
-        self.baseline = BaselineChecker(min_warm_events=5)
+        # 不传 min_warm_events，统一从 tuning.yaml 读取（baseline.min_warm_events=10）
+        self.baseline = BaselineChecker()
         self.scorer = RiskScorer()
         self.scorer.register_default_dimensions()
         self.decision_engine = DecisionEngine()
@@ -121,14 +217,40 @@ class StreamScenarioRunner:
         self.blocking_coord = BlockingCoordinator(
             clock=self.clock, sender=self.cmd_sender, output_dir=output_dir)
         self.behavior_graph = BehaviorGraph()
-        self.audit_logger = AuditLogger(output_dir=output_dir)
+        # L-T3: 从 config.yaml 读取 L0 审计文件保留天数（惰性清理）
+        try:
+            with open(os.path.join(base_dir, 'config.yaml'), 'r', encoding='utf-8') as _f:
+                _cfg = yaml.safe_load(_f) or {}
+            _retention_days = _cfg.get("output", {}).get("retention_days")
+        except (IOError, OSError, yaml.YAMLError):
+            _retention_days = None
+        self.audit_logger = AuditLogger(output_dir=output_dir,
+                                        retention_days=_retention_days)
         self.report_exporter = ReportExporter(output_dir=output_dir)
-        self.run_mgr = RunOutputManager(output_dir, category, scenario_id)
-        self.audit_logger.set_output_dir(self.run_mgr.audit_dir)
-        self.report_exporter.set_output_dir(self.run_mgr.report_dir)
-        self.blocking_coord.set_output_dir(self.run_mgr.evidence_dir)
+        self.run_mgr = None
+        self._category = category
+        self._scenario_id = scenario_id
+        # U3: 输出编排收敛至 OutputSink（run 目录在 run_stream 的 begin_run 中创建）
+        self.sink = DefaultOutputSink(
+            base_output_dir=output_dir,
+            audit_logger=self.audit_logger,
+            report_exporter=self.report_exporter,
+            behavior_graph=self.behavior_graph,
+            blocking_coord=self.blocking_coord,
+        )
         self.behavior_graph.reset()
         self.cmd_sender.clear()
+        # 全链路流水线（单一事实来源，见 observer_core/pipeline_runner.py）
+        self.runner = PipelineRunner(
+            normalizer=self.normalizer,
+            rule_engine=self.engine,
+            baseline_checker=self.baseline,
+            scorer=self.scorer,
+            decision_engine=self.decision_engine,
+            blocking_coord=self.blocking_coord,
+            behavior_graph=self.behavior_graph,
+            audit_logger=self.audit_logger,
+        )
         self.stats = {
             'total': 0, 'allow': 0, 'alert': 0, 'block': 0,
             'max_score': 0.0, 'matched_rules': [], 'escalation_count': 0,
@@ -139,7 +261,8 @@ class StreamScenarioRunner:
         with open(scenario_path, 'r', encoding='utf-8') as f:
             data = yaml.safe_load(f)
         scenario = data['scenario']
-        self.audit_logger.start_scenario(scenario['id'])
+        # U3: 创建 run 目录 + 设输出目录 + 开始审计（OutputSink 统一编排）
+        self.sink.begin_run(self._category, scenario['id'])
         events = scenario['event_sequence']
         total = len(events)
 
@@ -166,30 +289,20 @@ class StreamScenarioRunner:
         }
 
     def _process_one_event(self, raw, scenario, seq, total):
-        """处理单个事件，接受 RawEvent，返回结构化 step_data"""
-        norm = self.normalizer.normalize(raw)
-        if 'normal' in raw.agent_id:
-            self.baseline.collect(norm)
-        match = self.engine.match(norm)
-        context = self.normalizer.get_agent_context(raw.agent_id)
-        self.scorer.set_baseline(self.baseline.get_baseline_dict())
-        assessment = self.scorer.assess(norm, match, context)
-        decision = self.decision_engine.decide(
-            assessment, event_id=raw.event_id, agent_id=raw.agent_id)
+        """处理单个事件，接受 RawEvent，返回结构化 step_data。
 
-        blocking_result = self.blocking_coord.execute(norm, decision)
-        self.behavior_graph.add_event(
-            norm, assessment=assessment, decision=decision,
-            blocking_result=blocking_result,
-            matched_rules=[r.rule_id for r in match.matched_rules])
-        desc = self._build_desc(norm)
-        self.audit_logger.log_event(
-            norm, assessment=assessment, decision=decision,
-            blocking_result=blocking_result,
-            matched_rules=[r.rule_id for r in match.matched_rules],
-            description=desc)
+        流水线编排已收敛到 PipelineRunner（observer_core/pipeline_runner.py），
+        本方法只负责表现层：统计聚合 + SSE step_data 格式化。
+        """
+        result = self.runner.process_event(raw)
+        norm = result.norm
+        match = result.match
+        assessment = result.assessment
+        decision = result.decision
+        blocking_result = result.blocking_result
+        desc = result.description
 
-        # 更新统计
+        # 更新统计（与重构前行为完全一致）
         self.stats['total'] += 1
         if assessment.overall_score > self.stats['max_score']:
             self.stats['max_score'] = assessment.overall_score
@@ -227,15 +340,6 @@ class StreamScenarioRunner:
             "timestamp_ns": norm.timestamp_ns,
         }
 
-    def _build_desc(self, norm):
-        if norm.event_type == "exec":
-            return norm.command_string or f"{norm.raw.executable} {' '.join(norm.raw.arguments or [])}"
-        elif norm.event_type == "file_open":
-            return f"{norm.raw.file_op} {norm.raw.file_path}"
-        elif norm.event_type == "net_conn":
-            return f"{norm.raw.remote_addr}:{norm.raw.remote_port}"
-        return norm.event_type
-
     def _disposal_text(self, blocking_result, decision):
         if blocking_result.blocked:
             return "硬中断! 进程树终止" if blocking_result.tier == ActionTier.TIER3 else "阻止访问! 返回 EPERM"
@@ -259,23 +363,20 @@ class StreamScenarioRunner:
         }
 
     def _generate_reports(self, scenario):
+        """导出报告/图谱/证据（U3：统一由 OutputSink.finalize 编排，返回文件列表）"""
         files = []
-        report_path = self.report_exporter.export_scenario_report(
-            scenario_id=scenario['id'], scenario_name=scenario['name'],
-            audit_logger=self.audit_logger, behavior_graph=self.behavior_graph,
-            scenario_description=scenario.get('description', ''),
-            expected_result=scenario.get('expected_result', ''))
-        files.append({"type": "md", "path": os.path.relpath(report_path, self.base_dir)})
-        graph_path = self.run_mgr.graph_filepath(f'graph_{scenario["id"]}.json')
-        self.behavior_graph.save_json(graph_path)
-        files.append({"type": "json", "path": os.path.relpath(graph_path, self.base_dir)})
-        if self.audit_logger.current_file:
+        outputs = self.sink.finalize(scenario, self.stats)
+        if outputs["report_path"]:
+            files.append({"type": "md", "path": os.path.relpath(
+                outputs["report_path"], self.base_dir)})
+        files.append({"type": "json", "path": os.path.relpath(
+            outputs["graph_path"], self.base_dir)})
+        if outputs["audit_file"]:
             files.append({"type": "jsonl", "path": os.path.relpath(
-                self.audit_logger.current_file, self.base_dir)})
-        if self.stats['block'] > 0:
-            evidence_path = self.blocking_coord.save_evidence(
-                filepath=self.run_mgr.evidence_filepath(f'evidence_{scenario["id"]}.json'))
-            files.append({"type": "json", "path": os.path.relpath(evidence_path, self.base_dir)})
+                outputs["audit_file"], self.base_dir)})
+        if outputs["evidence_path"]:
+            files.append({"type": "json", "path": os.path.relpath(
+                outputs["evidence_path"], self.base_dir)})
         return files
 
 
@@ -295,6 +396,11 @@ class ObserverHTTPHandler(BaseHTTPRequestHandler):
             self._serve_static_file("static/index.html", "text/html")
         elif path == "/api/health":
             self._send_json({"status": "ok", "timestamp": datetime.now().isoformat()})
+        elif path == "/api/env/status":
+            self._handle_env_status()
+        elif path == "/api/tests/stream":
+            scope = params.get("scope", ["unit"])[0]
+            self._handle_sse_tests_run(scope)
         elif path == "/api/categories":
             self._send_json(self._get_categories())
         elif path == "/api/scenarios":
@@ -342,11 +448,15 @@ class ObserverHTTPHandler(BaseHTTPRequestHandler):
             self._handle_sse_run_record()
         elif path.startswith("/api/demo/replay"):
             session_id = params.get("session_id", [None])[0]
-            self._handle_sse_replay(session_id)
+            no_rollup = (params.get("no_rollup", ["0"])[0].lower()
+                         in ("1", "true", "yes"))
+            self._handle_sse_replay(session_id, no_rollup)
         elif path == "/api/demo/start-record":
             self._handle_sse_start_record()
         elif path == "/api/demo/record/start":
-            self._handle_sse_record_start_only()
+            no_rollup = (params.get("no_rollup", ["0"])[0].lower()
+                         in ("1", "true", "yes"))
+            self._handle_sse_record_start_only(no_rollup)
         elif path == "/api/demo/start-monitor":
             self._handle_sse_start_monitor()
         elif path == "/api/monitor/status":
@@ -355,6 +465,15 @@ class ObserverHTTPHandler(BaseHTTPRequestHandler):
             self._send_json(self._get_monitor_report())
         elif path == "/api/monitor/events":
             self._handle_sse_monitor_events()
+        elif path == "/api/mcp-report/status":
+            self._send_json(self._get_mcp_report_status())
+        elif path == "/api/mcp-report/artifacts":
+            self._send_json(self._get_mcp_report_artifacts())
+        elif path == "/api/mcp-report/logs":
+            self._send_json(self._get_mcp_report_logs(params))
+        elif path == "/api/mcp-report/task":
+            name = params.get("name", [None])[0] or ""
+            self._send_json(self._get_mcp_report_task(name))
         elif path == "/api/agent-sim/scenarios":
             self._send_json(self._get_agent_sim_scenarios())
         elif path.startswith("/api/agent-sim/run/"):
@@ -372,7 +491,11 @@ class ObserverHTTPHandler(BaseHTTPRequestHandler):
         if path == "/api/scenario/run":
             self._handle_scenario_run(body)
         elif path == "/api/tests/run":
-            self._handle_tests_run()
+            self._handle_tests_run(body)
+        elif path == "/api/env/check":
+            self._handle_env_check(body)
+        elif path == "/api/samples/gen":
+            self._handle_samples_gen()
         elif path == "/api/reports/delete":
             self._handle_reports_delete(body)
         elif path == "/api/files/delete":
@@ -388,9 +511,15 @@ class ObserverHTTPHandler(BaseHTTPRequestHandler):
         elif path == "/api/demo/record/stop":
             self._handle_record_stop()
         elif path == "/api/monitor/start":
-            self._handle_monitor_start()
+            self._handle_monitor_start(body)
         elif path == "/api/monitor/stop":
             self._handle_monitor_stop()
+        elif path == "/api/mcp-report/start":
+            self._handle_mcp_report_start(body)
+        elif path == "/api/mcp-report/stop":
+            self._handle_mcp_report_stop()
+        elif path == "/api/mcp-report/smoke":
+            self._handle_mcp_report_smoke()
         else:
             self._send_error(404, "Not Found")
 
@@ -619,11 +748,11 @@ class ObserverHTTPHandler(BaseHTTPRequestHandler):
                 report_ts_map[ts] = os.path.join(reports_dir, fname)
 
         # 通过审计日志推断每个报告对应的场景
-        # audit 文件格式: audit_demo_monitoring_YYYYMMDD_HHMMSS.jsonl
-        ts_to_scenario = {}  # timestamp -> scenario_id
+        # audit 文件格式: audit_demo_monitoring_YYYYMMDD.jsonl（L-T3 按天滚动）
+        ts_to_scenario = {}  # 日期(YYYYMMDD) -> scenario_id
         if os.path.isdir(audit_dir):
             for fname in sorted(os.listdir(audit_dir)):
-                m = _re.match(r'audit_demo_monitoring_(\d{8}_\d{6})\.jsonl$', fname)
+                m = _re.match(r'audit_demo_monitoring_(\d{8})\.jsonl$', fname)
                 if not m:
                     continue
                 ts = m.group(1)
@@ -786,48 +915,19 @@ class ObserverHTTPHandler(BaseHTTPRequestHandler):
         self._serve_file_content(requested)
 
     def _serve_monitor_report(self, ts: str, path_parts: list):
-        """从 MONITORING_OUTPUT_DIR 提供 Monitor 报告。
+        """从 MONITORING_OUTPUT_DIR 提供 Monitor 报告（薄绑定 OutputFileManager）。
 
         ts: 时间戳字符串如 20260809_000710
         path_parts: 路径分段如 ['deep_agent', 'da04', '20260809_000710']
         """
-        reports_dir = os.path.join(MONITORING_OUTPUT_DIR, "reports")
-        audit_dir = os.path.join(MONITORING_OUTPUT_DIR, "audit")
-
-        report_file = os.path.join(reports_dir,
-                                   f"risk_report_demo_monitoring_{ts}.md")
-        audit_file = os.path.join(audit_dir,
-                                  f"audit_demo_monitoring_{ts}.jsonl")
-
-        # 检查是否有额外子路径（如 risk_report.md、audit.jsonl）
-        if len(path_parts) > 3:
-            sub = path_parts[3]
-            if sub == "risk_report.md" and os.path.isfile(report_file):
-                self._serve_file_content(report_file)
-                return
-            elif sub == "audit.jsonl" and os.path.isfile(audit_file):
-                self._serve_file_content(audit_file)
-                return
-
-        # 列出该时间戳下可用的文件
-        available = []
-        if os.path.isfile(report_file):
-            available.append("risk_report.md")
-        if os.path.isfile(audit_file):
-            available.append("audit.jsonl")
-
-        if not available:
+        result = self._file_manager.find_monitor_report(ts, path_parts)
+        if result is None:
             self._send_error(404, f"No Monitor report found for timestamp: {ts}")
             return
-
-        if len(available) == 1 and os.path.isfile(report_file):
-            # 只有一个报告文件，直接返回
-            self._serve_file_content(report_file)
+        if result["kind"] == "file":
+            self._serve_file_content(result["file"])
             return
-
-        # 多个文件：返回目录列表
-        self._send_json({"directory": True, "files": available,
-                         "base_path": "/".join(path_parts)})
+        self._send_json(result["listing"])
 
     def _serve_file_content(self, filepath: str):
         """安全读取并返回文件内容"""
@@ -920,290 +1020,191 @@ class ObserverHTTPHandler(BaseHTTPRequestHandler):
             "status": "running",
         })
 
-    def _handle_tests_run(self):
-        """POST /api/tests/run — 同步运行单元测试"""
-        start_time = time.time()
+    def _handle_tests_run(self, body=None):
+        """POST /api/tests/run — 运行测试（body 可带 scope: unit/api/sse/all）
+
+        委托统一测试入口 run_tests.py（与 CLI test 域同一实现）；
+        默认 unit + failfast 保持向后兼容（test_api.py 冒烟第 10 项依赖）。
+        """
+        body = body or {}
+        scope = body.get("scope", "unit")
+        from run_tests import run_unit_tests, run_api_smoke, run_sse_smoke
         try:
-            result = subprocess.run(
-                [sys.executable, "-m", "pytest", "tests/", "-x", "--tb=short", "-q"],
-                capture_output=True, text=True, timeout=120,
-                cwd=BASE_DIR, encoding="utf-8", errors="replace",
-            )
-            duration = round(time.time() - start_time, 1)
-            output = result.stdout
-            # 解析 pytest 输出
-            passed, failed, total = 0, 0, 0
-            failed_names = []
-            for line in output.split("\n"):
-                line = line.strip()
-                if "passed" in line or "failed" in line:
-                    import re
-                    m_passed = re.search(r"(\d+) passed", line)
-                    m_failed = re.search(r"(\d+) failed", line)
-                    if m_passed:
-                        passed = int(m_passed.group(1))
-                    if m_failed:
-                        failed = int(m_failed.group(1))
-                if line.startswith("FAILED"):
-                    # 提取失败测试名
-                    parts = line.split("::", 1)
-                    if len(parts) > 1:
-                        failed_names.append(parts[-1].strip())
-            total = passed + failed
-            self._send_json({
-                "status": "completed" if result.returncode == 0 else "failed",
-                "total": total,
-                "passed": passed,
-                "failed": failed,
-                "failed_names": failed_names,
-                "duration_seconds": duration,
-                "output": output[-2000:],  # 截取最后 2000 字符
-            })
-        except subprocess.TimeoutExpired:
-            self._send_error(504, "Tests timed out (120s)")
+            if scope == "api":
+                ok = run_api_smoke()
+                self._send_json({"status": "completed" if ok else "failed",
+                                 "scope": "api", "passed": ok})
+                return
+            if scope == "sse":
+                ok = run_sse_smoke()
+                self._send_json({"status": "completed" if ok else "failed",
+                                 "scope": "sse", "passed": ok})
+                return
+            if scope == "all":
+                unit = run_unit_tests(failfast=False)
+                api_ok = run_api_smoke()
+                sse_ok = run_sse_smoke()
+                ok = (unit.get("status") == "completed") and api_ok and sse_ok
+                self._send_json({"status": "completed" if ok else "failed",
+                                 "scope": "all",
+                                 "unit": unit, "api": api_ok, "sse": sse_ok})
+                return
+            # 默认 unit（failfast 向后兼容）
+            result = run_unit_tests(failfast=True)
+            if result["status"] == "timeout":
+                self._send_error(504, "Tests timed out")
+                return
+            self._send_json(result)
         except Exception as e:
             self._send_error(500, f"Failed to run tests: {e}")
 
+    # ══════════════════════════════════════════════════════════
+    #  环境检测 API（会话级缓存 + 手动重检；复用 check_env / platform_detect）
+    # ══════════════════════════════════════════════════════════
+
+    def _handle_env_status(self):
+        """GET /api/env/status — 轻量环境检测状态 + 平台能力（会话级缓存）"""
+        plat = _get_platform()
+        self._send_json({
+            "platform": {
+                "name": plat.platform,
+                "is_windows": plat.is_windows,
+                "is_linux": plat.is_linux,
+                "has_ebpf": plat.has_ebpf,
+                "has_strace": plat.has_strace,
+            },
+            "mode_hint": _mode_hint(),
+            "light": _env_payload(_env_items(light=True), light=True),
+        })
+
+    def _handle_env_check(self, body):
+        """POST /api/env/check {light} — 手动重检（强制刷新会话缓存）"""
+        light = bool(body.get("light", False))
+        self._send_json(_env_payload(_env_items(light=light, refresh=True), light=light))
+
+    def _handle_sse_tests_run(self, scope):
+        """GET /api/tests/stream?scope=unit|api|sse|all — SSE 流式运行测试
+
+        复用 run_tests.py 单一事实来源（与 CLI test 域同一实现），
+        逐 scope 推送 scope_start / scope_done 事件。
+        """
+        scope = scope or "unit"
+        if scope not in ("unit", "api", "sse", "all"):
+            self._send_error(400, f"Invalid scope: {scope}. Use unit/api/sse/all")
+            return
+
+        self.send_response(200)
+        self.send_header("Content-Type", "text/event-stream")
+        self.send_header("Cache-Control", "no-cache")
+        self.send_header("Connection", "keep-alive")
+        self._send_cors_headers()
+        self.end_headers()
+
+        labels = {"unit": "单元测试（pytest 全量）", "api": "API 冒烟测试",
+                  "sse": "SSE 冒烟测试", "all": "全部测试（unit → api → sse）"}
+        scopes = ["unit"] if scope == "unit" else (
+            ["unit", "api", "sse"] if scope == "all" else [scope])
+        try:
+            from run_tests import run_unit_tests, run_api_smoke, run_sse_smoke
+            self._sse_send({"type": "tests_start", "scope": scope,
+                            "scopes": scopes, "label": labels[scope]})
+            overall_passed = True
+            for sc in scopes:
+                self._sse_send({"type": "scope_start", "scope": sc, "label": labels[sc]})
+                if sc == "unit":
+                    result = run_unit_tests(failfast=False)
+                    ok = (result.get("status") == "completed")
+                    self._sse_send({"type": "scope_done", "scope": sc, "passed": ok,
+                                    "label": labels[sc],
+                                    "result": {
+                                        "total": result.get("total", 0),
+                                        "passed": result.get("passed", 0),
+                                        "failed": result.get("failed", 0),
+                                        "failed_names": result.get("failed_names", []),
+                                        "duration_seconds": result.get("duration_seconds", 0),
+                                        "output": result.get("output", "")[-2000:],
+                                    }})
+                else:
+                    ok = run_api_smoke() if sc == "api" else run_sse_smoke()
+                    self._sse_send({"type": "scope_done", "scope": sc, "passed": ok,
+                                    "label": labels[sc]})
+                overall_passed = overall_passed and ok
+            self._sse_send({"type": "tests_done", "passed": overall_passed,
+                            "message": "全部测试通过" if overall_passed else "存在失败项"})
+        except Exception as e:
+            self._sse_send({"type": "error", "message": str(e)})
+
+    def _handle_samples_gen(self):
+        """POST /api/samples/gen — 重新生成 37 个场景 YAML（复用 generate_scenarios.py）"""
+        script = os.path.join(BASE_DIR, "generate_scenarios.py")
+        try:
+            proc = subprocess.run(
+                [sys.executable, script], capture_output=True, text=True,
+                timeout=60, cwd=BASE_DIR, encoding="utf-8", errors="replace")
+            out = (proc.stdout or "")[-2000:]
+            if proc.returncode == 0:
+                self._send_json({"success": True,
+                                 "message": "场景 YAML 重新生成完成",
+                                 "output": out})
+            else:
+                self._send_error(500, f"场景生成失败（退出码 {proc.returncode}）: "
+                                      f"{(proc.stderr or '')[-500:]}")
+        except subprocess.TimeoutExpired:
+            self._send_error(504, "场景生成超时（60s）")
+
     def _handle_reports_delete(self, body):
-        """POST /api/reports/delete — 三级删除"""
+        """POST /api/reports/delete — 三级删除（薄绑定 OutputFileManager）"""
         scope = body.get("scope", "")
 
         if scope == "all":
-            return self._delete_reports_all()
+            return self._delete_reports(scope)
         elif scope == "category":
             category = body.get("category", "")
             all_valid = list(CATEGORY_DIRS) + EXTRA_REPORT_DIRS
             if not category or category not in all_valid:
                 self._send_error(400, f"Invalid category: {category}")
                 return
-            return self._delete_reports_category(category)
+            return self._delete_reports(scope, category=category)
         elif scope == "scenario":
             scenario_id = body.get("scenario_id", "")
             category = body.get("category", "")
             if not scenario_id:
                 self._send_error(400, "Missing 'scenario_id'")
                 return
-            return self._delete_reports_scenario(scenario_id, category)
+            return self._delete_reports(scope, category=category, scenario_id=scenario_id)
         else:
             self._send_error(400, f"Invalid scope: {scope}. Use 'all', 'category', or 'scenario'")
 
-    def _delete_reports_all(self):
-        """删除所有报告"""
-        deleted_dirs = 0
-        deleted_files = 0
-        if os.path.isdir(REPORTS_DIR):
-            for cat_id in list(CATEGORY_DIRS) + EXTRA_REPORT_DIRS:
-                cat_dir = os.path.join(REPORTS_DIR, cat_id)
-                if os.path.isdir(cat_dir):
-                    for scenario_dir in os.listdir(cat_dir):
-                        scenario_path = os.path.join(cat_dir, scenario_dir)
-                        if os.path.isdir(scenario_path):
-                            for ts_dir in os.listdir(scenario_path):
-                                ts_path = os.path.join(scenario_path, ts_dir)
-                                if os.path.isdir(ts_path):
-                                    count = sum(len(files) for _, _, files in os.walk(ts_path))
-                                    deleted_files += count
-                                    deleted_dirs += 1
-                                    shutil.rmtree(ts_path, ignore_errors=True)
+    def _delete_reports(self, scope, category="", scenario_id=""):
+        """三级删除执行（薄绑定：请求校验在上层，删除下沉 OutputFileManager）"""
+        deleted = self._file_manager.delete_reports(scope, category, scenario_id)
         self._send_json({
             "success": True,
-            "deleted": {"directories": deleted_dirs, "files": deleted_files},
-        })
-
-    def _delete_reports_category(self, category):
-        """删除指定分类的所有报告"""
-        deleted_dirs = 0
-        deleted_files = 0
-        cat_dir = os.path.join(REPORTS_DIR, category)
-        if os.path.isdir(cat_dir):
-            for scenario_dir in os.listdir(cat_dir):
-                scenario_path = os.path.join(cat_dir, scenario_dir)
-                if os.path.isdir(scenario_path):
-                    for ts_dir in os.listdir(scenario_path):
-                        ts_path = os.path.join(scenario_path, ts_dir)
-                        if os.path.isdir(ts_path):
-                            count = sum(len(files) for _, _, files in os.walk(ts_path))
-                            deleted_files += count
-                            deleted_dirs += 1
-                            shutil.rmtree(ts_path, ignore_errors=True)
-        self._send_json({
-            "success": True,
-            "deleted": {"directories": deleted_dirs, "files": deleted_files},
-        })
-
-    def _delete_reports_scenario(self, scenario_id, category):
-        """删除指定场景的所有报告"""
-        deleted_dirs = 0
-        deleted_files = 0
-        dirs_to_search = [category] if category else list(CATEGORY_DIRS) + EXTRA_REPORT_DIRS
-        for cat_id in dirs_to_search:
-            scenario_dir = os.path.join(REPORTS_DIR, cat_id, scenario_id)
-            if os.path.isdir(scenario_dir):
-                for ts_dir in os.listdir(scenario_dir):
-                    ts_path = os.path.join(scenario_dir, ts_dir)
-                    if os.path.isdir(ts_path):
-                        count = sum(len(files) for _, _, files in os.walk(ts_path))
-                        deleted_files += count
-                        deleted_dirs += 1
-                        shutil.rmtree(ts_path, ignore_errors=True)
-        self._send_json({
-            "success": True,
-            "deleted": {"directories": deleted_dirs, "files": deleted_files},
+            "deleted": deleted,
         })
 
     # ══════════════════════════════════════════════════════════
     #  统一文件管理系统 API
     # ══════════════════════════════════════════════════════════
 
-    # 安全目录白名单：仅允许管理系统自身产生的文件
-    _SAFE_ROOTS = {
-        "records": os.path.join(PROJECT_DIR, "records"),
-        "monitoring": MONITORING_OUTPUT_DIR,
-        "reports": REPORTS_DIR,
-        "unit_test": os.path.join(BASE_DIR, "output", "unit_test"),
-    }
+    # U7: 文件/报告管理已下沉至 observer_core/audit/file_manager.py，
+    # HTTP 层只保留薄绑定；安全根白名单与路径校验由 OutputFileManager 管理
+    # mcp_monitoring 分区：只读 workbuddy_connect.yaml 推导（失败不影响四区）
+    _file_manager = OutputFileManager(BASE_DIR, PROJECT_DIR,
+                                      extra_roots=_mcp_monitoring_extra_roots())
 
     def _get_files_tree(self):
-        """GET /api/files/tree — 返回分类文件树"""
-        tree = {}
-
-        # 1. 录制文件 (records/)
-        if os.path.isdir(RECORDS_DIR):
-            records_tree = []
-            for d in sorted(os.listdir(RECORDS_DIR), reverse=True):
-                dpath = os.path.join(RECORDS_DIR, d)
-                if not os.path.isdir(dpath):
-                    continue
-                children = self._scan_dir_files(dpath, RECORDS_DIR, "records")
-                if children:
-                    records_tree.append({
-                        "name": d, "type": "dir",
-                        "children": children,
-                    })
-            if records_tree:
-                tree["records"] = {"label": "录制文件", "icon": "🎬",
-                                   "children": records_tree}
-
-        # 2. 监测报告 (output/demo_monitoring/)
-        mon_tree = []
-        mon_base = MONITORING_OUTPUT_DIR
-        if os.path.isdir(mon_base):
-            for sub in ["reports", "audit", "graphs"]:
-                sub_path = os.path.join(mon_base, sub)
-                if os.path.isdir(sub_path):
-                    children = self._scan_dir_files(sub_path, mon_base, "monitoring")
-                    if children:
-                        mon_tree.append({
-                            "name": sub, "type": "dir",
-                            "children": children,
-                        })
-            # monitoring_summary.json
-            summary_path = os.path.join(mon_base, "monitoring_summary.json")
-            if os.path.isfile(summary_path):
-                mon_tree.append({
-                    "name": "monitoring_summary.json",
-                    "type": "file",
-                    "size": os.path.getsize(summary_path),
-                    "path": "monitoring/monitoring_summary.json",
-                })
-        if mon_tree:
-            tree["monitoring"] = {"label": "监测报告 (Agent)", "icon": "📡",
-                                  "children": mon_tree}
-
-        # 3. 场景模拟报告 (output/reports/)
-        if os.path.isdir(REPORTS_DIR):
-            rep_tree = []
-            for cat_id in sorted(os.listdir(REPORTS_DIR)):
-                cat_path = os.path.join(REPORTS_DIR, cat_id)
-                if not os.path.isdir(cat_path):
-                    continue
-                cat_children = []
-                for sc_dir in sorted(os.listdir(cat_path)):
-                    sc_path = os.path.join(cat_path, sc_dir)
-                    if not os.path.isdir(sc_path):
-                        continue
-                    children = self._scan_dir_files(sc_path, REPORTS_DIR, "reports")
-                    if children:
-                        cat_children.append({
-                            "name": sc_dir, "type": "dir",
-                            "children": children,
-                        })
-                if cat_children:
-                    cat_name = CATEGORY_META.get(cat_id, (cat_id,))[0]
-                    rep_tree.append({
-                        "name": f"{cat_name}", "type": "dir",
-                        "children": cat_children,
-                    })
-            if rep_tree:
-                tree["reports"] = {"label": "场景模拟报告", "icon": "📊",
-                                   "children": rep_tree}
-
-        # 4. pytest 测试输出 (output/unit_test/)
-        ut_path = os.path.join(BASE_DIR, "output", "unit_test")
-        if os.path.isdir(ut_path):
-            children = self._scan_dir_files(ut_path, ut_path, "unit_test")
-            if children:
-                tree["unit_test"] = {"label": "Pytest 测试输出", "icon": "🧪",
-                                     "children": children}
-
-        return {"tree": tree}
-
-    def _scan_dir_files(self, dirpath, base_dir, path_prefix="", _depth=0):
-        """递归扫描目录下的文件，返回文件树节点列表。
-        path_prefix: 所有文件路径前添加的分类前缀（如 "monitoring"）
-        """
-        if _depth > 5:
-            return []
-        items = []
-        try:
-            entries = sorted(os.listdir(dirpath))
-        except PermissionError:
-            return []
-        for name in entries:
-            full = os.path.join(dirpath, name)
-            rel = os.path.relpath(full, base_dir)
-            if name.startswith("."):
-                continue
-            if os.path.isdir(full):
-                children = self._scan_dir_files(full, base_dir, path_prefix, _depth + 1)
-                item = {"name": name, "type": "dir"}
-                if children:
-                    item["children"] = children
-                else:
-                    item["children"] = []
-                items.append(item)
-            elif os.path.isfile(full):
-                path = os.path.join(path_prefix, rel) if path_prefix else rel
-                items.append({
-                    "name": name,
-                    "type": "file",
-                    "size": os.path.getsize(full),
-                    "path": path,
-                })
-        return items
+        """GET /api/files/tree — 返回分类文件树（薄绑定 OutputFileManager）"""
+        return self._file_manager.build_tree()
 
     def _serve_file_view(self, file_path):
-        """GET /api/files/view?path=... — 安全读取并返回任意系统输出文件内容"""
+        """GET /api/files/view?path=... — 安全读取并返回任意系统输出文件内容
+        （薄绑定：路径解析下沉 OutputFileManager.resolve）"""
         if not file_path:
             self._send_error(400, "Missing 'path' parameter")
             return
 
-        # 在前缀上匹配安全根目录
-        resolved = None
-        for prefix, root in self._SAFE_ROOTS.items():
-            # path 可以是 "records/xxx"、"monitoring/reports/xxx"、"reports/xxx" 等
-            if file_path.startswith(prefix + "/") or file_path == prefix:
-                resolved = os.path.realpath(os.path.join(root, file_path[len(prefix) + 1:] if file_path != prefix else ""))
-                if not resolved.startswith(os.path.realpath(root) + os.sep) and resolved != os.path.realpath(root):
-                    resolved = None
-                    continue
-                break
-            # 也支持直接用完整路径匹配
-            if file_path.startswith(root):
-                resolved = os.path.realpath(file_path)
-                if resolved.startswith(os.path.realpath(root) + os.sep) or resolved == os.path.realpath(root):
-                    break
-                resolved = None
+        resolved = self._file_manager.resolve(file_path)
 
         if resolved is None:
             self._send_error(403, "Access denied: invalid path")
@@ -1234,25 +1235,20 @@ class ObserverHTTPHandler(BaseHTTPRequestHandler):
         self._serve_file_content(resolved)
 
     def _handle_files_delete(self, body):
-        """POST /api/files/delete — 删除文件或目录（仅系统自身产物）"""
+        """POST /api/files/delete — 删除文件或目录（仅系统自身产物）
+        （薄绑定：路径解析与删除下沉 OutputFileManager）"""
         path = body.get("path", "")
         if not path:
             self._send_error(400, "Missing 'path' parameter")
             return
 
-        # 安全检查
-        resolved = None
-        for prefix, root in self._SAFE_ROOTS.items():
-            if path.startswith(prefix + "/") or path == prefix:
-                resolved = os.path.realpath(os.path.join(root, path[len(prefix) + 1:] if path != prefix else ""))
-                safe_root = os.path.realpath(root)
-                if not resolved.startswith(safe_root + os.sep) and resolved != safe_root:
-                    self._send_error(403, "Access denied: path traversal detected")
-                    return
-                break
-
+        # 安全检查（resolve_strict 与 U7 下沉前行为逐字一致）
+        resolved, err = self._file_manager.resolve_strict(path)
         if resolved is None:
-            self._send_error(403, "Access denied: unknown path prefix")
+            if err == "traversal":
+                self._send_error(403, "Access denied: path traversal detected")
+            else:
+                self._send_error(403, "Access denied: unknown path prefix")
             return
 
         if not os.path.exists(resolved):
@@ -1260,58 +1256,33 @@ class ObserverHTTPHandler(BaseHTTPRequestHandler):
             return
 
         try:
-            if os.path.isdir(resolved):
-                deleted_files = sum(len(files) for _, _, files in os.walk(resolved))
-                shutil.rmtree(resolved, ignore_errors=True)
-                self._send_json({
-                    "success": True,
-                    "deleted": {"type": "directory", "name": os.path.basename(resolved),
-                                "files": deleted_files},
-                })
-            else:
-                os.remove(resolved)
-                self._send_json({
-                    "success": True,
-                    "deleted": {"type": "file", "name": os.path.basename(resolved),
-                                "files": 1},
-                })
+            deleted = self._file_manager.delete_resolved(resolved)
+            self._send_json({
+                "success": True,
+                "deleted": deleted,
+            })
         except Exception as e:
             self._send_error(500, f"Delete failed: {e}")
 
     def _handle_files_delete_category(self, body):
-        """POST /api/files/delete-category — 批量删除某个分类下的全部文件"""
+        """POST /api/files/delete-category — 批量删除某个分类下的全部文件
+        （薄绑定：删除执行下沉 OutputFileManager）"""
         category = body.get("category", "")
-        if category not in self._SAFE_ROOTS:
-            self._send_error(400, f"Invalid category: {category}. Must be one of {list(self._SAFE_ROOTS.keys())}")
+        safe_roots = self._file_manager.safe_roots
+        if category not in safe_roots:
+            self._send_error(400, f"Invalid category: {category}. Must be one of {list(safe_roots.keys())}")
             return
 
-        root = self._SAFE_ROOTS[category]
-        if not os.path.isdir(root):
+        if not os.path.isdir(safe_roots[category]):
             self._send_json({"success": True, "deleted": {"type": "directory", "name": category, "files": 0}, "message": "目录不存在，无需删除"})
             return
 
         try:
-            # 统计并删除目录下所有文件和子目录
-            total_files = 0
-            for _root, _dirs, files in os.walk(root):
-                for f in files:
-                    file_path = os.path.join(_root, f)
-                    try:
-                        os.remove(file_path)
-                        total_files += 1
-                    except OSError:
-                        pass
-            # 删除空子目录
-            for _root, dirs, _files in os.walk(root, topdown=False):
-                for d in dirs:
-                    try:
-                        os.rmdir(os.path.join(_root, d))
-                    except OSError:
-                        pass
+            deleted = self._file_manager.delete_category(category)
             self._send_json({
                 "success": True,
-                "deleted": {"type": "directory", "name": category, "files": total_files},
-                "message": f"已清空 {category} 分类：{total_files} 个文件"
+                "deleted": deleted,
+                "message": f"已清空 {category} 分类：{deleted['files']} 个文件"
             })
         except Exception as e:
             self._send_error(500, f"Batch delete failed: {e}")
@@ -1870,73 +1841,27 @@ class ObserverHTTPHandler(BaseHTTPRequestHandler):
         return tool_calls, base_ts, scenario
 
     def _tool_calls_to_events(self, tool_calls, base_ts, agent_id, scenario_id):
-        """将 DeepAgent YAML tool_calls 转换为 RawEvent 列表"""
-        _EXEC_TOOLS = {"execute", "execute_command", "run_command", "shell", "bash"}
-        _READ_TOOLS = {"read_file", "read", "cat", "list_files", "grep", "glob"}
-        _WRITE_TOOLS = {"write_file", "write", "edit_file", "edit", "patch"}
-        _NET_TOOLS = {"web_fetch", "fetch", "web_search", "browse", "curl"}
+        """将 DeepAgent YAML tool_calls 转换为 RawEvent 列表。
+
+        转换逻辑已收敛到 RawEventFactory.from_tool_call（单一转换点），
+        本方法仅负责事件编排（seq / 时间推进 / pid 递增）。
+        """
+        from observer_core.monitoring.raw_event_factory import RawEventFactory
         events = []
         ts = base_ts
         pid = 10000
         for i, tc in enumerate(tool_calls):
-            tool_name = tc.get("tool", "").lower().strip()
-            tool_input = tc.get("input", {})
             delay_ms = tc.get("delay_ms", 100)
             ts += int(delay_ms * 1_000_000)
             eid = f"evt-{agent_id}-{i+1:04d}"
             pid += 1
-            base_kwargs = dict(
+            events.append(RawEventFactory.from_tool_call(
+                tc,
                 event_id=eid, timestamp_ns=ts, pid=pid, ppid=1,
                 agent_id=agent_id, agent_framework="deep-agent",
-            )
-            if tool_name in _EXEC_TOOLS:
-                cmd = tool_input.get("command", "echo hello")
-                parts = cmd.split()
-                events.append(RawEvent(
-                    event_type="exec",
-                    executable=parts[0] if parts else cmd,
-                    arguments=parts[1:] if len(parts) > 1 else [],
-                    **base_kwargs,
-                ))
-            elif tool_name in _READ_TOOLS:
-                fpath = tool_input.get("path", "/tmp/unknown")
-                events.append(RawEvent(
-                    event_type="file_open",
-                    file_path=fpath, file_op="read",
-                    **base_kwargs,
-                ))
-            elif tool_name in _WRITE_TOOLS:
-                fpath = tool_input.get("path", "/tmp/unknown")
-                events.append(RawEvent(
-                    event_type="file_open",
-                    file_path=fpath, file_op="write",
-                    **base_kwargs,
-                ))
-            elif tool_name in _NET_TOOLS:
-                url = tool_input.get("url", "https://example.com")
-                host, port = self._extract_host_port(url)
-                events.append(RawEvent(
-                    event_type="net_conn",
-                    remote_addr=host, remote_port=port,
-                    **base_kwargs,
-                ))
-            else:
-                events.append(RawEvent(
-                    event_type="exec",
-                    executable=tool_name, arguments=[],
-                    **base_kwargs,
-                ))
+            ))
         return events
 
-    def _extract_host_port(self, url):
-        """从 URL 提取 host 和 port"""
-        import re
-        m = re.match(r'(\w+)://([^:/]+)(?::(\d+))?', url)
-        if m:
-            host = m.group(2)
-            port = int(m.group(3)) if m.group(3) else (443 if url.startswith("https") else 80)
-            return host, port
-        return "unknown.host", 443
 
     def _sse_send(self, data):
         """SSE 发送单条消息"""
@@ -1977,15 +1902,23 @@ class ObserverHTTPHandler(BaseHTTPRequestHandler):
             "deleted": {"directories": deleted_dirs, "files": deleted_files},
         })
 
-    def _handle_sse_replay(self, session_id):
-        """GET /api/demo/replay?session_id=xxx — SSE: 回放指定录制会话
+    def _handle_sse_replay(self, session_id, no_rollup=False):
+        """GET /api/demo/replay?session_id=xxx&no_rollup=1 — SSE: 回放指定录制会话
 
         使用 Monitor + agent_sim --replay-file FIFO 架构：
         1. 启动 Monitor 守护进程
         2. 运行 agent_sim --replay-file <events.jsonl> 将事件注入 FIFO
         3. Monitor 从 FIFO 读取并执行全链路 Pipeline
         4. 流式推送 step 事件 + replay_done
+
+        no_rollup: test_report 轻量测试报告模式（阶段 3）——仅记录 L0
+            原始事件，不触发 L1→L2→L3 分层聚合，结束后一次性输出报告。
+            默认 False（走完整生产分层路径）。
         """
+        allowed, err = _platform_gate("record-replay")
+        if not allowed:
+            self._send_error(403, err)
+            return
         if not session_id:
             self._send_error(400, "Missing session_id")
             return
@@ -2014,6 +1947,7 @@ class ObserverHTTPHandler(BaseHTTPRequestHandler):
                     "type": "replay_start",
                     "session_id": session_id,
                     "replay_id": replay_ts,
+                    "no_rollup": bool(no_rollup),
                     "message": f"开始回放会话 {session_id}"
                 })
 
@@ -2028,7 +1962,7 @@ class ObserverHTTPHandler(BaseHTTPRequestHandler):
 
                 # Step 1: 确保 Monitor 运行
                 self._sse_send({"type": "log", "message": "正在启动 Monitor 守护进程..."})
-                mon_status = self._ensure_monitor_running()
+                mon_status = self._ensure_monitor_running(no_rollup=no_rollup)
                 if not mon_status or not mon_status["monitor_running"]:
                     self._sse_send({"type": "error", "message": "Monitor 启动失败"})
                     return
@@ -2123,7 +2057,8 @@ class ObserverHTTPHandler(BaseHTTPRequestHandler):
         """GET /api/monitor/status — 检测Monitor守护进程运行状态"""
         return MonitorLifecycleManager.instance().status()
 
-    def _ensure_monitor_running(self, record: bool = False):
+    def _ensure_monitor_running(self, record: bool = False,
+                                no_rollup: bool = False):
         """
         确保 Monitor 守护进程在运行（内部方法，不返回 HTTP 响应）。
 
@@ -2134,31 +2069,53 @@ class ObserverHTTPHandler(BaseHTTPRequestHandler):
 
         Args:
             record: 是否启用旁路录制
+            no_rollup: test_report 轻量测试报告模式（默认 False，
+                走完整生产分层路径；True 时仅 L0 记录 + 结束一次性报告）
 
         Returns:
             dict: Monitor 状态 或 None（启动失败）
         """
-        return MonitorLifecycleManager.instance().start_monitor(record=record)
+        return MonitorLifecycleManager.instance().start_monitor(
+            record=record, no_rollup=no_rollup)
 
-    def _handle_monitor_start(self):
-        """POST /api/monitor/start — 启动Monitor守护进程"""
+    def _handle_monitor_start(self, body=None):
+        """POST /api/monitor/start — 启动Monitor守护进程
+
+        body 可选字段:
+            no_rollup: bool — test_report 轻量测试报告模式开关（默认 False）。
+                开启后仅记录 L0 原始事件与必要摘要，不触发 L1→L2→L3
+                分层聚合，监测结束后一次性输出报告。
+                （Monitor 已运行时幂等返回，模式切换需先停止）
+        """
+        allowed, err = _platform_gate("daemon")
+        if not allowed:
+            self._send_json({"success": False, "error": err, "blocked": "platform"},
+                            status=403)
+            return
+        body = body or {}
+        if isinstance(body, str):
+            body = {}
+        no_rollup = bool(body.get("no_rollup"))
         status = self._get_monitor_status()
         if status["monitor_running"]:
             self._send_json({"success": True, "message": "Monitor already running",
                              "pid": status["monitor_pid"], "already_running": True,
                              "monitor_running": True,
+                             "no_rollup": no_rollup,
                              "fifo_path": status["fifo_path"],
                              "fifo_exists": status["fifo_exists"]})
             return
 
-        result = self._ensure_monitor_running()
+        result = self._ensure_monitor_running(no_rollup=no_rollup)
         if result and result["monitor_running"]:
             self._send_json({"success": True, "pid": result["monitor_pid"],
                              "monitor_running": True,
+                             "no_rollup": no_rollup,
                              "fifo": MONITORING_FIFO,
                              "fifo_path": result["fifo_path"],
                              "fifo_exists": result["fifo_exists"],
-                             "message": f"Monitor started (PID={result['monitor_pid']})"})
+                             "message": f"Monitor started (PID={result['monitor_pid']})"
+                                        + ("，test_report 轻量模式" if no_rollup else "")})
         else:
             self._send_error(500, "Failed to start monitor")
 
@@ -2184,7 +2141,8 @@ class ObserverHTTPHandler(BaseHTTPRequestHandler):
         if report.get("available") and report["summary"].get("audit_file"):
             audit_name = os.path.basename(report["summary"]["audit_file"])
             import re as _re_stop
-            m = _re_stop.match(r'audit_demo_monitoring_(\d{8}_\d{6})\.jsonl$', audit_name)
+            # L-T3: 按天滚动后 audit 文件名只含日期（YYYYMMDD）
+            m = _re_stop.match(r'audit_demo_monitoring_(\d{8})\.jsonl$', audit_name)
             if m:
                 ts = m.group(1)
                 existing_tags = self._load_report_tags()
@@ -2220,6 +2178,96 @@ class ObserverHTTPHandler(BaseHTTPRequestHandler):
             return {"available": True, "summary": summary}
         except Exception as e:
             return {"available": False, "error": str(e)}
+
+    # ══════════════════════════════════════════════════════════
+    #  MCP 申报监测 API（WorkBuddy 降级监测通道）
+    #  生命周期与状态复用 mcp_report_gateway.py（只读 workbuddy_connect.yaml），
+    #  start/stop/smoke 在后台线程执行，前端轮询 /api/mcp-report/status。
+    # ══════════════════════════════════════════════════════════
+
+    def _mcp_gateway(self):
+        """延迟导入门面（避免 Web 服务启动路径引入额外依赖）。"""
+        import mcp_report_gateway
+        return mcp_report_gateway
+
+    def _get_mcp_report_status(self):
+        """GET /api/mcp-report/status — 通道状态 + 最近判定 + 后台任务。"""
+        gw = self._mcp_gateway()
+        try:
+            status = gw.get_status()
+        except Exception as e:  # noqa: BLE001
+            return {"error": f"读取 workbuddy_connect.yaml 失败: {e}"}
+        status["tasks"] = {name: gw.task_state(name)
+                           for name in ("start", "stop", "smoke")}
+        return status
+
+    def _get_mcp_report_artifacts(self):
+        """GET /api/mcp-report/artifacts — 报告/审计/汇总产物清单。"""
+        gw = self._mcp_gateway()
+        try:
+            return gw.get_artifacts()
+        except Exception as e:  # noqa: BLE001
+            return {"error": str(e), "artifacts": []}
+
+    def _get_mcp_report_logs(self, params):
+        """GET /api/mcp-report/logs?lines=N — daemon 日志尾部。"""
+        gw = self._mcp_gateway()
+        try:
+            lines = int((params.get("lines", ["60"])[0]) or "60")
+        except ValueError:
+            lines = 60
+        try:
+            return gw.get_logs(min(max(lines, 1), 500))
+        except Exception as e:  # noqa: BLE001
+            return {"error": str(e), "lines": ""}
+
+    def _get_mcp_report_task(self, name):
+        """GET /api/mcp-report/task?name=start|stop|smoke — 后台任务状态。"""
+        gw = self._mcp_gateway()
+        return gw.task_state(name if name in ("start", "stop", "smoke")
+                             else "start")
+
+    def _handle_mcp_report_start(self, body=None):
+        """POST /api/mcp-report/start — 后台线程启动 MCP 申报 daemon。
+
+        body 可选 {"no_rollup": true}：test_report 轻量测试报告模式（阶段 3），
+        默认 False（走完整生产分层路径）。
+        """
+        if isinstance(body, str):
+            body = {}
+        body = body or {}
+        no_rollup = bool(body.get("no_rollup"))
+        gw = self._mcp_gateway()
+        if gw.run_task("start", lambda: gw.start(no_rollup=no_rollup)):
+            self._send_json({"success": True, "accepted": True,
+                             "no_rollup": no_rollup,
+                             "message": "已发起启动，请轮询 status"})
+        else:
+            self._send_json({"success": False, "accepted": False,
+                             "error": "busy",
+                             "message": "已有启动任务在进行中"})
+
+    def _handle_mcp_report_stop(self):
+        """POST /api/mcp-report/stop — 后台线程优雅停止（触发报告生成）。"""
+        gw = self._mcp_gateway()
+        if gw.run_task("stop", gw.stop):
+            self._send_json({"success": True, "accepted": True,
+                             "message": "已发起停止，请轮询 status"})
+        else:
+            self._send_json({"success": False, "accepted": False,
+                             "error": "busy",
+                             "message": "已有停止任务在进行中"})
+
+    def _handle_mcp_report_smoke(self):
+        """POST /api/mcp-report/smoke — 后台线程执行申报烟测。"""
+        gw = self._mcp_gateway()
+        if gw.run_task("smoke", gw.smoke):
+            self._send_json({"success": True, "accepted": True,
+                             "message": "已发起烟测，请轮询 task?name=smoke"})
+        else:
+            self._send_json({"success": False, "accepted": False,
+                             "error": "busy",
+                             "message": "已有烟测任务在进行中"})
 
     # ══════════════════════════════════════════════════════════
     #  实时监测事件流 (SSE tail audit log)
@@ -2482,6 +2530,10 @@ class ObserverHTTPHandler(BaseHTTPRequestHandler):
 
     def _handle_sse_agent_sim_scenario(self, sc):
         """SSE: 运行 agent_sim 场景（Monitor + agent_sim FIFO通信）"""
+        allowed, err = _platform_gate("daemon")
+        if not allowed:
+            self._send_error(403, err)
+            return
         scenario_path = os.path.join(
             SCENARIOS_DIR, "deep_agent",
             f"{sc['scenario_id']}_blocking_tier2_test.yaml" if sc['scenario_id'] == 'da05'
@@ -2546,9 +2598,9 @@ class ObserverHTTPHandler(BaseHTTPRequestHandler):
                 # 将此报告标记为 agent_sim 来源
                 if report.get("available") and report["summary"].get("audit_file"):
                     audit_name = os.path.basename(report["summary"]["audit_file"])
-                    # audit_demo_monitoring_20260809_134608.jsonl → 20260809_134608
+                    # L-T3: audit_demo_monitoring_20260809.jsonl → 20260809（按天滚动）
                     import re as _re3
-                    m = _re3.match(r'audit_demo_monitoring_(\d{8}_\d{6})\.jsonl$', audit_name)
+                    m = _re3.match(r'audit_demo_monitoring_(\d{8})\.jsonl$', audit_name)
                     if m:
                         self._tag_report_source(m.group(1), "agent_sim")
 
@@ -2618,6 +2670,10 @@ class ObserverHTTPHandler(BaseHTTPRequestHandler):
         mode="record":  Monitor 启用 --record 旁路录制，agent_sim 写 FIFO
         mode="monitor": Monitor 正常处理，agent_sim 写 FIFO，推送 step 事件
         """
+        allowed, err = _platform_gate("record-replay")
+        if not allowed:
+            self._send_error(403, err)
+            return
         self.send_response(200)
         self.send_header("Content-Type", "text/event-stream")
         self.send_header("Cache-Control", "no-cache")
@@ -2772,13 +2828,21 @@ class ObserverHTTPHandler(BaseHTTPRequestHandler):
     #  录制解耦：纯录制模式（不运行 Agent）
     # ══════════════════════════════════════════════════════════
 
-    def _handle_sse_record_start_only(self):
-        """GET /api/demo/record/start — SSE: 纯录制模式
+    def _handle_sse_record_start_only(self, no_rollup=False):
+        """GET /api/demo/record/start?no_rollup=1 — SSE: 纯录制模式
 
         仅启动 Monitor 守护进程（--record 模式），不运行任何 Agent。
         用户需在系统外手动启动 Agent 并通过 agent_bridge 将事件写入 FIFO。
         事件会通过 SSE 实时推送给前端，直到用户手动停止录制。
+
+        no_rollup: test_report 轻量测试报告模式（阶段 3）——仅记录 L0
+            原始事件，不触发 L1→L2→L3 分层聚合，结束后一次性输出报告。
+            默认 False（走完整生产分层路径）。
         """
+        allowed, err = _platform_gate("record-replay")
+        if not allowed:
+            self._send_error(403, err)
+            return
         self.send_response(200)
         self.send_header("Content-Type", "text/event-stream")
         self.send_header("Cache-Control", "no-cache")
@@ -2790,7 +2854,8 @@ class ObserverHTTPHandler(BaseHTTPRequestHandler):
             try:
                 # Step 1: 启动 Monitor（录制模式）
                 self._sse_send({"type": "log", "message": "正在启动 Monitor 守护进程（纯录制模式）..."})
-                mon_status = self._ensure_monitor_running(record=True)
+                mon_status = self._ensure_monitor_running(record=True,
+                                                          no_rollup=no_rollup)
                 if not mon_status or not mon_status["monitor_running"]:
                     self._sse_send({"type": "error", "message": "Monitor 启动失败"})
                     return
@@ -2800,6 +2865,7 @@ class ObserverHTTPHandler(BaseHTTPRequestHandler):
                                 "message": "录制已开始，请在终端中手动启动 Agent",
                                 "agent_command": f"cd deep-agents-demo && python run_agent.py --fifo ../.monitoring/pipe",
                                 "pid": mon_status["monitor_pid"],
+                                "no_rollup": bool(no_rollup),
                                 "fifo": MONITORING_FIFO})
 
                 # Step 2: 轮询审计日志，实时推送事件
@@ -3049,4 +3115,6 @@ def main():
 
 
 if __name__ == "__main__":
+    # U4: 统一入口为 observer.py，直接运行保留但打印一行提示
+    print("[提示] 统一入口: python observer.py serve [--host H --port P --no-browser]")
     main()

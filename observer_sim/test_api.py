@@ -1,10 +1,16 @@
-"""test_api.py — Phase 1 API 验证脚本"""
+"""test_api.py — Phase 1 API 验证脚本
+
+冒烟脚本：需先启动 Web 服务。
+- 独立运行: python test_api.py（默认 localhost:8080）
+- 统一入口: python main.py test api（自动拉起/关闭服务，端口经 argv 传入）
+"""
 import urllib.request
 import urllib.error
 import json
 import sys
 
-BASE = "http://localhost:8080"
+_port = sys.argv[1] if len(sys.argv) > 1 else "8080"
+BASE = f"http://localhost:{_port}"
 passed = 0
 failed = 0
 

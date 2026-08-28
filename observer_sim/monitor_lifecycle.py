@@ -40,7 +40,6 @@ import sys
 import time
 import signal
 import errno
-import fcntl
 import threading
 import subprocess
 from datetime import datetime
@@ -240,7 +239,8 @@ class MonitorLifecycleManager:
 
     # ── Monitor 启动 ──────────────────────────────────────────
 
-    def start_monitor(self, record: bool = False) -> Optional[Dict]:
+    def start_monitor(self, record: bool = False,
+                      no_rollup: bool = False) -> Optional[Dict]:
         """
         启动 Monitor 守护进程。
 
@@ -249,6 +249,10 @@ class MonitorLifecycleManager:
 
         Args:
             record: 是否启用旁路录制
+            no_rollup: test_report 轻量测试报告模式（阶段 3）：
+                仅记录 L0 原始事件，不触发 L1→L2→L3 分层聚合，
+                结束后一次性输出报告（转发 monitor_daemon --no-rollup）。
+                默认 False（走完整生产分层路径）。
 
         Returns:
             dict: Monitor 状态 (monitor_running, monitor_pid, fifo_path, ...)
@@ -296,6 +300,8 @@ class MonitorLifecycleManager:
             ]
             if record:
                 cmd.extend(["--record", "--record-dir", _records_dir()])
+            if no_rollup:
+                cmd.append("--no-rollup")
 
             # 启动 Monitor 子进程（stderr 重定向到日志文件以便排查问题）
             stderr_log = os.path.join(_monitoring_run_dir(), "monitor_stderr.log")
@@ -667,9 +673,11 @@ def shutdown_cleanup():
     MonitorLifecycleManager.instance().shutdown()
 
 
-def ensure_monitor_running(record: bool = False) -> Optional[Dict]:
+def ensure_monitor_running(record: bool = False,
+                          no_rollup: bool = False) -> Optional[Dict]:
     """确保 Monitor 运行 (兼容旧 _ensure_monitor_running 接口)"""
-    return MonitorLifecycleManager.instance().start_monitor(record=record)
+    return MonitorLifecycleManager.instance().start_monitor(
+        record=record, no_rollup=no_rollup)
 
 
 def get_monitor_status() -> Dict:

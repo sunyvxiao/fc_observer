@@ -187,64 +187,20 @@ class DeepAgentCollector(ICollector):
         pid_base = 60000
         for call in tool_calls:
             seq += 1
-            tool_name = call.get("tool", "execute")
-            tool_input = call.get("input", {})
             delay_ms = call.get("delay_ms", 100)
 
-            # 转换为 RawEvent
-            event_type = _map_tool_to_event_type(tool_name)
+            # 转换为 RawEvent（已收敛到 RawEventFactory，单一转换点）
             ts = base_ts + seq * delay_ms * 1_000_000  # ms → ns
-
-            executable = None
-            arguments = None
-            file_path = None
-            file_op = None
-            remote_addr = None
-            remote_port = None
-            protocol = None
-
-            if event_type == "exec":
-                cmd = tool_input.get("command", tool_input.get("cmd", tool_name))
-                parts = cmd.split() if isinstance(cmd, str) else [str(cmd)]
-                executable = parts[0]
-                arguments = parts
-
-            elif event_type == "file_open":
-                file_path = (
-                    tool_input.get("path")
-                    or tool_input.get("file_path")
-                    or tool_input.get("file")
-                    or ""
-                )
-                read_tools = {"read_file", "read", "cat", "list_files",
-                              "grep", "glob"}
-                file_op = "read" if tool_name in read_tools else "write"
-
-            elif event_type == "net_conn":
-                url = (
-                    tool_input.get("url")
-                    or tool_input.get("query")
-                    or ""
-                )
-                remote_addr = _extract_host_from_url(url)
-                remote_port = 443
-                protocol = "TCP"
-
-            yield RawEvent(
+            from observer_core.monitoring.raw_event_factory import RawEventFactory
+            yield RawEventFactory.from_tool_call(
+                call,
                 event_id=f"da_sim_{seq:06d}",
                 timestamp_ns=ts,
-                event_type=event_type,
                 pid=pid_base + seq,
                 ppid=pid_base,
                 agent_id=agent_id,
                 agent_framework="pydantic-deep-sim",
-                executable=executable,
-                arguments=arguments,
-                file_path=file_path,
-                file_op=file_op,
-                remote_addr=remote_addr,
-                remote_port=remote_port,
-                protocol=protocol,
+                arguments_include_cmd=True,
             )
 
     def _builtin_events(self) -> Iterator[RawEvent]:
@@ -406,48 +362,7 @@ class DeepAgentCollector(ICollector):
 
 
 # ── 辅助函数 ──────────────────────────────────────────────────────────────────
+# 注：工具名 → 事件类型映射与 URL 主机提取已收敛到
+# observer_core/monitoring/raw_event_factory.py（RawEventFactory / classify_tool /
+# extract_host_port），此处不再重复实现。
 
-def _map_tool_to_event_type(tool_name: str) -> str:
-    """将 pydantic-deep 工具名映射到 RawEvent 事件类型"""
-    tool = tool_name.lower()
-
-    exec_tools = {
-        "execute", "execute_command", "run_command", "shell", "bash",
-        "terminal", "command",
-    }
-    read_tools = {
-        "read_file", "read", "cat", "list_files", "grep", "glob",
-        "ls", "find", "head", "tail",
-    }
-    write_tools = {
-        "write_file", "write", "edit_file", "edit", "patch",
-        "append", "create_file",
-    }
-    net_tools = {
-        "web_fetch", "fetch", "web_search", "browse", "curl",
-        "http_request", "download",
-    }
-
-    if tool in exec_tools:
-        return "exec"
-    elif tool in read_tools:
-        return "file_open"
-    elif tool in write_tools:
-        return "file_open"
-    elif tool in net_tools:
-        return "net_conn"
-    else:
-        return "exec"
-
-
-def _extract_host_from_url(url: str) -> str:
-    """从 URL 提取主机"""
-    if not url:
-        return "unknown"
-    host = url
-    for prefix in ("https://", "http://", "ftp://"):
-        if host.startswith(prefix):
-            host = host[len(prefix):]
-            break
-    host = host.split("/")[0].split("?")[0].split(":")[0]
-    return host or "unknown"

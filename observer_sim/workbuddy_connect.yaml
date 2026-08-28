@@ -1,0 +1,53 @@
+# ============================================================
+# workbuddy_connect.yaml — WorkBuddy 接入方寸观察者系统的用户配置
+#
+# 用途: 集中收纳接入相关的所有可变信息，配套脚本 connect_workbuddy.py
+#       只读本文件即可完成接入，无需修改脚本与项目代码。
+# 使用: python connect_workbuddy.py --config workbuddy_connect.yaml <command>
+#       可复制本文件到任意位置后按需修改（路径建议使用正斜杠）。
+# ============================================================
+
+# ── WorkBuddy 侧（MCP client）───────────────────────────────
+workbuddy:
+  # WorkBuddy 安装目录与可执行文件（因地制宜修改）
+  install_dir: "C:/Users/sunyuxiao/Desktop/XS_WORK/project4/WorkBuddy"
+  exe_path: "C:/Users/sunyuxiao/Desktop/XS_WORK/project4/WorkBuddy/WorkBuddy.exe"
+  # WorkBuddy 用户数据目录（Electron 应用数据）
+  user_data_dir: "C:/Users/sunyuxiao/.workbuddy"
+  # WorkBuddy MCP client 配置（脚本自动维护；首次修改前自动备份）
+  mcp_config_path: "C:/Users/sunyuxiao/.workbuddy/mcp.json"
+  # WorkBuddy 申报时的 agent_id（须与 observer config.yaml 中
+  # mcp_report.target_agent_id 保持一致，默认 workbuddy）
+  agent_id: "workbuddy"
+
+# ── MCP 申报 Server 侧（观察者系统监听地址）───────────────────
+server:
+  host: "127.0.0.1"
+  port: 8765
+  sse_path: "/sse"
+  # WorkBuddy mcp.json 中 observer 条目的连接超时（毫秒）
+  timeout_ms: 30000
+
+# ── 观察者系统侧（本项目）───────────────────────────────────
+observer:
+  # 本项目根目录（observer_sim）
+  project_dir: "C:/Users/sunyuxiao/Desktop/XS_WORK/projact3/observer_sim"
+  # Python 解释器（PATH 中可直接使用 python）
+  python: "python"
+  # 观察者全局配置（内含 mcp_report 段: host/port/target_agent_id 等）
+  config: "config.yaml"
+  # 报告输出目录（相对 project_dir；停止服务后生成报告/审计/图谱）
+  output_dir: "output/mcp_monitoring"
+  # 申报留痕 JSONL 目录（相对 project_dir；null = 仅内存队列不落盘）
+  jsonl_dir: null
+
+# ── 守护进程管理参数（脚本自用，一般无需修改）──────────────────
+daemon:
+  # daemon 管家进程的 PID 记录文件（相对 observer.output_dir）
+  pid_file: ".mcp_daemon.pid"
+  # daemon 运行日志（相对 observer.output_dir）
+  log_file: "mcp_daemon.log"
+  # 端口就绪等待上限（秒）
+  ready_timeout_s: 30
+  # 停止请求文件（相对 observer.output_dir；stop 命令创建，管家消费）
+  stop_request_file: ".stop_request"

@@ -8,15 +8,18 @@ AuditLogger — JSON 行文件审计日志
 
 存储格式:
 - 每行一个 JSON 对象，包含完整的事件处理链路信息
-- 文件路径: output/audit/audit_{scenario_id}_{timestamp}.jsonl
+- 文件路径: output/audit/audit_{scenario_id}_{YYYYMMDD}.jsonl
+  （L-T3 按天滚动：同场景同日追加、跨天/跨场景新建）
+- retention_days: 惰性清理过期审计文件（start_scenario 时触发，无后台线程）
 
 不引入 SQLite，纯文件存储（定稿 8.2 决策）。
 """
 
 import os
 import json
+import time
 import logging
-from typing import Dict, List, Optional
+from typing import Callable, Dict, List, Optional
 from datetime import datetime
 from dataclasses import dataclass, field
 
@@ -24,6 +27,7 @@ import sys
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from models.event import NormalizedEvent
 from models.risk import RiskAssessment, Decision, DecisionAction, ActionTier, BlockingResult
+from observer_core.audit.fingerprint_tracker import FingerprintTracker
 
 logger = logging.getLogger(__name__)
 
@@ -48,6 +52,9 @@ class AuditEntry:
     timestamp_ns: int
     pid: int
     description: str
+
+    # 会话维度（降级监测会话化，旧记录无此字段）
+    session_id: Optional[str] = None
 
     # 归一化结果
     command_string: Optional[str] = None
@@ -77,11 +84,16 @@ class AuditEntry:
     # 元数据
     processing_time_ms: float = 0.0
 
+    # L-T1: 动作指纹（FingerprintTracker 计算，去时间戳/pid 等易变字段；
+    # 阶段 1 仅输出字段透传，不参与评分/研判/阻断）
+    fingerprint: Optional[str] = None
+
     def to_json_line(self) -> str:
         """序列化为 JSON 行"""
         data = {
             "event_id": self.event_id,
             "agent_id": self.agent_id,
+            "session_id": self.session_id,
             "event_type": self.event_type,
             "timestamp_ns": self.timestamp_ns,
             "pid": self.pid,
@@ -102,6 +114,7 @@ class AuditEntry:
             "blocking_details": self.blocking_details,
             "cmd_id": self.cmd_id,
             "processing_time_ms": round(self.processing_time_ms, 2),
+            "fingerprint": self.fingerprint,
         }
         return json.dumps(data, ensure_ascii=False)
 
@@ -112,6 +125,7 @@ class AuditEntry:
         entry = AuditEntry(
             event_id=data.get("event_id", ""),
             agent_id=data.get("agent_id", ""),
+            session_id=data.get("session_id"),  # 旧文件无此字段 → None（向后兼容）
             event_type=data.get("event_type", ""),
             timestamp_ns=data.get("timestamp_ns", 0),
             pid=data.get("pid", 0),
@@ -132,6 +146,7 @@ class AuditEntry:
             blocking_details=data.get("blocking_details", ""),
             cmd_id=data.get("cmd_id", ""),
             processing_time_ms=data.get("processing_time_ms", 0.0),
+            fingerprint=data.get("fingerprint"),  # 旧文件无此字段 → None（向后兼容）
         )
         return entry
 
@@ -144,16 +159,23 @@ class AuditLogger:
     支持按场景分文件存储。
     """
 
-    def __init__(self, output_dir: str = "output"):
+    def __init__(self, output_dir: str = "output",
+                 retention_days: Optional[int] = None,
+                 now_fn: Optional[Callable[[], datetime]] = None):
         """
         Args:
             output_dir: 输出根目录
+            retention_days: L0 审计文件保留天数（None=不清理，主入口从
+                config.yaml 的 output.retention_days 传入）
+            now_fn: 日期源注入点（默认 datetime.now，测试跨天滚动用）
         """
         self._output_dir = output_dir
         self._audit_dir = os.path.join(output_dir, "audit")
         self._current_file: Optional[str] = None
         self._file_handle = None
         self._entry_count = 0
+        self._retention_days = retention_days
+        self._now_fn = now_fn or datetime.now
 
     @property
     def entry_count(self) -> int:
@@ -174,22 +196,67 @@ class AuditLogger:
 
     def start_scenario(self, scenario_id: str) -> str:
         """
-        开始新场景的审计日志。
+        开始新场景的审计日志（L-T3：按天滚动）。
 
-        创建新的 JSONL 文件: {audit_dir}/audit_{scenario_id}_{timestamp}.jsonl
+        文件名: {audit_dir}/audit_{scenario_id}_{YYYYMMDD}.jsonl
+        - 同场景同日已存在 → 以追加模式打开（不覆盖历史记录）
+        - 跨天 / 跨场景 / 新文件 → 新建
+        打开前惰性执行 retention 清理（retention_days 未配置时不清理）。
         """
         # 关闭上一个文件
         self.close()
 
+        # 惰性清理过期审计文件（无后台线程，仅此处触发）
+        self.apply_retention()
+
         os.makedirs(self._audit_dir, exist_ok=True)
-        ts = datetime.now().strftime("%Y%m%d_%H%M%S")
-        filename = f"audit_{scenario_id}_{ts}.jsonl"
+        day = self._now_fn().strftime("%Y%m%d")
+        filename = f"audit_{scenario_id}_{day}.jsonl"
         self._current_file = os.path.join(self._audit_dir, filename)
-        self._file_handle = open(self._current_file, "w", encoding="utf-8")
+        # 同场景同日已存在 → 追加；跨天/跨场景（文件名不同）→ 新建
+        mode = "a" if os.path.exists(self._current_file) else "w"
+        self._file_handle = open(self._current_file, mode, encoding="utf-8")
         self._entry_count = 0
 
-        logger.info(f"[AuditLogger] Started: {self._current_file}")
+        logger.info(f"[AuditLogger] Started ({mode}): {self._current_file}")
         return self._current_file
+
+    def apply_retention(self, days: Optional[int] = None) -> Dict:
+        """
+        清理过期审计文件（L-T3 retention_days，惰性执行）。
+
+        扫描 _audit_dir 下 audit_*.jsonl，删除 mtime 早于保留天数的文件。
+
+        Args:
+            days: 保留天数（默认使用构造参数 retention_days）
+
+        Returns:
+            {"scanned": int, "deleted": int, "deleted_files": [str, ...]}
+        """
+        days = self._retention_days if days is None else days
+        result = {"scanned": 0, "deleted": 0, "deleted_files": []}
+        if not days or days <= 0:
+            return result
+        if not os.path.isdir(self._audit_dir):
+            return result
+
+        cutoff = time.time() - days * 86400
+        for fname in sorted(os.listdir(self._audit_dir)):
+            if not (fname.startswith("audit_") and fname.endswith(".jsonl")):
+                continue
+            fpath = os.path.join(self._audit_dir, fname)
+            result["scanned"] += 1
+            try:
+                if os.path.getmtime(fpath) < cutoff:
+                    os.remove(fpath)
+                    result["deleted"] += 1
+                    result["deleted_files"].append(fname)
+            except OSError:
+                pass  # 文件被其他进程占用等，跳过本次清理
+
+        if result["deleted"]:
+            logger.info(f"[AuditLogger] Retention cleaned {result['deleted']} expired file(s)")
+        return result
 
     def log_event(self, event: NormalizedEvent,
                   assessment: RiskAssessment = None,
@@ -217,6 +284,7 @@ class AuditLogger:
         entry = AuditEntry(
             event_id=event.raw.event_id,
             agent_id=event.agent_id,
+            session_id=getattr(event.raw, "session_id", None) or None,
             event_type=event.event_type,
             timestamp_ns=event.timestamp_ns,
             pid=event.raw.pid,
@@ -239,6 +307,8 @@ class AuditLogger:
             blocking_details=blocking_result.details if blocking_result else "",
             cmd_id=blocking_result.cmd_id if blocking_result else "",
             processing_time_ms=processing_time_ms,
+            # L-T1: 指纹计算单一接入点（四入口自动受益），仅输出字段透传
+            fingerprint=FingerprintTracker.fingerprint_event(event)[1],
         )
 
         # 写入文件

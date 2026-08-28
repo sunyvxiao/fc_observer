@@ -231,37 +231,20 @@ class FileReplayCollector(ICollector):
 
         return True
 
-    @staticmethod
-    def _safe_int(value, default: int = 0) -> int:
-        """安全整数转换，处理 None / 空字符串 / 非数字。"""
-        if value is None or value == "":
-            return default
-        try:
-            return int(value)
-        except (ValueError, TypeError):
-            return default
-
     def _dict_to_raw_event(self, data: dict, seq: int) -> RawEvent:
         """
         将数据字典转换为 RawEvent，自动补充缺失字段。
+
+        转换逻辑已收敛到 RawEventFactory.from_dict_checked
+        （单一转换点，含安全整数转换与空值 None 化）。
         """
         self._seq += 1
-
-        return RawEvent(
-            event_id=data.get("event_id", f"replay_evt_{seq:06d}"),
-            timestamp_ns=self._safe_int(data.get("timestamp_ns"), 0),
-            event_type=data["event_type"],
-            pid=self._safe_int(data.get("pid"), 0),
-            ppid=self._safe_int(data.get("ppid"), 0),
-            agent_id=data.get("agent_id", self.target_agent_id),
-            agent_framework=data.get("agent_framework", "file_replay"),
-            executable=data.get("executable") or None,
-            arguments=data.get("arguments") or None,
-            file_path=data.get("file_path") or None,
-            file_op=data.get("file_op") or None,
-            remote_addr=data.get("remote_addr") or None,
-            remote_port=self._safe_int(data.get("remote_port"), None) if data.get("remote_port") not in (None, "") else None,
-            protocol=data.get("protocol") or None,
+        from observer_core.monitoring.raw_event_factory import RawEventFactory
+        return RawEventFactory.from_dict_checked(
+            data,
+            event_id_fallback=f"replay_evt_{seq:06d}",
+            agent_id_default=self.target_agent_id,
+            framework_default="file_replay",
         )
 
     def attach(self, target_pid: int = 0, agent_id: str = "") -> bool:

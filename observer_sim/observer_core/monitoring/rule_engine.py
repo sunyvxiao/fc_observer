@@ -43,6 +43,9 @@ class PolicyRule:
     event_type: str = ""    # "exec" | "file_open" | "net_conn"
     match_mode: str = "pattern"  # "pattern" | "exact" | "regex" | "path_glob"
     patterns: List[str] = field(default_factory=list)
+    # 文件操作限定（仅 file_open 事件生效）: 空列表 = 不限定；
+    # 非空时事件 file_op 必须在列表中才继续匹配（修复读写不分误命中）
+    file_op: List[str] = field(default_factory=list)
     # 上下文规则（可选）
     context_rules: Optional[Dict] = None
 
@@ -50,6 +53,13 @@ class PolicyRule:
     def from_dict(cls, data: dict) -> "PolicyRule":
         """从字典构造规则"""
         conditions = data.get("conditions", {})
+        file_op_raw = conditions.get("file_op")
+        if isinstance(file_op_raw, str):
+            file_op_list = [file_op_raw]
+        elif isinstance(file_op_raw, list):
+            file_op_list = [str(op) for op in file_op_raw]
+        else:
+            file_op_list = []
         return cls(
             rule_id=data.get("rule_id", ""),
             name=data.get("name", ""),
@@ -61,6 +71,7 @@ class PolicyRule:
             event_type=conditions.get("event_type", ""),
             match_mode=conditions.get("match_mode", "pattern"),
             patterns=conditions.get("patterns", []),
+            file_op=file_op_list,
             context_rules=conditions.get("context_rules"),
         )
 
@@ -234,6 +245,11 @@ class RuleEngine(IRuleEngine):
         for rule in candidate_rules:
             if not rule.enabled:
                 continue
+            # 文件操作限定: file_op 条件不满足时跳过（修复读写不分误命中）
+            if rule.file_op:
+                event_file_op = (getattr(event.raw, "file_op", None) or "").lower()
+                if event_file_op not in rule.file_op:
+                    continue
             matched_pattern = self._match_rule(rule, match_target)
             if matched_pattern:
                 result.matched_rules.append(rule)

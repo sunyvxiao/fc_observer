@@ -127,23 +127,11 @@ class SimulationCollector(ICollector):
             # 推进虚拟时钟
             self.clock.advance(delay_ms)
 
-            # 构造 RawEvent（与 main.py create_raw_event() 一致）
-            yield RawEvent(
-                event_id=f"evt-{seq:04d}",
-                timestamp_ns=self.clock.now_ns(),
-                event_type=event_data["type"],
-                pid=agent_info.get("initial_pid", 10001),
-                ppid=1,
-                agent_id=agent_id,
-                agent_framework=agent_info.get("framework", "unknown"),
-                executable=event_data.get("executable"),
-                arguments=event_data.get("arguments"),
-                file_path=event_data.get("file_path"),
-                file_op=event_data.get("file_op"),
-                remote_addr=event_data.get("remote_addr"),
-                remote_port=event_data.get("remote_port"),
-                protocol=event_data.get("protocol"),
-            )
+            # 构造 RawEvent（已收敛到 RawEventFactory，单一转换点）
+            from observer_core.monitoring.raw_event_factory import RawEventFactory
+            yield RawEventFactory.from_scenario_event(
+                event_data, seq=seq,
+                timestamp_ns=self.clock.now_ns(), agent_info=agent_info)
 
     def send_command(self, cmd) -> bool:
         """

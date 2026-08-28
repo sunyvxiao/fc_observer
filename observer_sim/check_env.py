@@ -4,8 +4,23 @@ check_env.py — 环境预检脚本（Windows / Linux 双端通用）
 
 检查项目运行和开发所需的全部环境依赖，输出清晰的 ✅ / ❌ 状态报告。
 
+已挂载至 observer 统一入口:
+    python observer.py env [--light]        # 独立环境检测子命令（完整 / 轻量）
+    python observer.py samples check-env    # 兼容入口（等价完整检测）
+
+结构化 API（供 console.py 菜单复用，检测逻辑单一事实来源）:
+    run_checks(light=False) -> list[EnvItem]    # 纯收集，无打印副作用
+    print_report(items, light=False) -> None    # 打印格式化报告
+
+检测项说明:
+    - 轻量检测（<1 秒，无子进程）: 平台 / Python 版本 / 关键文件存在性
+    - 完整检测: 轻量检测 + pyyaml/pytest 依赖包 + 模块导入
+                + 平台专有工具链（Linux: eBPF 工具链 + g++/cmake；
+                  Windows: cmake + pywin32）
+
 使用方法:
-    python check_env.py
+    python check_env.py                      # 直接运行（完整检测）
+    python check_env.py --light              # 轻量检测
 """
 
 import sys
@@ -13,6 +28,8 @@ import os
 import shutil
 import subprocess
 import importlib
+from dataclasses import dataclass
+from typing import List
 
 # Windows 终端编码兼容
 try:
@@ -29,25 +46,64 @@ PASS = "[OK]"
 FAIL = "[FAIL]"
 WARN = "[WARN]"
 
-results = []
+# ============================================================
+# 检测清单常量（轻量检测与完整检测共用，单一事实来源）
+# ============================================================
+
+CRITICAL_FILES = [
+    "main.py",
+    "demo.py",
+    "app.py",
+    "config.yaml",
+    "conftest.py",
+    "adapter/__init__.py",
+    "adapter/platform_detect.py",
+    "adapter/pipe_factory.py",
+    "adapter/time_source.py",
+    "collector/__init__.py",
+    "collector/base_collector.py",
+    "collector/simulation_collector.py",
+    "collector/ebpf_collector.py",
+    "collector/strace_collector.py",
+    "collector/mcp_report_collector.py",
+    "mcp_bridge/__init__.py",
+    "mcp_bridge/server.py",
+    "mcp_bridge/validation.py",
+    "mcp_bridge/semantic_guard.py",
+    "scenarios/normal/n01_standard_development.yaml",
+    "rules/default_policy.yaml",
+]
+
+MODULE_CHECKS = [
+    ("adapter.platform_detect", "detect_and_create_collector"),
+    ("collector.base_collector", "ICollector"),
+    ("collector.simulation_collector", "SimulationCollector"),
+    ("collector.ebpf_collector", "EbpfCollector"),
+    ("collector.strace_collector", "StraceCollector"),
+    ("collector.file_replay_collector", "FileReplayCollector"),
+    ("collector.deep_agent_collector", "DeepAgentCollector"),
+    ("collector.mcp_report_collector", "McpReportCollector"),
+    ("mcp_bridge.server", "create_server"),
+    ("mcp_bridge.validation", "ReportValidator"),
+    ("mcp_bridge.semantic_guard", "SemanticGuard"),
+]
 
 
-def check(name: str, passed: bool, detail: str = ""):
-    """记录一项检查结果"""
-    status = PASS if passed else FAIL
-    msg = f"  {status} {name}"
-    if detail:
-        msg += f"  ({detail})"
-    print(msg)
-    results.append(passed)
-    return passed
+@dataclass
+class EnvItem:
+    """单项检测结果（结构化，供菜单/CLI 复用）。"""
+    name: str
+    passed: bool
+    detail: str = ""
+    section: str = ""
 
 
-def section(title: str):
-    """打印分组标题"""
-    print(f"\n{'=' * 50}")
-    print(f"  {title}")
-    print(f"{'=' * 50}")
+def _is_linux() -> bool:
+    return sys.platform.startswith("linux")
+
+
+def _is_windows() -> bool:
+    return sys.platform == "win32"
 
 
 def run_cmd(cmd: list, timeout: int = 10) -> tuple:
@@ -66,106 +122,116 @@ def run_cmd(cmd: list, timeout: int = 10) -> tuple:
 
 
 # ============================================================
-# 通用检查（Windows + Linux）
+# 结构化检测收集（纯收集，无打印副作用）
 # ============================================================
 
-def check_python():
-    section("Python 环境")
+def collect_platform() -> List[EnvItem]:
+    """平台识别（Windows / Linux）。"""
+    if _is_windows():
+        name = "windows"
+    elif _is_linux():
+        name = "linux"
+    else:
+        name = sys.platform
+    return [EnvItem("平台", True, f"{name} ({sys.platform})", "基础环境")]
 
+
+def collect_python(light: bool = False) -> List[EnvItem]:
+    """Python 版本（必查）+ pyyaml / pytest 依赖包（完整检测）。"""
+    items = []
     ver = sys.version_info
     passed = ver >= (3, 10)
-    check(
-        "Python 版本",
-        passed,
-        f"{ver.major}.{ver.minor}.{ver.micro}" + ("" if passed else ", 需要 >= 3.10")
-    )
+    items.append(EnvItem(
+        "Python 版本", passed,
+        f"{ver.major}.{ver.minor}.{ver.micro}" + ("" if passed else ", 需要 >= 3.10"),
+        "Python 环境"))
+    if light:
+        return items
 
     # pyyaml
     try:
         import yaml
-        check("pyyaml", True, f"版本 {yaml.__version__}")
+        items.append(EnvItem("pyyaml", True, f"版本 {yaml.__version__}", "Python 环境"))
     except ImportError:
-        check("pyyaml", False, "pip install pyyaml")
+        items.append(EnvItem("pyyaml", False, "pip install pyyaml", "Python 环境"))
 
     # pytest
     try:
         import pytest
-        check("pytest", True, f"版本 {pytest.__version__}")
+        items.append(EnvItem("pytest", True, f"版本 {pytest.__version__}", "Python 环境"))
     except ImportError:
-        check("pytest", False, "pip install pytest")
+        items.append(EnvItem("pytest", False, "pip install pytest", "Python 环境"))
+    return items
 
 
-def check_project_files():
-    section("项目文件完整性")
-
+def collect_files() -> List[EnvItem]:
+    """项目关键文件完整性（21 项）。"""
     base_dir = os.path.dirname(os.path.abspath(__file__))
-    critical_files = [
-        "main.py",
-        "demo.py",
-        "app.py",
-        "config.yaml",
-        "conftest.py",
-        "adapter/__init__.py",
-        "adapter/platform_detect.py",
-        "adapter/pipe_factory.py",
-        "adapter/time_source.py",
-        "collector/__init__.py",
-        "collector/base_collector.py",
-        "collector/simulation_collector.py",
-        "collector/ebpf_collector.py",
-        "collector/strace_collector.py",
-        "scenarios/normal/n01_standard_development.yaml",
-        "rules/default_policy.yaml",
-    ]
-
-    for f in critical_files:
+    items = []
+    for f in CRITICAL_FILES:
         path = os.path.join(base_dir, f)
-        check(f, os.path.isfile(path))
+        items.append(EnvItem(f, os.path.isfile(path), "", "项目文件完整性"))
+    return items
 
 
-def check_modules():
-    section("Python 模块导入")
-
-    modules = [
-        ("adapter.platform_detect", "detect_and_create_collector"),
-        ("collector.base_collector", "ICollector"),
-        ("collector.simulation_collector", "SimulationCollector"),
-        ("collector.ebpf_collector", "EbpfCollector"),
-        ("collector.strace_collector", "StraceCollector"),
-    ]
-
-    for mod_name, symbol in modules:
+def collect_modules() -> List[EnvItem]:
+    """Python 模块导入检查（11 项，覆盖全部采集器与 MCP 申报通道）。"""
+    items = []
+    for mod_name, symbol in MODULE_CHECKS:
         try:
             mod = importlib.import_module(mod_name)
             has_symbol = hasattr(mod, symbol)
-            check(f"{mod_name}.{symbol}", has_symbol)
+            items.append(EnvItem(f"{mod_name}.{symbol}", has_symbol,
+                                 "", "Python 模块导入"))
         except Exception as e:
-            check(f"{mod_name}", False, str(e).split("\n")[0][:80])
+            items.append(EnvItem(f"{mod_name}", False,
+                                 str(e).split("\n")[0][:80], "Python 模块导入"))
+    return items
 
 
-# ============================================================
-# Linux 专有检查（条件执行）
-# ============================================================
+def collect_mcp_sdk() -> List[EnvItem]:
+    """mcp_report 模式依赖检测（官方 mcp SDK 可用性，P4-9）。"""
+    items = []
+    try:
+        from mcp_bridge.server import mcp_sdk_available
+        available = mcp_sdk_available()
+        if available:
+            try:
+                import mcp
+                detail = f"版本 {getattr(mcp, '__version__', '未知')}"
+            except ImportError:
+                detail = "可用"
+            items.append(EnvItem("mcp SDK (mcp_report 模式)", True, detail,
+                                 "MCP 申报通道"))
+        else:
+            items.append(EnvItem("mcp SDK (mcp_report 模式)", False,
+                                 "pip install mcp", "MCP 申报通道"))
+    except Exception as e:
+        items.append(EnvItem("mcp SDK (mcp_report 模式)", False,
+                             str(e).split("\n")[0][:80], "MCP 申报通道"))
+    return items
 
-def check_linux_ebpf():
-    """仅在 Linux 上执行 eBPF 工具链检查"""
-    section("Linux eBPF 工具链")
+
+def _collect_linux_ebpf() -> List[EnvItem]:
+    """Linux eBPF 工具链检查（仅在 Linux 上执行）。"""
+    items = []
 
     # clang
     rc, out, _ = run_cmd(["clang", "--version"])
     if rc == 0:
-        # 解析版本号
         first_line = out.split("\n")[0] if out else ""
-        check("clang", True, first_line[:60])
+        items.append(EnvItem("clang", True, first_line[:60], "Linux eBPF 工具链"))
     else:
-        check("clang", False, "sudo apt install clang")
+        items.append(EnvItem("clang", False, "sudo apt install clang", "Linux eBPF 工具链"))
 
     # bpftool
     rc, out, _ = run_cmd(["bpftool", "version"])
     if rc == 0:
-        check("bpftool", True, out.split("\n")[0] if out else "")
+        items.append(EnvItem("bpftool", True, out.split("\n")[0] if out else "",
+                             "Linux eBPF 工具链"))
     else:
-        check("bpftool", False, "sudo apt install linux-tools-generic")
+        items.append(EnvItem("bpftool", False, "sudo apt install linux-tools-generic",
+                             "Linux eBPF 工具链"))
 
     # libbpf-dev
     libbpf_path = "/usr/lib/x86_64-linux-gnu/libbpf.so"
@@ -176,11 +242,14 @@ def check_linux_ebpf():
         rc, out, _ = run_cmd(["ldconfig", "-p"])
         if rc == 0 and "libbpf" in out:
             has_libbpf = True
-    check("libbpf.so", has_libbpf, "" if has_libbpf else "sudo apt install libbpf-dev")
+    items.append(EnvItem("libbpf.so", has_libbpf,
+                         "" if has_libbpf else "sudo apt install libbpf-dev",
+                         "Linux eBPF 工具链"))
 
     # BTF 支持
     btf_path = "/sys/kernel/btf/vmlinux"
-    check("BTF 支持", os.path.exists(btf_path), btf_path)
+    items.append(EnvItem("BTF 支持", os.path.exists(btf_path), btf_path,
+                         "Linux eBPF 工具链"))
 
     # 内核版本
     rc, out, _ = run_cmd(["uname", "-r"])
@@ -192,17 +261,19 @@ def check_linux_ebpf():
             kernel_ok = (major, minor) >= (5, 15)
         except (IndexError, ValueError):
             kernel_ok = False
-        check("内核版本", kernel_ok, kernel_ver + ("" if kernel_ok else ", 需要 >= 5.15"))
+        items.append(EnvItem("内核版本", kernel_ok,
+                             kernel_ver + ("" if kernel_ok else ", 需要 >= 5.15"),
+                             "Linux eBPF 工具链"))
     else:
-        check("内核版本", False, "无法获取")
+        items.append(EnvItem("内核版本", False, "无法获取", "Linux eBPF 工具链"))
 
     # strace
     rc, out, _ = run_cmd(["strace", "-V"])
     if rc == 0:
         ver_line = out.split("\n")[0] if out else ""
-        check("strace", True, ver_line[:50])
+        items.append(EnvItem("strace", True, ver_line[:50], "Linux eBPF 工具链"))
     else:
-        check("strace", False, "sudo apt install strace")
+        items.append(EnvItem("strace", False, "sudo apt install strace", "Linux eBPF 工具链"))
 
     # eBPF 编译产物
     base_dir = os.path.dirname(os.path.abspath(__file__))
@@ -210,80 +281,107 @@ def check_linux_ebpf():
     bpf_o = os.path.join(base_dir, "ebpf", "observer.bpf.o")
     bpf_makefile = os.path.join(base_dir, "ebpf", "Makefile")
 
-    check("ebpf/observer.bpf.c", os.path.isfile(bpf_c))
-    check("ebpf/Makefile", os.path.isfile(bpf_makefile))
-    check(
-        "ebpf/observer.bpf.o (编译产物)",
-        os.path.isfile(bpf_o),
-        "" if os.path.isfile(bpf_o) else "cd ebpf && make"
-    )
+    items.append(EnvItem("ebpf/observer.bpf.c", os.path.isfile(bpf_c), "",
+                         "Linux eBPF 工具链"))
+    items.append(EnvItem("ebpf/Makefile", os.path.isfile(bpf_makefile), "",
+                         "Linux eBPF 工具链"))
+    items.append(EnvItem(
+        "ebpf/observer.bpf.o (编译产物)", os.path.isfile(bpf_o),
+        "" if os.path.isfile(bpf_o) else "cd ebpf && make",
+        "Linux eBPF 工具链"))
+    return items
 
 
-def check_linux_cpp():
-    """Linux 上 C++ 编译工具（可选）"""
-    section("C++ 编译工具（可选）")
-
+def _collect_linux_cpp() -> List[EnvItem]:
+    """Linux 上 C++ 编译工具（可选）。"""
+    items = []
     rc, out, _ = run_cmd(["g++", "--version"])
     if rc == 0:
         first_line = out.split("\n")[0] if out else ""
-        check("g++", True, first_line[:60])
+        items.append(EnvItem("g++", True, first_line[:60], "C++ 编译工具（可选）"))
     else:
-        check("g++", False, "sudo apt install g++")
+        items.append(EnvItem("g++", False, "sudo apt install g++", "C++ 编译工具（可选）"))
 
     rc, out, _ = run_cmd(["cmake", "--version"])
     if rc == 0:
         first_line = out.split("\n")[0] if out else ""
-        check("cmake", True, first_line)
+        items.append(EnvItem("cmake", True, first_line, "C++ 编译工具（可选）"))
     else:
-        check("cmake", False, "sudo apt install cmake")
+        items.append(EnvItem("cmake", False, "sudo apt install cmake", "C++ 编译工具（可选）"))
+    return items
 
 
-# ============================================================
-# Windows 专有检查
-# ============================================================
-
-def check_windows_cpp():
-    """Windows 上 C++ 编译工具（可选）"""
-    section("C++ 编译工具（可选）")
-
+def _collect_windows_toolchain() -> List[EnvItem]:
+    """Windows 上 C++ 编译工具（可选）+ pywin32（命名管道辅助通道）。"""
+    items = []
     rc, out, _ = run_cmd(["cmake", "--version"])
     if rc == 0:
         first_line = out.split("\n")[0] if out else ""
-        check("cmake", True, first_line)
+        items.append(EnvItem("cmake", True, first_line, "C++ 编译工具（可选）"))
     else:
-        check("cmake", False, "安装 CMake 或 Visual Studio Build Tools")
+        items.append(EnvItem("cmake", False, "安装 CMake 或 Visual Studio Build Tools",
+                             "C++ 编译工具（可选）"))
+
+    # pywin32（Windows 命名管道辅助通道依赖，模拟模式主路径不强制）
+    try:
+        import win32pipe  # noqa: F401
+        import win32file  # noqa: F401
+        items.append(EnvItem("pywin32 (win32pipe)", True, "命名管道辅助通道",
+                             "Python 依赖（Windows）"))
+    except ImportError:
+        items.append(EnvItem("pywin32 (win32pipe)", False,
+                             "pip install pywin32（命名管道辅助通道）",
+                             "Python 依赖（Windows）"))
+    return items
+
+
+def collect_toolchain() -> List[EnvItem]:
+    """平台专有工具链检查（条件执行）。"""
+    if _is_linux():
+        return _collect_linux_ebpf() + _collect_linux_cpp()
+    return _collect_windows_toolchain()
 
 
 # ============================================================
-# 主流程
+# 统一检测入口（结构化，供 observer / console 复用）
 # ============================================================
 
-def main():
+def run_checks(light: bool = False) -> List[EnvItem]:
+    """执行环境检测并返回结构化结果。
+
+    light=True: 平台 / Python 版本 / 关键文件（<1 秒，无子进程）。
+    light=False: 完整检测（轻量 + 依赖包 + 模块导入 + 平台工具链）。
+    """
+    items = collect_platform() + collect_python(light=light) + collect_files()
+    if not light:
+        items += collect_modules() + collect_mcp_sdk() + collect_toolchain()
+    return items
+
+
+def print_report(items: List[EnvItem], light: bool = False) -> None:
+    """打印格式化检测报告（原 check()/section() 输出风格的统一渲染）。"""
     print("=" * 50)
-    print("  方寸观察者 — 环境预检")
+    print("  方寸观察者 — 环境预检" + ("（轻量）" if light else ""))
     print("=" * 50)
     print(f"  平台: {sys.platform}")
     print(f"  Python: {sys.executable}")
     print(f"  工作目录: {os.path.dirname(os.path.abspath(__file__))}")
 
-    is_linux = sys.platform.startswith("linux")
-    is_windows = sys.platform == "win32"
+    current_section = None
+    for item in items:
+        if item.section != current_section:
+            current_section = item.section
+            print(f"\n{'=' * 50}")
+            print(f"  {current_section}")
+            print(f"{'=' * 50}")
+        status = PASS if item.passed else FAIL
+        msg = f"  {status} {item.name}"
+        if item.detail:
+            msg += f"  ({item.detail})"
+        print(msg)
 
-    # 通用检查
-    check_python()
-    check_project_files()
-    check_modules()
-
-    # 平台专有检查
-    if is_linux:
-        check_linux_ebpf()
-        check_linux_cpp()
-    elif is_windows:
-        check_windows_cpp()
-
-    # 汇总
-    total = len(results)
-    passed = sum(results)
+    total = len(items)
+    passed = sum(1 for i in items if i.passed)
     failed = total - passed
 
     print(f"\n{'=' * 50}")
@@ -298,15 +396,17 @@ def main():
     else:
         print(f"\n  === {failed} 项检查未通过，请根据上方提示安装缺失依赖。 ===")
 
-    # 测试基线提示
-    if is_linux:
-        print(f"\n  预期测试基线: 297 passed, 0 failed")
-    else:
-        print(f"\n  预期测试基线: 295 passed, 2 skipped (Linux-only)")
-
-    print(f"  运行测试: python -m pytest tests/ -v")
+    if not light:
+        print(f"\n  参考测试基线 (Windows 实机): 749 passed, 6 skipped (Linux-only)")
+        print(f"  运行测试: python -m pytest tests/ -v")
     print()
 
+
+def main(light: bool = False) -> int:
+    """CLI 壳: 执行检测并打印报告。返回 0=全部通过 / 1=存在失败项。"""
+    items = run_checks(light=light)
+    print_report(items, light=light)
+    failed = sum(1 for i in items if not i.passed)
     return 0 if failed == 0 else 1
 
 
@@ -316,4 +416,5 @@ if __name__ == "__main__":
     if base_dir not in sys.path:
         sys.path.insert(0, base_dir)
 
-    sys.exit(main())
+    _light = "--light" in sys.argv[1:]
+    sys.exit(main(light=_light))

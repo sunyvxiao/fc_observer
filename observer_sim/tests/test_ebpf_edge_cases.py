@@ -277,7 +277,7 @@ class TestHighFrequencyEvents:
 _has_ebpf = (
     sys.platform.startswith("linux")
     and os.path.isfile("/sys/kernel/btf/vmlinux")
-    and os.getuid() == 0  # 需要 root
+    and getattr(os, "getuid", lambda: -1)() == 0  # 需要 root
 )
 
 

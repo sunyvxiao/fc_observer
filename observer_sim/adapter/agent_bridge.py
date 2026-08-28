@@ -26,6 +26,12 @@ from queue import Queue, Empty
 
 from models.event import RawEvent
 
+# HookRegistry 导入（工具映射单一事实来源；兼容 adapter 包内/顶层 sys.path 两种布局）
+try:
+    from adapter.hook_registry import get_registry
+except ImportError:  # adapter 目录本身位于 sys.path 时
+    from hook_registry import get_registry
+
 logger = logging.getLogger(__name__)
 
 # ── HookResult 兼容导入（pydantic_deep 可能未安装）────────────────────
@@ -127,8 +133,38 @@ class AgentBridge:
         if output_mode in ("fifo", "both") and fifo_path:
             self.set_output_mode(output_mode, fifo_path)
 
-        # 工具名 → 事件类型映射表（全部小写，匹配时统一 lower()）
-        self._tool_map: Dict[str, str] = {
+        # 工具映射单一事实来源: HookRegistry(YAML) 优先加载，内置表兜底
+        # (YAML 未覆盖的工具保留内置分类，子串 fallback 规则不变)
+        registry_config = self._load_registry_config()
+        self._tool_map: Dict[str, str] = self._build_tool_map(registry_config)
+        self._read_tools: set = self._build_read_tools(registry_config)
+
+        # 工具名子串 → 事件类型的 fallback 规则（按优先级）
+        self._tool_pattern_fallbacks: List[tuple] = [
+            ("search", "net_conn"),      # web_search, duckduckgo_search
+            ("fetch", "net_conn"),        # web_fetch
+            ("browse", "net_conn"),       # browser
+            ("read", "file_open"),        # read_file, read_memory, read_todos
+            ("write", "file_open"),       # write_file, write_todos, write_memory
+            ("edit", "file_open"),        # edit_file
+            ("file", "file_open"),        # list_files, glob
+            ("list", "file_open"),        # list_files, list_skills
+            ("grep", "file_open"),
+            ("glob", "file_open"),
+            ("curl", "net_conn"),
+            ("wget", "net_conn"),
+            ("request", "net_conn"),
+        ]
+
+        # DEBUG 级日志：记录未能识别的工具名（避免重复）
+        self._unknown_tools_logged: set = set()
+
+    # ── 工具映射构建（HookRegistry 接线）──────────────────────────────────────
+
+    @staticmethod
+    def _builtin_tool_map() -> Dict[str, str]:
+        """内置工具映射兜底表（HookRegistry YAML 未覆盖的工具）。"""
+        return {
             # Shell 执行
             "execute": "exec",
             "execute_command": "exec",
@@ -177,25 +213,53 @@ class AgentBridge:
             "list_directory": "file_open",
         }
 
-        # 工具名子串 → 事件类型的 fallback 规则（按优先级）
-        self._tool_pattern_fallbacks: List[tuple] = [
-            ("search", "net_conn"),      # web_search, duckduckgo_search
-            ("fetch", "net_conn"),        # web_fetch
-            ("browse", "net_conn"),       # browser
-            ("read", "file_open"),        # read_file, read_memory, read_todos
-            ("write", "file_open"),       # write_file, write_todos, write_memory
-            ("edit", "file_open"),        # edit_file
-            ("file", "file_open"),        # list_files, glob
-            ("list", "file_open"),        # list_files, list_skills
-            ("grep", "file_open"),
-            ("glob", "file_open"),
-            ("curl", "net_conn"),
-            ("wget", "net_conn"),
-            ("request", "net_conn"),
-        ]
+    @staticmethod
+    def _builtin_read_tools() -> set:
+        """内置 file_open 只读工具兜底集合（与历史行为保持一致）。"""
+        return {
+            "read_file", "read", "cat", "list_files", "grep", "glob",
+            "read_memory", "read_todos",
+        }
 
-        # DEBUG 级日志：记录未能识别的工具名（避免重复）
-        self._unknown_tools_logged: set = set()
+    def _load_registry_config(self):
+        """从 HookRegistry 加载当前框架的工具映射配置（失败时返回 None）。"""
+        try:
+            registry = get_registry()
+            config = registry.get_config(self._config.agent_framework)
+            if config is not None:
+                logger.debug(
+                    f"AgentBridge 已从 HookRegistry 加载工具映射: "
+                    f"{self._config.agent_framework} "
+                    f"({len(config.tool_mappings)} 个工具)")
+            else:
+                logger.warning(
+                    f"HookRegistry 未注册框架 '{self._config.agent_framework}'，"
+                    f"使用内置工具映射表")
+            return config
+        except Exception as e:
+            logger.warning(f"HookRegistry 加载失败，使用内置工具映射表: {e}")
+            return None
+
+    def _build_tool_map(self, registry_config=None) -> Dict[str, str]:
+        """构建工具名→事件类型映射: HookRegistry(YAML) 优先，内置表兜底。"""
+        tool_map: Dict[str, str] = dict(self._builtin_tool_map())
+        if registry_config is not None:
+            for tool_name in registry_config.list_tools():
+                tool_map[tool_name.lower()] = \
+                    registry_config.get_event_type(tool_name)
+        return tool_map
+
+    def _build_read_tools(self, registry_config=None) -> set:
+        """构建 file_open 只读工具集合: HookRegistry(YAML) 优先，内置表兜底。"""
+        read_tools: set = set(self._builtin_read_tools())
+        if registry_config is not None:
+            for tool_name in registry_config.list_tools():
+                mapping = registry_config.map_tool_to_event(tool_name)
+                if mapping is None or mapping.event_type != "file_open":
+                    continue
+                if '"read"' in mapping.param_rules.get("file_op", ""):
+                    read_tools.add(tool_name.lower())
+        return read_tools
 
     # ── 输出模式切换 ──────────────────────────────────────────────────────────
 
@@ -413,12 +477,8 @@ class AgentBridge:
                 or tool_input.get("file")
                 or ""
             )
-            # 根据工具名判定读/写操作（扩展自 _tool_map 中的 file_open 类工具）
-            _read_tools = {
-                "read_file", "read", "cat", "list_files", "grep", "glob",
-                "read_memory", "read_todos",
-            }
-            file_op = "read" if tool_lower in _read_tools else "write"
+            # 根据工具名判定读/写操作（_read_tools 由 HookRegistry + 内置表构建）
+            file_op = "read" if tool_lower in self._read_tools else "write"
 
         elif event_type == "net_conn":
             url = (

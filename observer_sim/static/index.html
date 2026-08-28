@@ -683,6 +683,25 @@
             animation: pulse 1.5s infinite;
         }
         .monitor-status-indicator.stopped { background: var(--accent-red); }
+        
+        /* test_report 轻量测试报告模式开关（实时监测） */
+        .test-report-toggle-row {
+            display: flex; align-items: center; gap: 12px;
+            margin-top: 12px; padding: 10px 12px;
+            background: rgba(255,255,255,0.03);
+            border: 1px solid var(--border-color); border-radius: 6px;
+            flex-wrap: wrap;
+        }
+        .test-report-toggle {
+            display: flex; align-items: center; gap: 8px;
+            cursor: pointer; user-select: none;
+            font-size: 13px; color: var(--text-primary); white-space: nowrap;
+        }
+        .test-report-toggle input { accent-color: #4ade80; cursor: pointer; }
+        .test-report-toggle.disabled { opacity: 0.5; cursor: not-allowed; }
+        .test-report-hint {
+            font-size: 12px; color: var(--text-secondary); line-height: 1.5;
+        }
         @keyframes pulse {
             0%, 100% { opacity: 1; }
             50% { opacity: 0.5; }
@@ -751,6 +770,45 @@
         .result-pass { color: var(--accent-green); }
         .result-fail { color: var(--accent-red); }
         .result-skip { color: var(--text-secondary); }
+
+        /* ── 环境检测页与受限提醒 ── */
+        .env-banner {
+            padding: 10px 14px; border-radius: 6px; margin-bottom: 16px;
+            font-size: 13px; line-height: 1.5;
+        }
+        .env-banner-blocked {
+            background: rgba(255, 68, 68, 0.12);
+            border: 1px solid var(--accent-red);
+            color: var(--accent-red);
+        }
+        .env-banner-warn {
+            background: rgba(255, 204, 0, 0.10);
+            border: 1px solid var(--accent-yellow);
+            color: var(--accent-yellow);
+        }
+        .env-banner .env-basis { color: var(--text-secondary); font-size: 12px; margin-top: 4px; }
+        .env-item-row {
+            display: flex; align-items: center; justify-content: space-between;
+            padding: 7px 10px; border-bottom: 1px solid var(--border-color);
+            font-size: 13px;
+        }
+        .env-item-row:last-child { border-bottom: none; }
+        .env-item-name { color: var(--text-primary); }
+        .env-item-detail { color: var(--text-secondary); font-size: 12px; }
+        .env-check-pass { color: var(--accent-green); font-weight: bold; }
+        .env-check-fail { color: var(--accent-red); font-weight: bold; }
+        .env-section-title {
+            font-size: 13px; font-weight: bold; color: var(--accent-cyan);
+            margin: 12px 0 4px; padding: 4px 10px;
+            background: var(--bg-secondary); border-left: 3px solid var(--accent-cyan);
+        }
+        .btn:disabled { opacity: 0.4; cursor: not-allowed; }
+        .env-unsupported-tag {
+            display: inline-block; margin-left: 8px; padding: 2px 8px;
+            border: 1px solid var(--accent-red); color: var(--accent-red);
+            border-radius: 4px; font-size: 11px;
+        }
+        .test-log-line { padding: 2px 0; font-size: 12px; }
     </style>
 </head>
 <body>
@@ -770,6 +828,10 @@
                     <span class="nav-icon">&#x1F4E1;</span>
                     <span>实时监测</span>
                 </div>
+                <div class="nav-item" data-view="mcp-report" onclick="showView('mcp-report')">
+                    <span class="nav-icon">&#x1F916;</span>
+                    <span>MCP 申报监测</span>
+                </div>
                 <div class="nav-item" data-view="view-agent-sim" onclick="showView('view-agent-sim')">
                     <span class="nav-icon">&#x1F9EA;</span>
                     <span>Agent模拟测试</span>
@@ -786,10 +848,22 @@
                     <span class="nav-icon">&#x1F4C1;</span>
                     <span>文件管理</span>
                 </div>
+                <div class="nav-item" data-view="tests-run" onclick="showView('tests-run')">
+                    <span class="nav-icon">&#x1F9EA;</span>
+                    <span>测试运行</span>
+                </div>
+                <div class="nav-item" data-view="env-check" onclick="showView('env-check')">
+                    <span class="nav-icon">&#x1F50D;</span>
+                    <span>环境检测</span>
+                </div>
             </nav>
             <div class="server-status">
                 <span class="status-dot"></span>
                 <span>服务器运行中</span>
+            </div>
+            <div class="server-status" id="env-status-badge" onclick="showView('env-check')" style="cursor:pointer;" title="点击查看环境检测详情">
+                <span class="status-dot" id="env-status-dot"></span>
+                <span id="env-status-text">环境检测中...</span>
             </div>
         </div>
 
@@ -840,6 +914,7 @@
             <!-- 视图: 录制-回放 -->
             <div id="view-record-replay" class="view">
                 <h1 class="view-title">&#x1F3AC; 录制与回放</h1>
+                <div id="rr-env-banner"></div>
                 <p style="color:var(--text-secondary); margin-bottom:12px;">
                     模拟真实生产环境中的旁路监控场景：Agent 独立执行任务，监控系统旁路捕获并分析。
                 </p>
@@ -898,6 +973,13 @@
                         <button class="btn btn-danger" id="btn-stop-record-only" onclick="stopRecordOnly()" style="font-size:14px; padding:10px 24px; display:none;">&#x23F9; 停止录制</button>
                         <span id="record-status" style="margin-left:12px; color:var(--text-secondary); font-size:13px;">未开始</span>
                     </div>
+                    <div class="test-report-toggle-row" style="margin-top:8px;">
+                        <label class="test-report-toggle" id="record-testreport-toggle-label" title="需在录制开始前设置；录制中不可切换">
+                            <input type="checkbox" id="chk-record-testreport">
+                            <span>test_report 轻量测试报告模式</span>
+                        </label>
+                        <span class="test-report-hint">开启后仅持续记录 L0 原始事件，不触发 L1→L2→L3 分层聚合，录制结束后一次性输出报告（默认关闭）。</span>
+                    </div>
                     <div class="step-desc" style="margin-top:8px;">
                         <strong>Agent 启动命令（在终端中运行）：</strong>
                         <div class="command-display">cd deep-agents-demo && python run_agent.py --fifo ../.monitoring/pipe</div>
@@ -953,6 +1035,13 @@
                         </select>
                         <button class="btn btn-success" id="btn-start-replay" onclick="startReplay()" style="font-size:14px; padding:10px 24px;">&#x25B6; 开始回放</button>
                     </div>
+                    <div class="test-report-toggle-row" style="margin-top:8px;">
+                        <label class="test-report-toggle" id="replay-testreport-toggle-label" title="需在回放开始前设置；回放中不可切换">
+                            <input type="checkbox" id="chk-replay-testreport">
+                            <span>test_report 轻量测试报告模式</span>
+                        </label>
+                        <span class="test-report-hint">开启后仅持续记录 L0 原始事件，不触发 L1→L2→L3 分层聚合，回放结束后一次性输出报告（默认关闭）。</span>
+                    </div>
                     <div id="replay-event-log" style="margin-top:12px;"></div>
                     <div id="replay-summary" style="margin-top:12px;"></div>
                 </div>
@@ -994,8 +1083,27 @@
                 <div class="tab-bar" style="margin-bottom:16px;">
                     <div class="tab-item active-tab" id="tab-file-records" onclick="switchFileTab('records')">&#x1F3AC; 录制文件</div>
                     <div class="tab-item" id="tab-file-monitoring" onclick="switchFileTab('monitoring')">&#x1F4E1; 监测报告</div>
+                    <div class="tab-item" id="tab-file-mcp_monitoring" onclick="switchFileTab('mcp_monitoring')">&#x1F916; MCP 申报</div>
                     <div class="tab-item" id="tab-file-reports" onclick="switchFileTab('reports')">&#x1F4CA; 场景报告</div>
                     <div class="tab-item" id="tab-file-unittest" onclick="switchFileTab('unit_test')">&#x1F9EA; 测试输出</div>
+                </div>
+                <div id="reports-delete-bar" style="display:none; margin-bottom:16px; padding:12px; background:var(--bg-secondary); border:1px solid var(--border-color); border-radius:6px;">
+                    <div style="font-size:13px; color:var(--text-secondary); margin-bottom:8px;">&#x1F5D1;&#xFE0F; 报告删除（三级：全部 / 按分类 / 按场景）</div>
+                    <div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap;">
+                        <select id="delete-category-select" style="padding:6px; background:var(--bg-secondary); color:var(--text-primary); border:1px solid var(--border-color); border-radius:4px;">
+                            <option value="normal">normal</option>
+                            <option value="anomalous">anomalous</option>
+                            <option value="boundary">boundary</option>
+                            <option value="multi_agent">multi_agent</option>
+                            <option value="extreme">extreme</option>
+                            <option value="deep_agent">deep_agent</option>
+                            <option value="agent_sim">agent_sim</option>
+                        </select>
+                        <button class="btn btn-danger" style="font-size:12px; padding:5px 12px;" onclick="deleteCategoryReports()">删除该分类全部报告</button>
+                        <input id="delete-scenario-id" placeholder="场景目录名（如 n01-standard-development）" style="padding:6px; background:var(--bg-secondary); color:var(--text-primary); border:1px solid var(--border-color); border-radius:4px; width:240px;" />
+                        <button class="btn btn-danger" style="font-size:12px; padding:5px 12px;" onclick="deleteScenarioReport()">删除该场景报告</button>
+                        <button class="btn btn-danger" style="font-size:12px; padding:5px 12px;" onclick="deleteAll()">删除全部报告</button>
+                    </div>
                 </div>
                 <div id="files-tree-container">
                     <div class="card" style="color:var(--text-secondary);">加载文件树...</div>
@@ -1006,6 +1114,10 @@
             <!-- 视图: 真实场景样例 -->
             <div id="view-scenario-samples" class="view">
                 <h1 class="view-title">&#x1F4CB; 真实场景样例</h1>
+                <div style="margin-bottom:16px;">
+                    <button class="btn btn-primary" onclick="genScenarios()">&#x1F504; 重新生成场景 YAML</button>
+                    <span style="margin-left:12px; font-size:12px; color:var(--text-secondary);">覆盖 scenarios/ 下全部 37 个场景文件（需确认，复用 generate_scenarios.py）</span>
+                </div>
                 <p style="color:var(--text-secondary); margin-bottom:16px;">
                     面向演示需求的真实 DeepAgent 场景描述。每个场景包含 Agent 输入数据、任务提示词、
                     预期操作序列、可能触发的安全风险以及 Monitor 应产生的告警/阻断类型。
@@ -1019,6 +1131,7 @@
             <!-- 视图: 实时监测 -->
             <div id="view-view-monitor" class="view">
                 <h1 class="view-title">&#x1F4E1; 实时监测</h1>
+                <div id="monitor-env-banner"></div>
                 <p style="color:var(--text-secondary); margin-bottom:20px;">
                     启动 Monitor 守护进程，监听 FIFO 管道，Agent 独立运行并通过管道发送事件。
                 </p>
@@ -1033,6 +1146,17 @@
                         </div>
                         <button class="btn btn-success" id="btn-monitor-start" onclick="startMonitor()">&#x25B6; 启动 Monitor</button>
                         <button class="btn btn-danger" id="btn-monitor-stop" onclick="stopMonitor()" style="display:none;">&#x23F9; 停止 Monitor</button>
+                    </div>
+                    <!-- test_report 轻量测试报告模式开关 -->
+                    <div class="test-report-toggle-row">
+                        <label class="test-report-toggle" id="test-report-toggle-label" title="需在 Monitor 启动前设置；运行中不可切换">
+                            <input type="checkbox" id="chk-test-report">
+                            <span>test_report 轻量测试报告模式</span>
+                        </label>
+                        <span class="test-report-hint">
+                            开启后仅持续记录 L0 原始事件与必要摘要，不触发 L1→L2→L3 分层聚合，
+                            监测结束后一次性输出报告（默认关闭，走完整生产分层路径）。
+                        </span>
                     </div>
                 </div>
                 <!-- Agent 命令行 -->
@@ -1060,9 +1184,69 @@
                 </div>
             </div>
 
+            <!-- 视图: MCP 申报监测 -->
+            <div id="view-mcp-report" class="view">
+                <h1 class="view-title">&#x1F916; MCP 申报监测（WorkBuddy 降级监测通道）</h1>
+                <p style="color:var(--text-secondary); margin-bottom:20px;">
+                    WorkBuddy 等黑盒 Agent 通过 MCP 申报工具（report_tool_call / report_session / report_action）
+                    主动申报行为，观察者统一管线判定（ALLOW/ALERT/BLOCK）并生成风险报告与审计日志。
+                    定位为合规留痕 + 风险提示，无内核阻断能力，依赖 Agent 主动申报。
+                    配置集中管理于 workbuddy_connect.yaml。
+                </p>
+                <!-- 状态与控制 -->
+                <div class="card" style="margin-bottom:20px;">
+                    <div class="card-title">申报 Server 状态</div>
+                    <div class="monitor-status-card" id="mcp-status-card">
+                        <div class="monitor-status-indicator stopped" id="mcp-indicator"></div>
+                        <div style="flex:1;">
+                            <div style="font-weight:bold;" id="mcp-status-text">未启动</div>
+                            <div style="font-size:12px; color:var(--text-secondary);" id="mcp-status-detail">-</div>
+                        </div>
+                        <button class="btn btn-success" id="btn-mcp-start" onclick="mcpStart()">&#x25B6; 启动 daemon</button>
+                        <button class="btn btn-danger" id="btn-mcp-stop" onclick="mcpStop()" style="display:none;">&#x23F9; 停止并生成报告</button>
+                        <button class="btn btn-primary" id="btn-mcp-smoke" onclick="mcpSmoke()" style="display:none;">&#x1F9EA; 申报烟测</button>
+                        <button class="btn" onclick="checkMcpReportStatus()">&#x1F504; 刷新</button>
+                    </div>
+                    <div class="test-report-toggle-row" style="margin-top:8px;">
+                        <label class="test-report-toggle" id="mcp-testreport-toggle-label" title="需在 daemon 启动前设置；运行中不可切换">
+                            <input type="checkbox" id="chk-mcp-testreport">
+                            <span>test_report 轻量测试报告模式</span>
+                        </label>
+                        <span class="test-report-hint">开启后仅持续记录 L0 原始事件，不触发 L1→L2→L3 分层聚合，监测结束后一次性输出报告（默认关闭）。</span>
+                    </div>
+                </div>
+                <!-- 判定输出 -->
+                <div class="card" style="margin-bottom:20px;">
+                    <div class="card-title">&#x2696;&#xFE0F; 监测判定输出</div>
+                    <div id="mcp-verdict-log" style="font-family:'Consolas','Courier New',monospace; font-size:13px; background:#0d0d1a; border:1px solid var(--border-color); border-radius:6px; padding:12px; max-height:260px; overflow-y:auto;">
+                        <span style="color:var(--text-secondary);">启动 daemon 后，判定结果（ALLOW/ALERT/BLOCK）将在此展示。</span>
+                    </div>
+                </div>
+                <!-- 烟测结果 -->
+                <div class="card" style="margin-bottom:20px; display:none;" id="mcp-smoke-card">
+                    <div class="card-title">&#x1F9EA; 烟测结果</div>
+                    <div id="mcp-smoke-result" style="font-size:13px;"></div>
+                </div>
+                <!-- 报告产物 -->
+                <div class="card" style="margin-bottom:20px;">
+                    <div class="card-title">&#x1F4CA; 报告产物（output/mcp_monitoring）</div>
+                    <div id="mcp-artifacts" style="font-size:13px;"><span style="color:var(--text-secondary);">加载中...</span></div>
+                </div>
+                <!-- 能力边界提示 -->
+                <div class="card">
+                    <div class="card-title">&#x26A0;&#xFE0F; 能力边界（降级说明）</div>
+                    <ul style="font-size:13px; color:var(--text-secondary); line-height:1.8;">
+                        <li>无交叉校验：无 syscall 佐证，事件完整性依赖 Agent 主动申报；</li>
+                        <li>无 L2/L3 阻断能力：仅风险提示，不执行内核级拦截；</li>
+                        <li>Linux FIFO 实时监测 / 录制-回放 / eBPF 阻断为独立模式，Windows 下不可用。</li>
+                    </ul>
+                </div>
+            </div>
+
             <!-- 视图: Agent模拟测试 -->
             <div id="view-view-agent-sim" class="view">
                 <h1 class="view-title">&#x1F9EA; Agent模拟测试</h1>
+                <div id="agent-sim-env-banner"></div>
                 <p style="color:var(--text-secondary); margin-bottom:20px;">
                     运行预定义的 Agent 模拟测试场景，验证监控系统的拦截和风险评估能力。
                 </p>
@@ -1077,6 +1261,48 @@
                     </div>
                     <div id="agent-sim-event-log" style="font-family:'Consolas','Courier New',monospace; font-size:13px; background:#0d0d1a; border:1px solid var(--border-color); border-radius:6px; padding:12px; max-height:400px; overflow-y:auto;"></div>
                     <div id="agent-sim-result" style="margin-top:12px;"></div>
+                </div>
+            </div>
+
+            <!-- 视图: 测试运行 -->
+            <div id="view-tests-run" class="view">
+                <h1 class="view-title">&#x1F9EA; 测试运行</h1>
+                <p style="color:var(--text-secondary); margin-bottom:16px;">
+                    统一测试入口（复用 run_tests.py，与 CLI test 域同一实现）：
+                    单元测试 / API 冒烟 / SSE 冒烟 / 全部。api/sse 冒烟自动拉起独立服务（端口 18080），不影响当前 Web 服务。
+                </p>
+                <div style="margin-bottom:12px;">
+                    <button class="btn btn-primary" id="btn-test-unit" onclick="runTests('unit')">&#x1F9EA; 单元测试 unit</button>
+                    <button class="btn btn-primary" id="btn-test-api" onclick="runTests('api')">&#x1F310; API 冒烟 api</button>
+                    <button class="btn btn-primary" id="btn-test-sse" onclick="runTests('sse')">&#x1F4E1; SSE 冒烟 sse</button>
+                    <button class="btn btn-success" id="btn-test-all" onclick="runTests('all')">&#x1F680; 全部测试 all</button>
+                    <button class="btn btn-danger" id="btn-test-stop" onclick="stopTests()" style="display:none;">&#x23F9; 停止</button>
+                </div>
+                <div id="tests-status" style="font-size:13px; color:var(--text-secondary); margin-bottom:8px;">未运行</div>
+                <div id="tests-log" style="font-family:Consolas,monospace; font-size:12px; background:#0d0d1a; border:1px solid var(--border-color); border-radius:6px; padding:12px; max-height:460px; overflow-y:auto;"></div>
+            </div>
+
+            <!-- 视图: 环境检测 -->
+            <div id="view-env-check" class="view">
+                <h1 class="view-title">&#x1F50D; 环境检测</h1>
+                <p style="color:var(--text-secondary); margin-bottom:16px;">
+                    系统正常运行前的独立前置检查（复用 check_env.py，与 CLI env 子命令同源）。
+                    轻量检测无子进程 &lt;1 秒；完整检测含模块导入与工具链探测。结果后端会话级缓存，重新检测将强制刷新。
+                </p>
+                <div id="env-summary-card" class="card" style="margin-bottom:16px;">
+                    <div class="card-title">&#x1F4CA; 检测摘要</div>
+                    <div id="env-summary" style="margin-top:8px;"><span style="color:var(--text-secondary);">加载中...</span></div>
+                </div>
+                <div class="tab-bar" style="margin-bottom:16px;">
+                    <div class="tab-item active-tab" id="tab-env-light" onclick="switchEnvMode('light')">&#x26A1; 轻量检测（&lt;1 秒）</div>
+                    <div class="tab-item" id="tab-env-full" onclick="switchEnvMode('full')">&#x1F50E; 完整检测</div>
+                </div>
+                <div style="margin-bottom:16px;">
+                    <button class="btn btn-primary" id="btn-env-refresh" onclick="refreshEnvCheck()">&#x1F504; 重新检测</button>
+                    <span id="env-refresh-hint" style="margin-left:12px; font-size:12px; color:var(--text-secondary);">重新检测将强制刷新后端会话缓存</span>
+                </div>
+                <div id="env-items-container">
+                    <div class="card" style="color:var(--text-secondary);">加载检查项...</div>
                 </div>
             </div>
         </div>
@@ -1154,9 +1380,138 @@
             if (viewId === "all-scenarios") showCategories();
             if (viewId === "record-replay") initDemoPage();
             if (viewId === "view-monitor") checkMonitorStatus();
+            if (viewId === "mcp-report") checkMcpReportStatus();
             if (viewId === "scenario-samples") loadScenarioSamples();
             if (viewId === "files") loadFilesTree();
             if (viewId === "view-agent-sim") loadAgentSimScenarios();
+            if (viewId === "env-check") loadEnvCheck();
+        }
+
+        // ══════════════════════════════════════════════════════
+        //  3.5 MCP 申报监测（WorkBuddy 降级监测通道）
+        // ══════════════════════════════════════════════════════
+        let mcpPollTimer = null;
+
+        function mcpPolling(enable) {
+            if (mcpPollTimer) { clearInterval(mcpPollTimer); mcpPollTimer = null; }
+            if (enable) {
+                mcpPollTimer = setInterval(() => {
+                    if (state.currentView === "mcp-report") checkMcpReportStatus(true);
+                }, 5000);
+            }
+        }
+
+        async function checkMcpReportStatus(silent) {
+            if (!silent) {
+                document.getElementById("mcp-status-text").textContent = "检测中...";
+            }
+            try {
+                const data = await apiGet("/api/mcp-report/status");
+                const running = !!data.daemon_running;
+                const ind = document.getElementById("mcp-indicator");
+                ind.className = "monitor-status-indicator " + (running ? "running" : "stopped");
+                const txt = document.getElementById("mcp-status-text");
+                txt.textContent = running ? "运行中" : "未启动";
+                const url = data.server ? data.server.url : "-";
+                const reg = data.workbuddy && data.workbuddy.registration;
+                let detail = `${url} · agent_id: ${data.agent_id || "-"} · daemon PID: ${data.daemon_pid || "-"}`;
+                if (reg) {
+                    detail += reg.registered
+                        ? ` · WorkBuddy mcp.json 已注册${reg.disabled ? "（已禁用）" : ""}`
+                        : ` · WorkBuddy 未注册（${reg.reason || ""}）`;
+                }
+                document.getElementById("mcp-status-detail").textContent = detail;
+                document.getElementById("btn-mcp-start").style.display = running ? "none" : "";
+                document.getElementById("btn-mcp-stop").style.display = running ? "" : "none";
+                document.getElementById("btn-mcp-smoke").style.display = running ? "" : "none";
+                setTestReportToggle("chk-mcp-testreport", "mcp-testreport-toggle-label", running);
+                const vlog = document.getElementById("mcp-verdict-log");
+                if (data.verdicts && data.verdicts.length) {
+                    vlog.innerHTML = data.verdicts.map(v => {
+                        const line = v.replace(/[<>&]/g, c => ({"<":"&lt;",">":"&gt;","&":"&amp;"}[c]));
+                        return `<div>${line}</div>`;
+                    }).join("");
+                } else if (!running) {
+                    vlog.innerHTML = `<span style="color:var(--text-secondary);">启动 daemon 后，判定结果（ALLOW/ALERT/BLOCK）将在此展示。</span>`;
+                }
+                const taskBusy = data.tasks && (data.tasks.start.running
+                    || data.tasks.stop.running || data.tasks.smoke.running);
+                if (taskBusy) {
+                    txt.textContent = running ? "操作进行中..." : "启动/停止进行中...";
+                }
+                if (data.tasks && data.tasks.smoke.done) {
+                    const smokeCard = document.getElementById("mcp-smoke-card");
+                    smokeCard.style.display = "";
+                    const sr = data.tasks.smoke.detail || {};
+                    document.getElementById("mcp-smoke-result").innerHTML =
+                        sr.error
+                        ? `<span style="color:var(--accent-red);">烟测失败: ${sr.error}</span>`
+                        : `<span style="color:${sr.ok ? "var(--accent-green)" : "var(--accent-red)"};">`
+                          + `accepted: ${sr.accepted ?? "-"} / rejected: ${sr.rejected ?? "-"} `
+                          + `（期望 5 accepted + 2 rejected）${sr.ok ? " ✓ 通过" : " ✗ 异常"}</span>`
+                          + (sr.verdicts && sr.verdicts.length
+                             ? `<div style="margin-top:6px; font-family:monospace; font-size:12px;">`
+                               + sr.verdicts.map(v => `<div>${v}</div>`).join("") + "</div>" : "");
+                }
+                await mcpLoadArtifacts();
+            } catch (e) {
+                document.getElementById("mcp-status-text").textContent = "查询失败";
+                document.getElementById("mcp-status-detail").textContent = e.message;
+            }
+        }
+
+        async function mcpStart() {
+            document.getElementById("mcp-status-text").textContent = "启动中（后台守护，最长 30s）...";
+            const chk = document.getElementById("chk-mcp-testreport");
+            const noRollup = !!(chk && chk.checked);
+            setTestReportToggle("chk-mcp-testreport", "mcp-testreport-toggle-label", true);
+            try {
+                await apiPost("/api/mcp-report/start", { no_rollup: noRollup });
+                mcpPolling(true);
+            } catch (e) {
+                showNotification("启动失败: " + e.message);
+                setTestReportToggle("chk-mcp-testreport", "mcp-testreport-toggle-label", false);
+            }
+        }
+
+        async function mcpStop() {
+            document.getElementById("mcp-status-text").textContent = "停止中（优雅停止并生成报告）...";
+            try {
+                await apiPost("/api/mcp-report/stop", {});
+                mcpPolling(true);
+            } catch (e) {
+                showNotification("停止失败: " + e.message);
+            }
+        }
+
+        async function mcpSmoke() {
+            document.getElementById("mcp-status-text").textContent = "烟测进行中...";
+            try {
+                await apiPost("/api/mcp-report/smoke", {});
+                mcpPolling(true);
+            } catch (e) {
+                showNotification("烟测失败: " + e.message);
+            }
+        }
+
+        async function mcpLoadArtifacts() {
+            try {
+                const data = await apiGet("/api/mcp-report/artifacts");
+                const el = document.getElementById("mcp-artifacts");
+                if (!data.artifacts || !data.artifacts.length) {
+                    el.innerHTML = `<span style="color:var(--text-secondary);">暂无产物（启动 daemon 并产生申报、停止后生成报告）</span>`;
+                    return;
+                }
+                const rows = data.artifacts.slice(0, 12).map(a => {
+                    const kb = a.size >= 0 ? `（${(a.size / 1024).toFixed(1)} KB）` : "";
+                    const d = new Date(a.mtime * 1000).toLocaleString();
+                    return `<div style="margin:3px 0;">&#x1F4C4; ${a.rel_path} ${kb} <span style="color:var(--text-secondary);">${d}</span></div>`;
+                });
+                el.innerHTML = rows.join("");
+            } catch (e) {
+                document.getElementById("mcp-artifacts").innerHTML =
+                    `<span style="color:var(--accent-red);">加载失败: ${e.message}</span>`;
+            }
         }
 
         // ... existing code ...
@@ -1623,15 +1978,6 @@
             } catch (e) { showNotification("删除失败: " + e.message); }
         }
 
-        async function deleteCategory() {
-            const cat = document.getElementById("delete-category-select").value;
-            if (!confirm(`确定要删除 "${cat}" 分类的所有运行记录吗？`)) return;
-            try {
-                const result = await apiPost("/api/reports/delete", { scope: "category", category: cat });
-                showNotification(`已删除 ${result.deleted.directories} 个目录, ${result.deleted.files} 个文件`);
-            } catch (e) { showNotification("删除失败: " + e.message); }
-        }
-
         // ══════════════════════════════════════════════════════
         //  11. 录制-回放 Demo
         // ══════════════════════════════════════════════════════
@@ -1677,13 +2023,27 @@
             }
         }
 
+        function setTestReportToggle(chkId, labelId, disabled) {
+            const chk = document.getElementById(chkId);
+            const label = document.getElementById(labelId);
+            if (!chk) return;
+            chk.disabled = disabled;
+            if (label) {
+                label.className = "test-report-toggle" + (disabled ? " disabled" : "");
+            }
+        }
+
         function startReplay() {
+            if (!confirmEnvDowngrade("回放采集")) return;
             const select = document.getElementById("replay-session-select");
             const sessionId = select.value;
             if (!sessionId) {
                 showNotification("请先选择一个录制会话");
                 return;
             }
+            const chk = document.getElementById("chk-replay-testreport");
+            const noRollup = (chk && chk.checked) ? "1" : "0";
+            setTestReportToggle("chk-replay-testreport", "replay-testreport-toggle-label", true);
             const btn = document.getElementById("btn-start-replay");
             btn.disabled = true;
             btn.textContent = "回放中...";
@@ -1692,7 +2052,7 @@
             const stream = document.getElementById("replay-event-stream");
             document.getElementById("replay-summary").innerHTML = '';
 
-            const es = new EventSource(`/api/demo/replay?session_id=${encodeURIComponent(sessionId)}`);
+            const es = new EventSource(`/api/demo/replay?session_id=${encodeURIComponent(sessionId)}&no_rollup=${noRollup}`);
             es.onmessage = (e) => {
                 const data = JSON.parse(e.data);
                 if (data.type === "replay_start") {
@@ -1712,6 +2072,7 @@
                     fetch('/api/monitor/stop', {method: 'POST'});
                     btn.disabled = false;
                     btn.innerHTML = "\u25B6 开始回放";
+                    setTestReportToggle("chk-replay-testreport", "replay-testreport-toggle-label", false);
                     renderReplaySummary(data);
                     loadSessionList();
                     loadReplaySessionSelector();
@@ -1720,6 +2081,7 @@
                     es.close();
                     btn.disabled = false;
                     btn.innerHTML = "\u25B6 开始回放";
+                    setTestReportToggle("chk-replay-testreport", "replay-testreport-toggle-label", false);
                     showNotification("回放错误: " + data.message);
                 }
             };
@@ -1727,6 +2089,7 @@
                 es.close();
                 btn.disabled = false;
                 btn.innerHTML = "\u25B6 开始回放";
+                setTestReportToggle("chk-replay-testreport", "replay-testreport-toggle-label", false);
                 showNotification("回放连接中断");
             };
         }
@@ -2470,6 +2833,8 @@
             const pidInfo = document.getElementById("monitor-pid-info");
             const btnStart = document.getElementById("btn-monitor-start");
             const btnStop = document.getElementById("btn-monitor-stop");
+            const chkTestReport = document.getElementById("chk-test-report");
+            const toggleLabel = document.getElementById("test-report-toggle-label");
             const isRunning = data.monitor_running || (data.success && data.pid);
             const fifoExists = data.fifo_exists !== undefined ? data.fifo_exists : true;
             if (isRunning) {
@@ -2485,6 +2850,11 @@
                 }
                 btnStart.style.display = "none";
                 btnStop.style.display = "";
+                // 运行中不可切换 test_report 模式（需先停止）
+                if (chkTestReport) {
+                    chkTestReport.disabled = true;
+                    if (toggleLabel) toggleLabel.classList.add("disabled");
+                }
             } else {
                 indicator.className = "monitor-status-indicator stopped";
                 statusText.textContent = "未启动";
@@ -2492,19 +2862,27 @@
                 pidInfo.style.color = "";
                 btnStart.style.display = "";
                 btnStop.style.display = "none";
+                if (chkTestReport) {
+                    chkTestReport.disabled = false;
+                    if (toggleLabel) toggleLabel.classList.remove("disabled");
+                }
             }
         }
 
         async function startMonitor() {
+            if (!confirmEnvDowngrade("监测采集")) return;
             const btn = document.getElementById("btn-monitor-start");
+            const chk = document.getElementById("chk-test-report");
+            const noRollup = chk ? chk.checked : false;
             btn.disabled = true;
             btn.textContent = "启动中...";
             try {
-                const data = await apiPost("/api/monitor/start", {});
+                const data = await apiPost("/api/monitor/start", { no_rollup: noRollup });
+                const modeSuffix = data.no_rollup ? "（test_report 轻量模式）" : "";
                 if (data.fifo_exists) {
-                    showNotification(data.message || "Monitor 已启动");
+                    showNotification((data.message || "Monitor 已启动") + modeSuffix);
                 } else {
-                    showNotification("Monitor 已启动，但 FIFO 管道尚未就绪，Agent 连接需要稍等片刻");
+                    showNotification("Monitor 已启动" + modeSuffix + "，但 FIFO 管道尚未就绪，Agent 连接需要稍等片刻");
                 }
                 updateMonitorUI(data);
                 // 开始轮询状态
@@ -2659,11 +3037,13 @@
                 (data.scenarios || []).forEach(sc => {
                     const card = document.createElement("div");
                     card.className = "agent-sim-card";
+                    const env = window.__ENV || {};
+                    const blocked = !!(env.platform && env.platform.is_windows && sc.run_type === "agent_sim");
                     card.innerHTML = `
-                        <div class="sc-name">${sc.label || sc.name}</div>
+                        <div class="sc-name">${sc.label || sc.name}${blocked ? '<span class="env-unsupported-tag">当前环境不支持</span>' : ''}</div>
                         <div class="sc-desc">${sc.description}</div>
                         <div class="sc-expected">&#x1F3AF; 预期: ${sc.expected || '-'}</div>
-                        <button class="btn btn-primary" onclick="runAgentSimScenario('${sc.key}')">&#x25B6; 运行测试</button>
+                        <button class="btn btn-primary" ${blocked ? 'disabled' : ''} onclick="runAgentSimScenario('${sc.key}')">&#x25B6; 运行测试</button>
                     `;
                     container.appendChild(card);
                 });
@@ -2801,6 +3181,7 @@
         }
 
         function runDemoMonitor() {
+            if (!confirmEnvDowngrade("监测采集")) return;
             const btn = document.getElementById("btn-run-agent-monitor");
             btn.disabled = true;
             btn.textContent = "运行中...";
@@ -2916,9 +3297,13 @@
         let recordEventCount = 0;
 
         function startRecordOnly() {
+            if (!confirmEnvDowngrade("旁路录制")) return;
             const btnStart = document.getElementById("btn-start-record-only");
             const btnStop = document.getElementById("btn-stop-record-only");
             const statusEl = document.getElementById("record-status");
+            const chk = document.getElementById("chk-record-testreport");
+            const noRollup = (chk && chk.checked) ? "1" : "0";
+            setTestReportToggle("chk-record-testreport", "record-testreport-toggle-label", true);
             btnStart.style.display = "none";
             btnStop.style.display = "";
             statusEl.textContent = "正在启动 Monitor...";
@@ -2931,7 +3316,7 @@
 
             document.getElementById("demo-recording-summary").innerHTML = '<span style="color:var(--text-secondary);">等待 Agent 连接...</span>';
 
-            recordOnlySSE = new EventSource("/api/demo/record/start");
+            recordOnlySSE = new EventSource(`/api/demo/record/start?no_rollup=${noRollup}`);
             state.sseConnection = recordOnlySSE;
             state.sseActive = true;
 
@@ -2945,7 +3330,9 @@
                     stream.appendChild(d);
                     stream.scrollTop = stream.scrollHeight;
                 } else if (data.type === "recording_started") {
-                    statusEl.textContent = `录制中 (PID: ${data.pid}) — 请在终端启动 Agent`;
+                    statusEl.textContent = `录制中 (PID: ${data.pid})`
+                        + (data.no_rollup ? " · test_report 轻量模式" : "")
+                        + ` — 请在终端启动 Agent`;
                     statusEl.style.color = "var(--accent-green)";
                     stream.innerHTML = '<div style="color:var(--accent-cyan);padding:4px 0;">▶ 录制已开始，等待 Agent 发送事件...</div>';
                     showNotification("录制已开始，请在终端中启动 Agent");
@@ -3012,6 +3399,7 @@
         function resetRecordButtons() {
             document.getElementById("btn-start-record-only").style.display = "";
             document.getElementById("btn-stop-record-only").style.display = "none";
+            setTestReportToggle("chk-record-testreport", "record-testreport-toggle-label", false);
         }
 
         // ══════════════════════════════════════════════════════
@@ -3119,6 +3507,8 @@
             document.querySelectorAll('#view-files .tab-item').forEach(t => t.classList.remove('active-tab'));
             const tabEl = document.getElementById(`tab-file-${tab}`);
             if (tabEl) tabEl.classList.add('active-tab');
+            const delBar = document.getElementById("reports-delete-bar");
+            if (delBar) delBar.style.display = (tab === "reports") ? "" : "none";
             loadFilesTree();
         }
 
@@ -3261,7 +3651,7 @@
         }
 
         async function deleteCategory(category) {
-            const labels = { records: "录制文件", monitoring: "监测报告", reports: "场景报告", unit_test: "测试输出" };
+            const labels = { records: "录制文件", monitoring: "监测报告", mcp_monitoring: "MCP 申报监测产物", reports: "场景报告", unit_test: "测试输出" };
             const label = labels[category] || category;
             if (!confirm(`确定要删除「${label}」分类下的全部文件吗？此操作不可恢复。`)) return;
             try {
@@ -3274,10 +3664,308 @@
         }
 
         // ══════════════════════════════════════════════════════
+        //  20. 环境检测（徽章 / 检测页 / 受限提醒）与测试运行
+        // ══════════════════════════════════════════════════════
+
+        let currentEnvMode = "light";
+
+        function confirmEnvDowngrade(featureLabel) {
+            // 可降级级（Linux 无 eBPF）→ 点击时确认后继续（对齐 CLI 确认级）
+            const env = window.__ENV;
+            if (env && env.platform.is_linux && !env.platform.has_ebpf) {
+                return confirm(`当前 Linux 环境未检测到 eBPF 能力，${featureLabel}将自动降级。是否继续？`);
+            }
+            return true;
+        }
+
+        async function loadEnvStatus() {
+            try {
+                const data = await apiGet("/api/env/status");
+                window.__ENV = data;
+                updateEnvBadge(data);
+                renderEnvGate();
+            } catch (e) {
+                document.getElementById("env-status-dot").style.background = "var(--accent-red)";
+                document.getElementById("env-status-text").textContent = "环境检测不可用";
+            }
+        }
+
+        function updateEnvBadge(data) {
+            const failed = data.light.failed;
+            const dot = document.getElementById("env-status-dot");
+            const text = document.getElementById("env-status-text");
+            if (failed > 0) {
+                dot.style.background = "var(--accent-red)";
+                text.textContent = `环境 ✗ ${failed} 项未过`;
+                text.style.color = "var(--accent-red)";
+            } else {
+                dot.style.background = "var(--accent-green)";
+                text.textContent = `环境 ✓ · 平台 ${data.platform.name} · ${data.mode_hint}`;
+                text.style.color = "";
+            }
+        }
+
+        function setEnvBanner(elId, kind, message, basis) {
+            const el = document.getElementById(elId);
+            if (!el) return;
+            el.innerHTML = `<div class="env-banner env-banner-${kind}">${message}<div class="env-basis">${basis}</div></div>`;
+        }
+
+        function disableButtons(ids, disabled) {
+            ids.forEach(id => { const el = document.getElementById(id); if (el) el.disabled = disabled; });
+        }
+
+        function renderEnvGate() {
+            // 分级前置提醒（与 CLI _env_gate 对齐；依据来自 /api/env/status 检测结果）
+            const env = window.__ENV;
+            if (!env) return;
+            const plat = env.platform;
+            if (plat.is_windows) {
+                const msg = "当前为 Windows 环境，该功能依赖 Linux FIFO 命名管道（os.mkfifo），不支持。";
+                const basis = "该功能仅限 Linux 环境使用 · 依据: 环境检测 #平台=windows";
+                setEnvBanner("monitor-env-banner", "blocked", msg, basis);
+                setEnvBanner("rr-env-banner", "blocked", msg, basis);
+                setEnvBanner("agent-sim-env-banner", "blocked",
+                    "当前为 Windows 环境，依赖 Monitor FIFO 的 Agent 模拟场景不支持（脚本/单元验证场景可用）。", basis);
+                disableButtons(["btn-monitor-start", "btn-start-record-only",
+                                "btn-run-agent-monitor", "btn-start-replay"], true);
+            } else if (plat.is_linux && !plat.has_ebpf) {
+                const msg = "当前 Linux 环境未检测到 eBPF 能力，采集将自动降级（strace / simulation），启动前将二次确认。";
+                const basis = "依据: 环境检测 #平台=linux · eBPF 能力检测未通过";
+                setEnvBanner("monitor-env-banner", "warn", msg, basis);
+                setEnvBanner("rr-env-banner", "warn", msg, basis);
+            }
+        }
+
+        function renderEnvSummary(platform, modeHint, payload) {
+            const el = document.getElementById("env-summary");
+            const failed = payload.failed;
+            const color = failed > 0 ? "var(--accent-red)" : "var(--accent-green)";
+            el.innerHTML = `
+                <div style="font-size:14px; font-weight:bold; color:${color};">
+                    ${failed > 0 ? `环境 ✗ ${failed} 项未过` : "环境 ✓ 全部通过"}
+                </div>
+                <div style="font-size:13px; color:var(--text-secondary); margin-top:6px;">
+                    平台 <b>${platform.name}</b> · ${modeHint} · 共 ${payload.total} 项（通过 ${payload.passed} / 失败 ${payload.failed}）· 检测时间 ${payload.checked_at}
+                </div>`;
+        }
+
+        function renderEnvItems(payload) {
+            const container = document.getElementById("env-items-container");
+            container.innerHTML = "";
+            const sections = [];
+            const bySection = {};
+            (payload.items || []).forEach(it => {
+                const sec = it.section || "其他";
+                if (!bySection[sec]) { bySection[sec] = []; sections.push(sec); }
+                bySection[sec].push(it);
+            });
+            sections.forEach(sec => {
+                const card = document.createElement("div");
+                card.className = "card";
+                card.innerHTML = `<div class="env-section-title">${sec}</div>`;
+                bySection[sec].forEach(it => {
+                    const row = document.createElement("div");
+                    row.className = "env-item-row";
+                    const mark = it.passed
+                        ? '<span class="env-check-pass">✓ 通过</span>'
+                        : '<span class="env-check-fail">✗ 失败</span>';
+                    const detail = it.detail ? `<div class="env-item-detail">${it.detail}</div>` : "";
+                    row.innerHTML = `<div><div class="env-item-name">${it.name}</div>${detail}</div>${mark}`;
+                    card.appendChild(row);
+                });
+                container.appendChild(card);
+            });
+        }
+
+        async function loadEnvCheck() {
+            const container = document.getElementById("env-items-container");
+            container.innerHTML = '<div class="card" style="color:var(--text-secondary);">加载检查项...</div>';
+            try {
+                if (currentEnvMode === "light") {
+                    const st = await apiGet("/api/env/status");
+                    window.__ENV = st;
+                    renderEnvSummary(st.platform, st.mode_hint, st.light);
+                    renderEnvItems(st.light);
+                    updateEnvBadge(st);
+                } else {
+                    const data = await apiPost("/api/env/check", { light: false });
+                    const env = window.__ENV || { platform: { name: "?" }, mode_hint: "" };
+                    renderEnvSummary(env.platform, env.mode_hint, data);
+                    renderEnvItems(data);
+                }
+            } catch (e) {
+                container.innerHTML = `<div class="card" style="color:var(--accent-red);">加载失败: ${e.message}</div>`;
+            }
+        }
+
+        function switchEnvMode(mode) {
+            currentEnvMode = mode;
+            document.querySelectorAll('#view-env-check .tab-item').forEach(t => t.classList.remove('active-tab'));
+            const tabEl = document.getElementById(`tab-env-${mode}`);
+            if (tabEl) tabEl.classList.add('active-tab');
+            loadEnvCheck();
+        }
+
+        async function refreshEnvCheck() {
+            const container = document.getElementById("env-items-container");
+            container.innerHTML = '<div class="card" style="color:var(--text-secondary);">重新检测中...</div>';
+            try {
+                const light = (currentEnvMode === "light");
+                const data = await apiPost("/api/env/check", { light: light });
+                const env = window.__ENV || { platform: { name: "?" }, mode_hint: "" };
+                renderEnvSummary(env.platform, env.mode_hint, data);
+                renderEnvItems(data);
+                if (light) {
+                    const st = await apiGet("/api/env/status");
+                    window.__ENV = st;
+                    updateEnvBadge(st);
+                    renderEnvGate();
+                }
+                showNotification("环境检测已完成，缓存已刷新");
+            } catch (e) {
+                container.innerHTML = `<div class="card" style="color:var(--accent-red);">检测失败: ${e.message}</div>`;
+            }
+        }
+
+        // ── 测试运行（SSE 流式，复用 run_tests.py）──
+        let testsRunActive = false;
+
+        function addTestLogLine(text, color) {
+            const logEl = document.getElementById("tests-log");
+            const div = document.createElement("div");
+            div.className = "test-log-line";
+            div.style.color = color || "var(--text-primary)";
+            div.textContent = text;
+            logEl.appendChild(div);
+            logEl.scrollTop = logEl.scrollHeight;
+        }
+
+        function setTestButtons(disabled) {
+            ["btn-test-unit", "btn-test-api", "btn-test-sse", "btn-test-all"].forEach(id => {
+                const el = document.getElementById(id);
+                if (el) el.disabled = disabled;
+            });
+            const stopBtn = document.getElementById("btn-test-stop");
+            if (stopBtn) stopBtn.style.display = disabled ? "" : "none";
+        }
+
+        function runTests(scope) {
+            if (testsRunActive) { showNotification("已有测试在运行中"); return; }
+            testsRunActive = true;
+            setTestButtons(true);
+            const logEl = document.getElementById("tests-log");
+            logEl.innerHTML = "";
+            const statusEl = document.getElementById("tests-status");
+            statusEl.textContent = `运行中: ${scope}`;
+            statusEl.style.color = "var(--accent-yellow)";
+            const es = new EventSource(`/api/tests/stream?scope=${encodeURIComponent(scope)}`);
+            state.sseConnection = es;
+            state.sseActive = true;
+            es.onmessage = (e) => {
+                const data = JSON.parse(e.data);
+                if (data.type === "tests_start") {
+                    addTestLogLine(`🚀 启动测试: ${data.label}（${data.scopes.join(" → ")}）`, "var(--accent-blue)");
+                } else if (data.type === "scope_start") {
+                    addTestLogLine(`▶ 开始: ${data.label}`, "var(--accent-cyan)");
+                } else if (data.type === "scope_done") {
+                    if (data.scope === "unit") {
+                        const r = data.result || {};
+                        const color = data.passed ? "var(--accent-green)" : "var(--accent-red)";
+                        addTestLogLine(`✔ 完成: ${data.label} — ${r.passed} passed, ${r.failed} failed (${r.duration_seconds}s)`, color);
+                        (r.failed_names || []).forEach(n => addTestLogLine(`  ✗ ${n}`, "var(--accent-red)"));
+                        if (r.output) addTestLogLine(r.output, "var(--text-secondary)");
+                    } else {
+                        const color = data.passed ? "var(--accent-green)" : "var(--accent-red)";
+                        addTestLogLine(`✔ 完成: ${data.label} — ${data.passed ? "全部通过" : "存在失败"}`, color);
+                    }
+                } else if (data.type === "tests_done") {
+                    es.close();
+                    state.sseConnection = null;
+                    state.sseActive = false;
+                    testsRunActive = false;
+                    setTestButtons(false);
+                    statusEl.textContent = data.message;
+                    statusEl.style.color = data.passed ? "var(--accent-green)" : "var(--accent-red)";
+                    addTestLogLine(`🏁 ${data.message}`, data.passed ? "var(--accent-green)" : "var(--accent-red)");
+                    showNotification("测试运行完成");
+                } else if (data.type === "error") {
+                    es.close();
+                    state.sseConnection = null;
+                    state.sseActive = false;
+                    testsRunActive = false;
+                    setTestButtons(false);
+                    statusEl.textContent = "运行出错";
+                    statusEl.style.color = "var(--accent-red)";
+                    addTestLogLine(`✗ 错误: ${data.message}`, "var(--accent-red)");
+                    showNotification("测试运行失败: " + data.message);
+                }
+            };
+            es.onerror = () => {
+                if (testsRunActive) {
+                    testsRunActive = false;
+                    setTestButtons(false);
+                    statusEl.textContent = "连接中断";
+                    addTestLogLine("✗ SSE 连接中断", "var(--accent-red)");
+                }
+            };
+        }
+
+        function stopTests() {
+            if (state.sseConnection) state.sseConnection.close();
+            state.sseConnection = null;
+            state.sseActive = false;
+            testsRunActive = false;
+            setTestButtons(false);
+            const statusEl = document.getElementById("tests-status");
+            statusEl.textContent = "已停止";
+            statusEl.style.color = "var(--text-secondary)";
+            addTestLogLine("⏹ 用户停止", "var(--accent-yellow)");
+            showNotification("测试运行已停止");
+        }
+
+        // ── 生成场景（复用 generate_scenarios.py）与报告场景级删除 ──
+        async function genScenarios() {
+            if (!confirm("确定重新生成 37 个场景 YAML？将覆盖 scenarios/ 现有文件。")) return;
+            showNotification("正在重新生成场景 YAML...");
+            try {
+                const result = await apiPost("/api/samples/gen", {});
+                showNotification(result.message || "场景生成完成");
+                loadScenarioSamples();
+            } catch (e) {
+                showNotification("场景生成失败: " + e.message);
+            }
+        }
+
+        async function deleteCategoryReports() {
+            const cat = document.getElementById("delete-category-select").value;
+            if (!confirm(`确定要删除 "${cat}" 分类的所有运行记录吗？`)) return;
+            try {
+                const result = await apiPost("/api/reports/delete", { scope: "category", category: cat });
+                showNotification(`已删除 ${result.deleted.directories} 个目录, ${result.deleted.files} 个文件`);
+                loadFilesTree();
+            } catch (e) { showNotification("删除失败: " + e.message); }
+        }
+
+        async function deleteScenarioReport() {
+            const cat = document.getElementById("delete-category-select").value;
+            const sid = document.getElementById("delete-scenario-id").value.trim();
+            if (!sid) { showNotification("请输入场景目录名（如 n01-standard-development）"); return; }
+            if (!confirm(`确定删除 ${cat}/${sid} 的全部报告吗？此操作不可恢复。`)) return;
+            try {
+                const result = await apiPost("/api/reports/delete", { scope: "scenario", category: cat, scenario_id: sid });
+                showNotification(`已删除 ${result.deleted.directories} 个目录, ${result.deleted.files} 个文件`);
+                loadFilesTree();
+            } catch (e) { showNotification("删除失败: " + e.message); }
+        }
+
+        // ══════════════════════════════════════════════════════
         //  21. 初始化
         // ══════════════════════════════════════════════════════
         document.addEventListener("DOMContentLoaded", () => {
             showCategories();
+            // 环境状态徽章（轻量检测，后端会话级缓存）
+            loadEnvStatus();
             // 健康检查
             apiGet("/api/health").then(d => {
                 document.querySelector(".status-dot").style.background = "var(--accent-green)";

@@ -271,6 +271,41 @@ python3 main.py --mode strace --pid <TARGET_PID>
 | `simulation` | 双端 | 强制模拟模式，加载场景 YAML |
 | `ebpf` | Linux | eBPF 内核探针采集真实 syscall |
 | `strace` | Linux | strace 降级采集 |
+| `mcp_report` | Windows | MCP 申报模式（WorkBuddy 降级监测，见下节） |
+
+### MCP 申报模式（Windows WorkBuddy 降级监测）
+
+黑盒 Agent（如 WorkBuddy）无法注入探针时，由 Agent 通过 **MCP 协议主动申报**行为：
+本系统作为标准 MCP Server（HTTP+SSE，官方 mcp SDK）暴露三个申报 tools，
+`mcp_report_collector` 消费申报流并复用 RawEventFactory 转入统一监测管线。
+
+```bash
+# 依赖: pip install mcp
+cd observer_sim
+
+# 启动监测守护进程（MCP Server 默认监听 http://127.0.0.1:8765/sse）
+python observer.py daemon --mode mcp_report --output output/mcp_monitoring
+
+# 停止: 控制台 Ctrl+C，或向 stdin 写入一行 shutdown/stop/quit
+# 停止后自动生成风险分析报告（reports/）与审计日志（audit/）
+```
+
+WorkBuddy 以 MCP client 接入 `/sse` 后调用三个申报 tools：
+
+| tool | 用途 |
+|------|------|
+| `report_tool_call` | 申报一次工具调用（tool_name + tool_args 摘要） |
+| `report_action` | 申报一次通用动作（决策/提示等非工具动作） |
+| `report_session` | 申报会话生命周期事件（start/end/pause/resume） |
+
+安全与保护机制：
+- **申报校验**：schema 校验 + 报文大小限制（64KB）+ 容器字段限制（16KB/100 键）+ 按 agent 限流（60 次/秒），畸形/超限申报被拒绝且 Server 不崩溃
+- **浅层语义保护**：工具名→事件类型映射复用 HookRegistry，申报参数自动脱敏（密码/token 等敏感键）与截断，恶意申报不破坏管线
+- **能力边界**：定位为「合规留痕 + 风险提示」——事件完整性依赖 Agent 主动申报，
+  无交叉校验、无 L2/L3 阻断，不宣称安全防护
+
+环境检测（`python observer.py env`）包含 mcp SDK 可用性检测项；
+端到端验证见 `tests/test_mcp_report_e2e.py`（MCP client 模拟器跑正常/异常/畸形申报场景）。
 
 ### Web 浏览器模式（推荐）
 

@@ -320,6 +320,231 @@ class TestReportCacheManagerGC(unittest.TestCase):
         cache._gc_segments()
         self.assertLessEqual(len(cache._segments), cache.MAX_SEGMENTS)
 
+    def test_gc_archives_detail_rollup_before_delete(self):
+        """L-T4: GC 删前将事件明细转存 rollup JSONL，GC 后明细可查"""
+        cache = ReportCacheManager(output_dir=self._tmpdir)
+        mock_logger = Mock()
+        entries = [
+            _make_mock_audit_entry("e1", 1000, "ALLOW", risk_score=0.1),
+            _make_mock_audit_entry("e2", 2000, "ALERT", risk_level="HIGH",
+                                   risk_score=0.8, matched_rules=["R001"]),
+        ]
+        mock_logger.read_entries.return_value = entries
+        cache.set_audit_logger(mock_logger)
+
+        # 最旧片段含 e1/e2 明细，其余填满 MAX_SEGMENTS 个空片段
+        cache._segments = [{
+            "segment_id": "seg_old", "start_ns": 0, "end_ns": 1000,
+            "stats": {"total": 2}, "entry_ids": ["e1", "e2"],
+        }]
+        for i in range(cache.MAX_SEGMENTS):
+            cache._segments.append({
+                "segment_id": f"seg_{i:04d}",
+                "start_ns": (i + 1) * 1000, "end_ns": (i + 2) * 1000,
+                "stats": {}, "entry_ids": [],
+            })
+
+        cache._gc_segments()
+        self.assertLessEqual(len(cache._segments), cache.MAX_SEGMENTS)
+        self.assertFalse(any(s["segment_id"] == "seg_old"
+                             for s in cache._segments))
+
+        # GC 后明细可查
+        rollup = cache.read_rollup("seg_old")
+        self.assertGreaterEqual(len(rollup), 2)
+        meta = rollup[0]
+        self.assertEqual(meta.get("type"), "segment_meta")
+        self.assertEqual(meta.get("segment_id"), "seg_old")
+        self.assertEqual(meta.get("stats", {}).get("total"), 2)
+        entry_ids = {line.get("event_id") for line in rollup[1:]}
+        self.assertEqual(entry_ids, {"e1", "e2"})
+        e1 = next(line for line in rollup[1:]
+                  if line.get("event_id") == "e1")
+        self.assertEqual(e1.get("decision_action"), "ALLOW")
+        # rollup 文件落盘且 list_rollups 可见
+        self.assertIn("seg_old", cache.list_rollups())
+        self.assertTrue(os.path.isfile(os.path.join(
+            cache.rollup_dir, "rollup_seg_old.jsonl")))
+
+    def test_gc_rollup_without_audit_logger_keeps_meta(self):
+        """无 AuditLogger 时 rollup 保留 meta 行，GC 不崩溃"""
+        cache = ReportCacheManager(output_dir=self._tmpdir)
+        cache._segments = [{
+            "segment_id": "seg_meta", "start_ns": 0, "end_ns": 1000,
+            "stats": {"total": 3}, "entry_ids": ["e1"],
+        }]
+        for i in range(cache.MAX_SEGMENTS):
+            cache._segments.append({
+                "segment_id": f"seg_{i:04d}",
+                "start_ns": (i + 1) * 1000, "end_ns": (i + 2) * 1000,
+                "stats": {}, "entry_ids": [],
+            })
+
+        cache._gc_segments()
+        rollup = cache.read_rollup("seg_meta")
+        self.assertEqual(len(rollup), 2)  # meta 行 + 缺失标记行
+        self.assertEqual(rollup[0]["type"], "segment_meta")
+        self.assertEqual(rollup[1]["event_id"], "e1")
+        self.assertTrue(rollup[1]["missing"])
+
+
+class TestL1AnomalyAndFingerprintZones(unittest.TestCase):
+    """L-T5: L1 片段异常明细区（anomalies）与指纹边区（fingerprint_edges）测试。
+
+    三红线约束：
+    - 异常明细全保留（ALERT/BLOCK/高分事件完整字段+决策链进 anomalies）
+    - 指纹边全透传（fingerprint_edges 全量不聚合）
+    - 向后兼容（旧片段无新区键 merge 不崩溃）
+    """
+
+    def setUp(self):
+        self._tmpdir = tempfile.mkdtemp(prefix="rcache_l1z_")
+
+    def tearDown(self):
+        shutil.rmtree(self._tmpdir, ignore_errors=True)
+
+    def test_generate_segment_fills_anomalies_zone(self):
+        """异常明细区收录 ALERT/BLOCK/高分事件，完整字段+决策链保留"""
+        cache = ReportCacheManager(output_dir=self._tmpdir)
+        mock_logger = Mock()
+        entries = [
+            _make_mock_audit_entry("e1", 1000, "ALLOW", risk_score=0.1),
+            _make_mock_audit_entry("e2", 2000, "ALERT", risk_score=0.3,
+                                   risk_level="MEDIUM", matched_rules=["R001"]),
+            _make_mock_audit_entry("e3", 3000, "ALLOW", blocked=True,
+                                   risk_score=0.5),
+            _make_mock_audit_entry("e4", 4000, "ALLOW", risk_score=0.7,
+                                   risk_level="HIGH"),
+        ]
+        mock_logger.read_entries.return_value = entries
+        cache.set_audit_logger(mock_logger)
+
+        result = cache._generate_segment()
+        anomalies = result["anomalies"]
+        ids = {a["event_id"] for a in anomalies}
+        self.assertEqual(ids, {"e2", "e3", "e4"},
+                         "ALERT/BLOCK/高分事件必须全部进异常明细区")
+        e2 = next(a for a in anomalies if a["event_id"] == "e2")
+        self.assertEqual(e2["decision_action"], "ALERT")
+        self.assertEqual(e2["risk_level"], "MEDIUM")
+        self.assertEqual(e2["matched_rules"], ["R001"])
+
+    def test_generate_segment_fingerprint_edges_full_passthrough(self):
+        """指纹边区全量透传不聚合：同指纹不同事件各一条，无指纹不进"""
+        cache = ReportCacheManager(output_dir=self._tmpdir)
+        mock_logger = Mock()
+        entries = [
+            _make_mock_audit_entry("e1", 1000, "ALLOW", risk_score=0.1),
+            _make_mock_audit_entry("e2", 2000, "ALERT", risk_score=0.3),
+            _make_mock_audit_entry("e3", 3000, "ALLOW", risk_score=0.1),
+        ]
+        entries[0].fingerprint = "fp_a"
+        entries[1].fingerprint = "fp_a"   # 同指纹，不聚合
+        entries[2].fingerprint = None     # 无指纹
+        for i, entry in enumerate(entries):
+            entry.agent_id = f"agent-{i}"
+            entry.event_type = "file_open"
+            entry.file_path = "/tmp/f.csv"
+            entry.remote_addr = None
+        mock_logger.read_entries.return_value = entries
+        cache.set_audit_logger(mock_logger)
+
+        result = cache._generate_segment()
+        edges = result["fingerprint_edges"]
+        self.assertEqual(len(edges), 2, "同指纹两条事件必须全量透传不聚合")
+        self.assertEqual({f["event_id"] for f in edges}, {"e1", "e2"})
+        self.assertEqual({f["fingerprint"] for f in edges}, {"fp_a"})
+        self.assertEqual({f["agent_id"] for f in edges},
+                         {"agent-0", "agent-1"})
+
+    def test_generate_segment_marks_format_version(self):
+        """新片段带 format_version 标记（旧片段缺省视作 0）"""
+        cache = ReportCacheManager(output_dir=self._tmpdir)
+        mock_logger = Mock()
+        mock_logger.read_entries.return_value = [
+            _make_mock_audit_entry("e1", 1000, "ALLOW"),
+        ]
+        cache.set_audit_logger(mock_logger)
+        result = cache._generate_segment()
+        self.assertEqual(result.get("format_version"),
+                         ReportCacheManager.FORMAT_VERSION)
+
+    def test_merge_segments_passthrough_zones_dedup(self):
+        """merge 透传新区并去重（anomalies 按 event_id、edges 按指纹+事件）"""
+        cache = ReportCacheManager(output_dir=self._tmpdir)
+        stats = {
+            "total": 1, "allow": 1, "alert": 0, "block": 0,
+            "risk_dist": {"LOW": 1, "MEDIUM": 0, "HIGH": 0, "CRITICAL": 0},
+            "rule_hits": {}, "max_score": 0.1,
+        }
+        cache._segments = [
+            {"segment_id": "seg_a", "start_ns": 1000, "end_ns": 2000,
+             "stats": stats, "entry_ids": ["e1"],
+             "anomalies": [{"event_id": "e1", "timestamp_ns": 1500,
+                            "decision_action": "ALERT"}],
+             "fingerprint_edges": [{"fingerprint": "fp_x", "event_id": "e1",
+                                     "timestamp_ns": 1500}]},
+            {"segment_id": "seg_b", "start_ns": 2000, "end_ns": 3000,
+             "stats": stats, "entry_ids": ["e1", "e2"],
+             "anomalies": [{"event_id": "e1", "timestamp_ns": 1500,
+                            "decision_action": "ALERT"},
+                           {"event_id": "e2", "timestamp_ns": 2500,
+                            "decision_action": "BLOCK"}],
+             "fingerprint_edges": [{"fingerprint": "fp_x", "event_id": "e1",
+                                     "timestamp_ns": 1500},
+                                   {"fingerprint": "fp_y", "event_id": "e2",
+                                    "timestamp_ns": 2500}]},
+        ]
+        result = cache.merge_segments(cache._segments)
+        self.assertEqual(len(result["anomalies"]), 2, "e1 跨片段重复只保留一次")
+        self.assertEqual(len(result["fingerprint_edges"]), 2)
+        # 时间升序
+        self.assertEqual([a["event_id"] for a in result["anomalies"]],
+                         ["e1", "e2"])
+
+    def test_merge_segments_legacy_segments_compatible(self):
+        """旧片段（无新区键）merge 不崩溃，新区为空"""
+        cache = ReportCacheManager(output_dir=self._tmpdir)
+        cache._segments = [{
+            "segment_id": "seg_legacy", "start_ns": 1000, "end_ns": 2000,
+            "stats": {
+                "total": 1, "allow": 1, "alert": 0, "block": 0,
+                "risk_dist": {"LOW": 1, "MEDIUM": 0, "HIGH": 0, "CRITICAL": 0},
+                "rule_hits": {}, "max_score": 0.1,
+            },
+            "entry_ids": ["e1"],
+        }]
+        result = cache.merge_segments(cache._segments)
+        self.assertEqual(result["anomalies"], [])
+        self.assertEqual(result["fingerprint_edges"], [])
+        self.assertEqual(result["merged_stats"]["total"], 1)
+
+    def test_merge_gap_fill_includes_zones(self):
+        """间隙填充条目同样进新区（三红线：任一时刻不丢失）"""
+        cache = ReportCacheManager(output_dir=self._tmpdir)
+        mock_logger = Mock()
+        gap = _make_mock_audit_entry("gap1", 1500, "ALERT",
+                                     risk_score=0.65, risk_level="HIGH")
+        gap.fingerprint = "fp_gap"
+        gap.agent_id = "agent-x"
+        gap.event_type = "net_conn"
+        mock_logger.read_entries.return_value = [gap]
+        cache._segments = [{
+            "segment_id": "seg_a", "start_ns": 1000, "end_ns": 2000,
+            "stats": {
+                "total": 1, "allow": 1, "alert": 0, "block": 0,
+                "risk_dist": {"LOW": 1, "MEDIUM": 0, "HIGH": 0, "CRITICAL": 0},
+                "rule_hits": {}, "max_score": 0.1,
+            },
+            "entry_ids": ["e1"],
+        }]
+        result = cache.merge_segments(cache._segments, audit_logger=mock_logger)
+        self.assertEqual(result["gaps_filled"], 1)
+        self.assertEqual([a["event_id"] for a in result["anomalies"]],
+                         ["gap1"], "间隙补充的 ALERT 事件必须进异常明细区")
+        self.assertEqual([f["event_id"] for f in result["fingerprint_edges"]],
+                         ["gap1"], "间隙补充的指纹边必须进指纹边区")
+
 
 if __name__ == "__main__":
     unittest.main()

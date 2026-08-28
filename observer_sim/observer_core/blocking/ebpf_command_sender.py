@@ -128,7 +128,7 @@ def detect_ebpf_capability() -> dict:
         {"available": bool, "reason": str, "details": dict}
     """
     details = {
-        "is_root": os.geteuid() == 0,
+        "is_root": os.name == "posix" and os.geteuid() == 0,
         "has_btf": os.path.exists("/sys/kernel/btf/vmlinux"),
         "has_libbpf": _load_libbpf() is not None,
     }

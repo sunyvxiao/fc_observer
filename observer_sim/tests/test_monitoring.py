@@ -135,7 +135,8 @@ class TestRuleEngine(unittest.TestCase):
         rules_path = os.path.join(os.path.dirname(__file__), '..', 'rules', 'default_policy.yaml')
         self.engine.load_rules(rules_path)
 
-    def _make_norm_event(self, event_type, target_str, agent_id="test-agent"):
+    def _make_norm_event(self, event_type, target_str, agent_id="test-agent",
+                         file_op=None):
         """创建测试用 NormalizedEvent"""
         raw = RawEvent(
             event_id="test_evt", timestamp_ns=0,
@@ -151,6 +152,7 @@ class TestRuleEngine(unittest.TestCase):
             norm.raw.arguments = target_str.split()[1:] if target_str and ' ' in target_str else []
         elif event_type == "file_open":
             norm.raw.file_path = target_str
+            norm.raw.file_op = file_op
         elif event_type == "net_conn":
             parts = target_str.split(":")
             norm.raw.remote_addr = parts[0]
@@ -171,6 +173,35 @@ class TestRuleEngine(unittest.TestCase):
         rule_ids = [r.rule_id for r in result.matched_rules]
         self.assertIn("R001", rule_ids)
         self.assertEqual(result.highest_action, "block")
+
+    def test_rm_rf_tmp_dir_no_R001(self):
+        """修订 2.1: rm -rf /tmp/logs 不再误命中 R001（仅 R018 通用痕迹清除告警）"""
+        event = self._make_norm_event("exec", "/bin/rm -rf /tmp/logs")
+        result = self.engine.match(event)
+
+        rule_ids = [r.rule_id for r in result.matched_rules]
+        self.assertNotIn("R001", rule_ids)
+        self.assertIn("R018", rule_ids)
+        self.assertEqual(result.highest_action, "alert")
+
+    def test_system_dir_read_no_R008(self):
+        """修订 2.1: 读取 /etc/shadow 不再误命中 R008（写操作限定）"""
+        event = self._make_norm_event("file_open", "/etc/shadow", file_op="read")
+        result = self.engine.match(event)
+
+        rule_ids = [r.rule_id for r in result.matched_rules]
+        self.assertNotIn("R008", rule_ids)
+        # 读取系统敏感文件仍命中 R007 告警
+        self.assertIn("R007", rule_ids)
+
+    def test_system_dir_write_matches_R008(self):
+        """修订 2.1: 写入 /etc/cron.d/x 命中 R008（写操作限定通过）"""
+        event = self._make_norm_event("file_open", "/etc/cron.d/backdoor",
+                                      file_op="write")
+        result = self.engine.match(event)
+
+        rule_ids = [r.rule_id for r in result.matched_rules]
+        self.assertIn("R008", rule_ids)
 
     def test_git_clone_no_match(self):
         """正常 git clone 不命中任何规则"""

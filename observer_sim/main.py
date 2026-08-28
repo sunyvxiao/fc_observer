@@ -1,12 +1,17 @@
 #!/usr/bin/env python3
 """
-main.py — 方寸观察者模拟学习系统 主入口
+main.py — 方寸观察者模拟学习系统 CLI 模式实现模块（observer run 的兼容壳）
+
+U4 统一入口：所有入口收敛为 observer.py（python observer.py run / test / ...），
+本模块的 run_cli 是 observer run/test 子命令的共享实现，
+`python main.py --scenario n01`、`python main.py test unit` 旧用法继续可用。
 
 用法:
-    python main.py --scenario all                      # 运行全部37个场景
+    python main.py --scenario all                      # 运行全部场景
     python main.py --scenario n01                      # 按场景ID前缀匹配
     python main.py --category normal                   # 按分类运行
     python main.py --scenario all --output output      # 指定输出目录
+    python main.py test unit                           # 运行单元测试
 
 功能:
     加载场景 YAML → 逐事件处理 → 全链路Pipeline → 分类+时间戳归档输出
@@ -41,6 +46,8 @@ from observer_core.audit.behavior_graph import BehaviorGraph
 from observer_core.audit.audit_logger import AuditLogger
 from observer_core.audit.report_exporter import ReportExporter
 from observer_core.audit.output_path_manager import RunOutputManager, infer_category
+from observer_core.audit.output_sink import DefaultOutputSink
+from observer_core.pipeline_runner import PipelineRunner
 from adapter.platform_detect import detect_and_create_collector
 
 
@@ -66,23 +73,14 @@ def load_scenario(scenario_path: str) -> dict:
 
 
 def create_raw_event(event_data: dict, agent_info: dict, seq: int) -> RawEvent:
-    """从场景 YAML 事件数据创建 RawEvent（保留用于兼容）"""
-    return RawEvent(
-        event_id=f"evt-{seq:04d}",
-        timestamp_ns=0,  # 由 VirtualClock 设置
-        event_type=event_data["type"],
-        pid=agent_info.get("initial_pid", 10001),
-        ppid=1,
-        agent_id=event_data.get("agent", agent_info.get("agent_id", "unknown")),
-        agent_framework=agent_info.get("framework", "unknown"),
-        executable=event_data.get("executable"),
-        arguments=event_data.get("arguments"),
-        file_path=event_data.get("file_path"),
-        file_op=event_data.get("file_op"),
-        remote_addr=event_data.get("remote_addr"),
-        remote_port=event_data.get("remote_port"),
-        protocol=event_data.get("protocol"),
-    )
+    """从场景 YAML 事件数据创建 RawEvent（保留用于兼容）。
+
+    转换逻辑已收敛到 RawEventFactory.from_scenario_event
+    （计划 MCP T2），本函数仅作薄委托。
+    """
+    from observer_core.monitoring.raw_event_factory import RawEventFactory
+    return RawEventFactory.from_scenario_event(
+        event_data, seq=seq, timestamp_ns=0, agent_info=agent_info)
 
 
 def run_scenario_pipeline(scenario: dict, clock: VirtualClock,
@@ -114,6 +112,18 @@ def run_scenario_pipeline(scenario: dict, clock: VirtualClock,
 
     stats = {"total": total, "allow": 0, "alert": 0, "block": 0}
 
+    # 全链路流水线（单一事实来源，见 observer_core/pipeline_runner.py）
+    runner = PipelineRunner(
+        normalizer=normalizer,
+        rule_engine=rule_engine,
+        baseline_checker=baseline_checker,
+        scorer=scorer,
+        decision_engine=decision_engine,
+        blocking_coord=blocking_coord,
+        behavior_graph=behavior_graph,
+        audit_logger=audit_logger,
+    )
+
     if collector is not None:
         # 新架构: 从 Collector 获取事件
         event_iter = enumerate(collector.start(), 1)
@@ -137,40 +147,12 @@ def run_scenario_pipeline(scenario: dict, clock: VirtualClock,
         event_iter = _legacy_iter()
 
     for i, raw in event_iter:
-        norm = normalizer.normalize(raw)
-
-        # 规则匹配
-        match_result = rule_engine.match(norm)
-        matched_rule_ids = [r.rule_id for r in match_result.matched_rules]
-
-        # 基线收集
-        baseline_checker.collect(norm)
-
-        # 风险评分
-        baseline_data = baseline_checker.get_baseline_dict()
-        scorer.set_baseline(baseline_data)
-        agent_ctx = normalizer.get_agent_context(raw.agent_id)
-        assessment = scorer.assess(norm, match_result, agent_ctx)
-
-        # 研判决策
-        decision = decision_engine.decide(assessment, norm.event_id, raw.agent_id)
-
-        # 阻断执行
-        blocking_result = blocking_coord.execute(norm, decision)
-
-        # 记录到行为图谱
-        behavior_graph.add_event(
-            norm, assessment=assessment, decision=decision,
-            blocking_result=blocking_result, matched_rules=matched_rule_ids
-        )
-
-        # 写入审计日志
-        description = _build_description(norm)
-        audit_logger.log_event(
-            norm, assessment=assessment, decision=decision,
-            blocking_result=blocking_result, matched_rules=matched_rule_ids,
-            description=description
-        )
+        # 全链路处理（编排已收敛到 PipelineRunner）
+        result = runner.process_event(raw)
+        assessment = result.assessment
+        decision = result.decision
+        blocking_result = result.blocking_result
+        description = result.description
 
         # 更新统计
         if blocking_result.blocked:
@@ -185,28 +167,6 @@ def run_scenario_pipeline(scenario: dict, clock: VirtualClock,
         logging.info(f"  [{status:5s}] ({i}/{total}) {description}")
 
     return stats
-
-
-def _build_description(event: NormalizedEvent) -> str:
-    """构建事件描述"""
-    et = event.event_type
-    if et == "exec":
-        cmd = event.command_string or ""
-        if not cmd:
-            parts = [event.raw.executable or ""]
-            if event.raw.arguments:
-                parts.extend(event.raw.arguments)
-            cmd = " ".join(parts)
-        return f"exec: {cmd[:60]}"
-    elif et == "file_open":
-        op = event.raw.file_op or "open"
-        path = event.raw.file_path or ""
-        return f"file_{op}: {path}"
-    elif et == "net_conn":
-        addr = event.raw.remote_addr or ""
-        port = event.raw.remote_port
-        return f"net: {addr}:{port}" if port else f"net: {addr}"
-    return f"{et}"
 
 
 def discover_scenarios(base_dir: str, category: str = None, scenario_filter: str = None) -> List[str]:
@@ -245,8 +205,49 @@ def discover_scenarios(base_dir: str, category: str = None, scenario_filter: str
     return files
 
 
-def main():
+def cmd_test(target: str) -> int:
+    """
+    统一测试子命令: unit / api / sse / all
+
+    收敛四个测试入口到 run_tests.py（单一事实来源）：
+      unit → pytest 套件；api/sse → 自动拉起/关闭服务跑冒烟。
+    """
+    from run_tests import run_unit_tests, run_api_smoke, run_sse_smoke
+
+    ok = True
+    if target in ("unit", "all"):
+        print("\n=== [unit] pytest 套件 ===")
+        result = run_unit_tests()
+        print(f"[unit] {result['passed']} passed, {result['failed']} failed "
+              f"({result['duration_seconds']}s) → {result['status']}")
+        if result["failed"]:
+            for name in result["failed_names"]:
+                print(f"  FAILED: {name}")
+        ok = ok and result["status"] == "completed"
+    if target in ("api", "all"):
+        print("\n=== [api] API 冒烟 ===")
+        ok = run_api_smoke() and ok
+    if target in ("sse", "all"):
+        print("\n=== [sse] SSE 冒烟 ===")
+        ok = run_sse_smoke() and ok
+    print(f"\n=== 测试汇总: {'全部通过' if ok else '存在失败'} ===")
+    return 0 if ok else 1
+
+
+def run_cli(argv=None) -> int:
+    """observer.py run/test 子命令的共享实现（兼容旧 main.py 参数与 test 子命令）。
+
+    返回进程退出码（不调用 sys.exit，供 observer 统一入口复用）。
+    """
     parser = argparse.ArgumentParser(description="方寸观察者模拟学习系统")
+    sub = parser.add_subparsers(dest="command", help="子命令")
+    # test 子命令: 统一测试入口（收敛 pytest / test_api / test_sse / Web /api/tests/run）
+    test_parser = sub.add_parser(
+        "test", help="运行测试 (unit/api/sse/all)")
+    test_parser.add_argument(
+        "target", nargs="?", default="all",
+        choices=["unit", "api", "sse", "all"],
+        help="测试目标 (默认 all)")
     parser.add_argument("--scenario", type=str, default="all",
                         help="场景ID前缀 (如 n01, a01, all)")
     parser.add_argument("--category", type=str, default=None,
@@ -256,9 +257,14 @@ def main():
     parser.add_argument("--output", type=str, default="output",
                         help="输出目录")
     parser.add_argument("--mode", type=str, default=None,
-                        choices=["auto", "simulation", "strace", "ebpf"],
+                        choices=["auto", "simulation", "strace", "ebpf",
+                                 "mcp_report"],
                         help="采集模式 (默认从 config.yaml 读取)")
-    args = parser.parse_args()
+    args = parser.parse_args(argv)
+
+    # 统一测试子命令
+    if args.command == "test":
+        return cmd_test(args.target)
 
     # 切换到脚本所在目录
     os.chdir(os.path.dirname(os.path.abspath(__file__)))
@@ -283,7 +289,7 @@ def main():
 
     if not scenario_files:
         logger.error(f"No scenarios found (scenario={args.scenario}, category={args.category})")
-        sys.exit(1)
+        return 1
 
     logger.info(f"Found {len(scenario_files)} scenario(s) to run")
 
@@ -304,9 +310,6 @@ def main():
         scenario = load_scenario(scenario_path)
         scenario_id = scenario["id"]
 
-        # 为本次运行创建输出路径管理器
-        run_mgr = RunOutputManager(base_output, category, scenario_id)
-
         # 绑定 Collector 到当前场景（统一架构，复用同一实例）
         collector.attach(agent_id=scenario_id)
         if hasattr(collector, 'load_scenario'):
@@ -321,20 +324,27 @@ def main():
         scorer.register_default_dimensions()
         baseline_checker = BaselineChecker()
         decision_engine = DecisionEngine()
-        chain_builder = ChainReportBuilder(output_dir=run_mgr.run_dir)
         sender = MockCommandSender()
-        blocking_coord = BlockingCoordinator(clock, sender, output_dir=run_mgr.run_dir)
+        blocking_coord = BlockingCoordinator(clock, sender, output_dir=base_output)
         behavior_graph = BehaviorGraph()
-        audit_logger = AuditLogger(output_dir=run_mgr.run_dir)
-        report_exporter = ReportExporter(output_dir=run_mgr.run_dir)
+        audit_logger = AuditLogger(
+            output_dir=base_output,
+            # L-T3: L0 审计文件保留天数（来自 config.yaml output.retention_days）
+            retention_days=(config or {}).get("output", {}).get("retention_days"),
+        )
+        report_exporter = ReportExporter(output_dir=base_output)
 
-        # 设置组件输出目录为运行时间戳目录
-        audit_logger.set_output_dir(run_mgr.audit_dir)
-        report_exporter.set_output_dir(run_mgr.report_dir)
-        blocking_coord.set_output_dir(run_mgr.evidence_dir)
-
-        # 开始审计日志
-        audit_logger.start_scenario(scenario_id)
+        # U3: 输出编排收敛至 OutputSink（创建 run 目录 + 设输出目录 + 开始审计）
+        sink = DefaultOutputSink(
+            base_output_dir=base_output,
+            audit_logger=audit_logger,
+            report_exporter=report_exporter,
+            behavior_graph=behavior_graph,
+            blocking_coord=blocking_coord,
+            baseline_checker=baseline_checker,
+        )
+        run_mgr = sink.begin_run(category, scenario_id)
+        chain_builder = ChainReportBuilder(output_dir=run_mgr.run_dir)
 
         # 运行流水线（使用 collector 提供事件）
         stats = run_scenario_pipeline(
@@ -352,30 +362,22 @@ def main():
 
         audit_logger.close()
 
-        # 导出报告 → run_dir
-        try:
-            report_path = report_exporter.export_scenario_report(
-                scenario_id=scenario_id,
-                scenario_name=scenario["name"],
-                audit_logger=audit_logger,
-                behavior_graph=behavior_graph,
-                scenario_description=scenario.get("description", ""),
-                expected_result=scenario.get("expected_result", ""),
-            )
-        except Exception as e:
-            logger.warning(f"报告导出失败（可能是无事件数据）: {e}")
-            report_path = None
-
-        # 保存行为图谱 → run_dir/graphs/
-        graph_path = run_mgr.graph_filepath(f"graph_{scenario_id}.json")
-        behavior_graph.save_json(graph_path)
-
-        # 保存基线快照（N01场景结束后）
-        if scenario_id.startswith("n01"):
-            baseline_path = os.path.join(
-                run_mgr.baseline_run_dir(), f"baseline_{scenario_id}.json"
-            )
-            baseline_checker.save_baseline(baseline_path)
+        # U3: 导出报告 / 保存图谱 / 基线快照统一由 OutputSink 编排
+        # （main 入口原行为：报告导出失败不中断、不写阻断证据）
+        outputs = sink.finalize(
+            {
+                "id": scenario_id,
+                "name": scenario["name"],
+                "description": scenario.get("description", ""),
+                "expected_result": scenario.get("expected_result", ""),
+            },
+            stats,
+            write_evidence=False,
+            tolerate_export_error=True,
+        )
+        if outputs["report_path"] is None:
+            logger.warning("报告导出失败（可能是无事件数据）")
+        sink.save_baseline(scenario_id)
 
         logger.info(f"\n  Scenario {scenario_id} complete:")
         logger.info(f"    Events: {stats['total']} | Allow: {stats['allow']} | "
@@ -390,7 +392,7 @@ def main():
             "allowed": stats["allow"],
             "alerted": stats["alert"],
             "blocked": stats["block"],
-            "report_file": report_path,
+            "report_file": outputs["report_path"],
             "output_dir": run_mgr.run_dir,
         })
 
@@ -404,6 +406,16 @@ def main():
     logger.info(f"\n{'=' * 60}")
     logger.info(f"  All {len(all_summaries)} scenario(s) complete.")
     logger.info(f"{'=' * 60}")
+    return 0
+
+
+def main():
+    """main.py 兼容壳：python main.py --scenario n01 / python main.py test unit 保持可用。
+
+    U4: 统一入口为 observer.py（python observer.py run ...），
+    本函数与 observer run/test 复用同一实现 run_cli。
+    """
+    sys.exit(run_cli(sys.argv[1:]))
 
 
 if __name__ == "__main__":

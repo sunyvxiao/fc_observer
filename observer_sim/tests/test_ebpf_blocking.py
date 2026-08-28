@@ -571,7 +571,7 @@ class TestCapabilities:
 # ============================================================
 
 @pytest.mark.skipif(
-    os.geteuid() != 0,
+    os.name != "posix" or os.geteuid() != 0,
     reason="eBPF 加载需要 root 权限"
 )
 @pytest.mark.skipif(

@@ -18,6 +18,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 from adapter.hook_registry import (
     HookRegistry, HookFrameworkConfig, ToolMapping, get_registry
 )
+from adapter.agent_bridge import AgentBridge, BridgeConfig
 
 
 class TestToolMapping(unittest.TestCase):
@@ -253,6 +254,94 @@ class TestHookRegistry(unittest.TestCase):
         r1 = get_registry(config_dir=self._tmpdir)
         r2 = get_registry()
         self.assertIs(r1, r2)
+
+
+class TestAgentBridgeRegistryWiring(unittest.TestCase):
+    """P0-2: AgentBridge._tool_map 从 HookRegistry(YAML) 加载的接线断言"""
+
+    def test_bridge_loads_tool_map_from_registry(self):
+        """AgentBridge 的 _tool_map 与 HookRegistry 默认配置一致"""
+        bridge = AgentBridge(BridgeConfig(agent_framework="pydantic-deep"))
+        # 从默认配置目录加载 registry，逐工具对比接线结果
+        registry = HookRegistry()
+        config = registry.get_config("pydantic-deep")
+        self.assertIsNotNone(config, "默认 HookRegistry 应包含 pydantic-deep 框架")
+        for tool_name in config.list_tools():
+            self.assertEqual(
+                bridge._tool_map.get(tool_name),
+                config.get_event_type(tool_name),
+                f"工具 {tool_name} 的事件类型应与 registry 一致")
+
+    def test_bridge_builtin_fallback_preserved(self):
+        """YAML 未覆盖的内置工具仍保留兜底分类"""
+        bridge = AgentBridge(BridgeConfig(agent_framework="pydantic-deep"))
+        self.assertEqual(bridge._tool_map.get("python3"), "exec")
+        self.assertEqual(bridge._tool_map.get("read_memory"), "file_open")
+        self.assertEqual(bridge._tool_map.get("ask_user"), "exec")
+        self.assertEqual(bridge._tool_map.get("list_directory"), "file_open")
+        self.assertEqual(bridge._tool_map.get("update_todo_statuses"), "exec")
+
+    def test_build_tool_map_registry_priority(self):
+        """registry 配置优先于内置表（YAML 修改后接线立即生效）"""
+        bridge = AgentBridge(BridgeConfig())
+        reg_config = HookFrameworkConfig(
+            framework="pydantic-deep",
+            tool_mappings={
+                # YAML 覆盖内置分类
+                "read_file": ToolMapping("read_file", "net_conn"),
+                # YAML 新增工具
+                "custom_tool": ToolMapping("custom_tool", "file_open"),
+            },
+        )
+        tool_map = bridge._build_tool_map(reg_config)
+        self.assertEqual(tool_map["read_file"], "net_conn")     # registry 优先
+        self.assertEqual(tool_map["custom_tool"], "file_open")  # 新增工具生效
+        self.assertEqual(tool_map["execute"], "exec")           # 内置兜底不变
+
+    def test_build_read_tools_from_registry(self):
+        """file_open 读写判定复用 registry 的 file_op 规则"""
+        bridge = AgentBridge(BridgeConfig())
+        reg_config = HookFrameworkConfig(
+            framework="pydantic-deep",
+            tool_mappings={
+                "read_file": ToolMapping("read_file", "file_open",
+                                          {"file_op": '"read"'}),
+                "write_file": ToolMapping("write_file", "file_open",
+                                          {"file_op": '"write"'}),
+            },
+        )
+        read_tools = bridge._build_read_tools(reg_config)
+        self.assertIn("read_file", read_tools)    # YAML file_op=read
+        self.assertNotIn("write_file", read_tools)  # YAML file_op=write
+        self.assertIn("read_memory", read_tools)  # 内置兜底保留
+
+    def test_bridge_read_write_determination(self):
+        """真实事件转换路径: read 类工具 file_op=read，write 类 file_op=write"""
+        bridge = AgentBridge(BridgeConfig(agent_framework="pydantic-deep"))
+
+        class _FakeHookInput:
+            tool_name = "read_file"
+            tool_input = {"path": "/tmp/x.txt"}
+
+        ev_read = bridge._hook_input_to_raw_event(_FakeHookInput())
+        self.assertIsNotNone(ev_read)
+        self.assertEqual(ev_read.event_type, "file_open")
+        self.assertEqual(ev_read.file_op, "read")
+
+        class _FakeHookInput2:
+            tool_name = "write_file"
+            tool_input = {"path": "/tmp/y.txt"}
+
+        ev_write = bridge._hook_input_to_raw_event(_FakeHookInput2())
+        self.assertIsNotNone(ev_write)
+        self.assertEqual(ev_write.event_type, "file_open")
+        self.assertEqual(ev_write.file_op, "write")
+
+    def test_bridge_unknown_framework_fallback(self):
+        """未注册框架回退内置表且不崩溃"""
+        bridge = AgentBridge(BridgeConfig(agent_framework="nonexistent-fw"))
+        self.assertEqual(bridge._tool_map.get("execute"), "exec")
+        self.assertEqual(bridge._tool_map.get("read_file"), "file_open")
 
 
 if __name__ == "__main__":

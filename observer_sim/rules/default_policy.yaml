@@ -1,7 +1,10 @@
 # 方寸观察者 — 统一安全策略规则库（生产级扩展版）
 #
-# 版本: 2.0
+# 版本: 2.1
 # 变更记录:
+#   - R001 修复前缀误命中（rm -rf / 不再命中 rm -rf /tmp/...，加边界锚定）
+#   - R008 修复读写不分误命中（新增 file_op 限定，仅写入/删除/重命名等变更操作命中）
+#   - v2.0 历史: R001-R020 扩展（详见 previous 版本说明）
 #   - R001 扩展 rm -rf 检测范围（pattern → regex，覆盖痕迹清除和磁盘破坏）
 #   - R002 扩展远程代码执行检测（新增 eval/bash -c 间接执行）
 #   - R003 扩展危险权限变更检测（新增 chown root/chattr -i）
@@ -25,13 +28,13 @@
 #
 # 规则分类: command(9) + file(7) + network(5) = 21条
 
-version: "2.0"
+version: "2.1"
 metadata:
   created: "2026-01-01"
-  updated: "2026-08-02"
+  updated: "2026-08-08"
   description: "统一安全策略 — 方寸观察者模拟学习系统（生产级扩展版）"
-  previous_version: "1.0"
-  change_summary: "修复 R007/R001/R005 覆盖盲区，新增 6 条生产级规则"
+  previous_version: "2.0"
+  change_summary: "修复 R001 前缀误命中与 R008 读写不分，规则匹配精度提升"
 
 rules:
   # ==================== 命令执行规则 (command) — 9条 ====================
@@ -47,10 +50,9 @@ rules:
       event_type: "exec"
       match_mode: "regex"
       patterns:
-        - "rm\\s+-rf\\s+/"           # rm -rf / 根目录
-        - "rm\\s+-rf\\s+/\\*"        # rm -rf /*
-        - "rm\\s+-rf\\s+~"           # rm -rf ~ 主目录
-        - "rm\\s+-rf\\s+\\$HOME"     # rm -rf $HOME
+        - "rm\\s+-rf\\s+/(?:\\s|$|\\*)"   # rm -rf / 根目录（含 /*，加边界锚定不误命中 /tmp 等）
+        - "rm\\s+-rf\\s+~(?:\\s|$)"        # rm -rf ~ 主目录
+        - "rm\\s+-rf\\s+\\$HOME(?:\\s|$)"  # rm -rf $HOME
         - "dd\\s+if=/dev/zero"       # 磁盘清零
         - "mkfs"                     # 格式化文件系统
         - ">\\s*/dev/sd[a-z]"        # 覆写块设备
@@ -259,10 +261,11 @@ rules:
     priority: 85
     enabled: true
     action: block
-    description: "阻断写入关键系统目录"
+    description: "阻断写入/变更关键系统目录（仅限写入/删除/重命名等变更操作，读取不命中）"
     conditions:
       event_type: "file_open"
       match_mode: "path_glob"
+      file_op: ["write", "delete", "rename", "chmod", "unlink"]
       patterns:
         - "/etc/*"
         - "/usr/bin/*"

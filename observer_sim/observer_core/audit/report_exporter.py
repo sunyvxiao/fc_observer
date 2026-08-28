@@ -142,11 +142,13 @@ class ReportExporter:
             lines.append("")
 
         # Agent 行为摘要
+        # 章节编号（无 Agent 摘要时也需计算，供后续“跨 Agent 关联/时间线”使用；
+        # 编号规则与原逻辑一致：第3节=阻断明细，第4节=规则命中统计）
         agent_summaries = graph_data.get("agent_summaries", {})
+        section_num = 5 if blocked_entries else 3
+        if rule_hits:
+            section_num += 1
         if agent_summaries:
-            section_num = 5 if blocked_entries else 3
-            if rule_hits:
-                section_num += 1
             lines.append(f"## {section_num}. Agent 行为摘要")
             lines.append("")
             lines.append("| Agent | 事件数 | 放行 | 告警 | 阻断 | 最高风险分 | 平均风险分 |")
@@ -184,7 +186,8 @@ class ReportExporter:
                 marker = "[ ]"
                 status = e.decision_action if e.decision_action in ("BLOCK", "ALERT") else "PASS"
                 escalated_note = ""
-            lines.append(f"  {marker} [{status:5s}] t={e.timestamp_ns:>12d}ns  {e.description[:50]}{escalated_note}")
+            session_tag = f" [{e.session_id}]" if e.session_id else ""
+            lines.append(f"  {marker} [{status:5s}] t={e.timestamp_ns:>12d}ns{session_tag}  {e.description[:50]}{escalated_note}")
         lines.append("```")
         lines.append("")
 
@@ -305,6 +308,275 @@ class ReportExporter:
             f.write(content)
 
         logger.info(f"[ReportExporter] Segment report saved: {filepath}")
+        return filepath
+
+    @staticmethod
+    def _fmt_ns(ns: int) -> str:
+        """纳秒时间戳 → ISO 字符串（容错，虚拟时间可解释为历元）。"""
+        try:
+            return datetime.fromtimestamp(int(ns) / 1_000_000_000).isoformat()
+        except (OverflowError, OSError, ValueError):
+            return str(ns)
+
+    def _build_l0_index(self, audit_dir: Optional[str]) -> Dict[str, dict]:
+        """
+        扫描 L0 audit_*.jsonl 文件，构建 entry_id → 下钻定位索引（L-T12）。
+
+        Returns:
+            {entry_id: {"file": 绝对路径, "line": 行号}}
+        只读扫描，绝不触碰 L0 文件内容（三红线之 L0 永不删除）。
+        """
+        index: Dict[str, dict] = {}
+        if not audit_dir or not os.path.isdir(audit_dir):
+            return index
+        for fn in sorted(os.listdir(audit_dir)):
+            if not (fn.startswith("audit_") and fn.endswith(".jsonl")):
+                continue
+            path = os.path.join(audit_dir, fn)
+            try:
+                with open(path, "r", encoding="utf-8") as f:
+                    for line_no, line in enumerate(f, 1):
+                        line = line.strip()
+                        if not line:
+                            continue
+                        try:
+                            obj = json.loads(line)
+                        except json.JSONDecodeError:
+                            continue
+                        eid = obj.get("event_id")
+                        if eid:
+                            index[eid] = {"file": path, "line": line_no}
+            except OSError:
+                continue
+        return index
+
+    def export_daily_report(self, l3: dict, audit_dir: Optional[str] = None,
+                            scenario_name: str = "天级深度审计") -> str:
+        """
+        导出 L3 天级深度审计报告（L-T12）。
+
+        报告结构：概览 → CUSUM 漂移告警 → 串谋攻击链重建 →
+        分钟级序列告警 → 违规累计与升级 → 指纹关联 → 异常明细 →
+        处置建议 → L0 下钻索引（entry_id → audit_*.jsonl 行号）。
+
+        Args:
+            l3:            RollupEngine.rollup_day 的产物 dict
+            audit_dir:     可选，L0 审计文件目录（构建下钻索引）
+            scenario_name: 报告标题后缀
+
+        Returns:
+            str: 报告文件路径
+        """
+        os.makedirs(self._reports_dir, exist_ok=True)
+        day_ns = int(l3.get("day_start_ns", 0))
+        day_str = ""
+        try:
+            day_str = datetime.fromtimestamp(day_ns / 1_000_000_000).strftime("%Y%m%d")
+        except (OverflowError, OSError, ValueError):
+            day_str = str(day_ns)
+        ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+        filename = f"risk_report_daily_{day_str}_{ts}.md"
+        filepath = os.path.join(self._reports_dir, filename)
+
+        stats = l3.get("stats") or {}
+        total = stats.get("total", 0)
+        drift_alerts = l3.get("drift_alerts") or []
+        chains = l3.get("collusion_chains") or []
+        sequence_alerts = l3.get("sequence_alerts") or []
+        escalation = l3.get("escalation") or {}
+        fp_links = [l for l in (l3.get("fp_links") or []) if l.get("cross_agent")]
+        anomalies = l3.get("anomalies") or []
+        entry_ids = l3.get("entry_ids") or []
+
+        lines = []
+        lines.append(f"# 天级深度审计报告: {scenario_name}")
+        lines.append("")
+        lines.append(f"> 生成时间: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+        lines.append("> 报告类型: L3 天级审计（分层日志金字塔）")
+        lines.append(f"> 审计日: {self._fmt_ns(day_ns)} ~ "
+                     f"{self._fmt_ns(l3.get('day_end_ns', 0))}")
+        lines.append(f"> L2 小时日志数: {l3.get('l2_count', 0)} / 24")
+        lines.append(f"> 产物格式版本: {l3.get('format_version', '-')}")
+        lines.append("")
+
+        # ── 1. 概览 ──
+        lines.append("## 1. 概览")
+        lines.append("")
+        lines.append(f"- **总事件数**: {total}")
+        lines.append(f"- **放行**: {stats.get('allow', 0)}")
+        lines.append(f"- **告警**: {stats.get('alert', 0)}")
+        lines.append(f"- **阻断**: {stats.get('block', 0)}")
+        lines.append(f"- **最高风险分**: {stats.get('max_score', 0):.2f}")
+        risk_dist = stats.get("risk_dist", {})
+        lines.append("")
+        lines.append("| 风险等级 | 事件数 |")
+        lines.append("|---------|:---:|")
+        for level in ["LOW", "MEDIUM", "HIGH", "CRITICAL"]:
+            lines.append(f"| {level} | {risk_dist.get(level, 0)} |")
+        lines.append("")
+
+        # ── 2. CUSUM 漂移告警 ──
+        lines.append("## 2. CUSUM 基线漂移告警")
+        lines.append("")
+        if drift_alerts:
+            lines.append(f"检出 **{len(drift_alerts)}** 项小时统计向量正向漂移:")
+            lines.append("")
+            lines.append("| 维度 | 告警小时桶 | 基线均值 | 基线来源 |")
+            lines.append("|------|:---:|:---:|------|")
+            for da in drift_alerts:
+                lines.append(
+                    f"| {da.get('dimension', '-')} | {da.get('alert_hour', '-')} | "
+                    f"{da.get('baseline_mean', 0)} | {da.get('baseline_source', '-')} |")
+        else:
+            lines.append("未检出基线漂移。")
+        lines.append("")
+
+        # ── 3. 串谋攻击链重建 ──
+        lines.append("## 3. 跨 Agent 串谋攻击链重建")
+        lines.append("")
+        if chains:
+            lines.append(f"检出 **{len(chains)}** 条跨 Agent 数据传递链:")
+            lines.append("")
+            for i, ch in enumerate(chains, 1):
+                kind = ch.get("object_kind", "-")
+                obj = ch.get("object", "-")
+                agents = " → ".join(ch.get("agents", []))
+                lines.append(f"### 3.{i} 链 {kind}={obj}")
+                lines.append("")
+                lines.append(f"- **传递路径**: {agents}")
+                lines.append(f"- **时间跨度**: {ch.get('span_hours', 0):.2f} 小时 "
+                             f"({self._fmt_ns(ch.get('first_ns', 0))} → "
+                             f"{self._fmt_ns(ch.get('last_ns', 0))})")
+                lines.append(f"- **关联事件**: {len(ch.get('event_ids', []))} 个 "
+                             f"`{', '.join(str(e) for e in ch.get('event_ids', [])[:8])}`"
+                             + ("..." if len(ch.get('event_ids', [])) > 8 else ""))
+                lines.append(f"- **外传终点**: {len(ch.get('exfil_events', []))} 个外传事件，"
+                             f"远端地址 {ch.get('remote_addrs', [])}")
+                anomaly_links = ch.get("anomaly_links", [])
+                if anomaly_links:
+                    lines.append(f"- **命中异常明细**: {len(anomaly_links)} 条")
+                lines.append("")
+        else:
+            lines.append("未检出跨 Agent 串谋链。")
+        lines.append("")
+
+        # ── 4. 分钟级序列告警 ──
+        lines.append("## 4. 分钟级攻击序列告警")
+        lines.append("")
+        if sequence_alerts:
+            lines.append("| 模式 | 描述 | 事件数 |")
+            lines.append("|------|------|:---:|")
+            for sa in sequence_alerts:
+                lines.append(
+                    f"| {sa.get('pattern_id', '-')} | {sa.get('description', '-')} | "
+                    f"{len(sa.get('event_ids', []))} |")
+        else:
+            lines.append("未检出已知攻击序列。")
+        lines.append("")
+
+        # ── 5. 违规累计与升级 ──
+        tier_counts = escalation.get("tier_counts", {})
+        lines.append("## 5. 违规累计与升级")
+        lines.append("")
+        lines.append(f"- TIER1: {tier_counts.get('TIER1', 0)} | "
+                     f"TIER2: {tier_counts.get('TIER2', 0)} | "
+                     f"TIER3: {tier_counts.get('TIER3', 0)}")
+        lines.append(f"- 实际阻断: {escalation.get('blocked_count', 0)}")
+        lines.append(f"- 升级 TIER2: {'是' if escalation.get('escalate_tier2') else '否'}")
+        lines.append(f"- 升级 TIER3: {'是' if escalation.get('escalate_tier3') else '否'}")
+        lines.append("")
+
+        # ── 6. 指纹关联（跨 Agent）──
+        lines.append("## 6. 指纹关联分析（跨 Agent）")
+        lines.append("")
+        if fp_links:
+            lines.append("| 指纹 | Agent 集合 | 事件数 | 时间跨度 |")
+            lines.append("|------|-----------|:---:|------|")
+            for fl in fp_links[:20]:
+                span_h = (fl.get("last_ns", 0) - fl.get("first_ns", 0)) / 3.6e12
+                lines.append(
+                    f"| {fl.get('fingerprint', '-')} | "
+                    f"{', '.join(fl.get('agents', []))} | "
+                    f"{fl.get('event_count', 0)} | {span_h:.2f} h |")
+        else:
+            lines.append("无跨 Agent 共享指纹。")
+        lines.append("")
+
+        # ── 7. 异常明细（三红线：全保留）──
+        lines.append("## 7. 异常明细（全保留）")
+        lines.append("")
+        if anomalies:
+            lines.append(f"共 **{len(anomalies)}** 条:")
+            lines.append("")
+            lines.append("| 事件ID | Agent | 类型 | 评分 | 决策 | 时间 |")
+            lines.append("|--------|-------|------|:---:|------|------|")
+            for a in anomalies:
+                lines.append(
+                    f"| {a.get('event_id', '-')} | {a.get('agent_id', '-')} | "
+                    f"{a.get('event_type', '-')} | {a.get('risk_score', 0):.2f} | "
+                    f"{a.get('decision_action', '-')} | "
+                    f"{self._fmt_ns(a.get('timestamp_ns', 0))} |")
+        else:
+            lines.append("无异常明细。")
+        lines.append("")
+
+        # ── 8. 处置建议 ──
+        lines.append("## 8. 处置建议")
+        lines.append("")
+        advice: List[str] = []
+        if chains:
+            advice.append("立即隔离涉事 Agent 会话，终止其网络访问权限。")
+            for ch in chains:
+                for addr in ch.get("remote_addrs", []):
+                    advice.append(f"在网络策略层封禁外传地址 {addr}。")
+            advice.append("保全相关主机取证数据（进程树、文件哈希、网络连接记录）。")
+        if drift_alerts:
+            advice.append("复核漂移维度的业务变更（新任务/新部署），必要时重新标定基线。")
+        if sequence_alerts:
+            advice.append("复核序列告警对应时段的操作记录，确认是否存在未阻断的外传链。")
+        if not advice:
+            advice.append("未检出高风险信号，维持常规监测与基线标定节奏。")
+        for a in advice:
+            lines.append(f"- {a}")
+        lines.append("")
+
+        # ── 9. L0 下钻索引 ──
+        lines.append("## 9. L0 下钻索引")
+        lines.append("")
+        l0_index = self._build_l0_index(audit_dir)
+        l0_files = sorted({v["file"] for v in l0_index.values()})
+        hit_count = sum(1 for eid in entry_ids if eid in l0_index)
+        lines.append(f"L3 覆盖 entry_id {len(entry_ids)} 个，"
+                     f"其中 {hit_count} 个已定位到 L0 原始事件"
+                     f"（分布在 {len(l0_files)} 个文件）。")
+        if l0_files:
+            lines.append("")
+            lines.append("| L0 审计文件 |")
+            lines.append("|------------|")
+            for path in l0_files:
+                lines.append(f"| {path} |")
+        if entry_ids:
+            lines.append("")
+            lines.append("```")
+            for eid in entry_ids:
+                loc = l0_index.get(eid)
+                if loc:
+                    lines.append(f"{eid} -> {os.path.basename(loc['file'])}:{loc['line']}")
+                else:
+                    lines.append(f"{eid} -> (L0 未覆盖)")
+            lines.append("```")
+        lines.append("")
+
+        # 页脚
+        lines.append("---")
+        lines.append(f"*本报告由方寸观察者模拟学习系统自动生成（L3 天级审计） "
+                     f"| {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}*")
+
+        content = "\n".join(lines)
+        with open(filepath, "w", encoding="utf-8") as f:
+            f.write(content)
+
+        logger.info(f"[ReportExporter] Daily audit report saved: {filepath}")
         return filepath
 
     def export_all_summary(self, scenario_summaries: List[Dict]) -> str:

@@ -45,6 +45,7 @@ class BlockEvent:
     cmd_id: str = ""
     blocked: bool = False
     escalated: bool = False
+    session_id: str = ""  # 会话维度（修订 2.1）
 
 
 class SoftReportHandler:
@@ -247,18 +248,22 @@ class BlockingCoordinator:
         4. 记录阻断事件
         """
         agent_id = event.agent_id
+        # 会话维度（修订 2.1）：升级计数按会话隔离，避免同一 agent_id
+        # 下不同会话的违规互相叠加污染单事件判定
+        session_id = getattr(event.raw, "session_id", None) or ""
 
-        # 检查 Agent 是否已终止
-        if self._tracker.is_terminated(agent_id):
+        # 检查 Agent 会话是否已终止
+        if self._tracker.is_terminated(agent_id, session_id):
             logger.warning(
-                f"[BlockingCoordinator] Agent {agent_id} already terminated, dropping event"
+                f"[BlockingCoordinator] Agent {agent_id} "
+                f"(session={session_id}) already terminated, dropping event"
             )
             return BlockingResult(
                 blocked=True,
                 tier=ActionTier.TIER3,
-                reason="Agent 已终止",
+                reason="Agent 会话已终止",
                 event_id=event.raw.event_id,
-                details="Agent 已被终止，后续事件丢弃",
+                details="Agent 会话已被终止，后续事件丢弃",
             )
 
         # 确定初始 tier
@@ -271,6 +276,7 @@ class BlockingCoordinator:
                 tier=initial_tier,
                 event_id=event.raw.event_id,
                 reason=decision.reason,
+                session_id=session_id or None,
             )
         else:
             effective_tier = initial_tier
@@ -278,7 +284,7 @@ class BlockingCoordinator:
         # 根据 tier 路由到对应处理器
         if effective_tier == ActionTier.TIER3:
             result = self._tier3.execute(event, decision)
-            self._tracker.mark_terminated(agent_id)
+            self._tracker.mark_terminated(agent_id, session_id or None)
         elif effective_tier == ActionTier.TIER2:
             result = self._tier2.execute(event, decision)
         else:
@@ -295,6 +301,7 @@ class BlockingCoordinator:
             cmd_id=result.cmd_id,
             blocked=result.blocked,
             escalated=(effective_tier != initial_tier),
+            session_id=session_id,
         )
         self._block_events.append(block_event)
 
@@ -340,6 +347,7 @@ class BlockingCoordinator:
                     "cmd_id": e.cmd_id,
                     "blocked": e.blocked,
                     "escalated": e.escalated,
+                    "session_id": e.session_id,
                 }
                 for e in self._block_events
             ],
