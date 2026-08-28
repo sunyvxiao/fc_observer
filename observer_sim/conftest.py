@@ -25,6 +25,10 @@ if PROJECT_DIR not in sys.path:
 # 延迟导入，避免阻塞 pytest 插件加载
 _monitor_lifecycle_manager = None
 
+# test_api.py / test_sse.py 是模块级执行脚本（需运行中的 Web 服务），
+# 由 `observer.py test api|sse` 子命令运行，不纳入 pytest 收集
+collect_ignore = ["test_api.py", "test_sse.py"]
+
 
 def _get_lifecycle_manager():
     """延迟获取 MonitorLifecycleManager 单例"""
@@ -159,9 +163,30 @@ def pytest_configure(config):
     """pytest 启动时清空 unit_test 目录"""
     unit_test_dir = _get_unit_test_dir()
     _clear_unit_test_dir(unit_test_dir)
+    # Windows 下 AppData Temp 的 pytest-current junction 清理会触发 PermissionError
+    # （WinError 5，退出码非 0 但断言全部通过）。将 basetemp 固定到工作区内规避
+    # （pytest 7.4.4 不支持 ini 的 basetemp 选项，只能在此 hook 注入）。
+    if not config.option.basetemp:
+        config.option.basetemp = os.path.join(PROJECT_DIR, ".pytest_basetemp")
     # 注册报告写入插件
     writer = UnitTestReportWriter(unit_test_dir)
     config.pluginmanager.register(writer, "unit_test_report_writer")
+    # 注册性能基准标记（tests/benchmark_rollup.py，默认跳过，-m perf 显式启用）
+    config.addinivalue_line(
+        "markers", "perf: 性能基准（默认跳过，使用 -m perf 显式运行）")
+
+
+def _perf_selected(config) -> bool:
+    """判断本次运行是否通过 -m perf 显式启用了性能基准。"""
+    expr = None
+    for opt in ("markexpr", "-m"):
+        try:
+            expr = config.getoption(opt)
+        except Exception:  # noqa: BLE001
+            continue
+        if expr:
+            break
+    return bool(expr and "perf" in str(expr))
 
 
 def pytest_collection_modifyitems(config, items):
@@ -169,3 +194,9 @@ def pytest_collection_modifyitems(config, items):
     unit_test_dir = _get_unit_test_dir()
     print(f"\n[unit_test] 输出目录: {unit_test_dir}")
     print(f"[unit_test] 收集到 {len(items)} 个测试用例")
+    # 性能基准默认跳过（除非 -m perf 显式启用），避免全量回归耗时
+    if not _perf_selected(config):
+        for item in items:
+            if item.get_closest_marker("perf") is not None:
+                item.add_marker(pytest.mark.skip(
+                    reason="性能基准：使用 -m perf 显式运行"))

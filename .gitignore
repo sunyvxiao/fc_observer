@@ -19,6 +19,8 @@ __pycache__/
 *.pyo
 .pytest_cache/
 .pytest_cache/**
+.pytest_basetemp/
+observer_sim/.pytest_basetemp/
 dist/
 build/
 .eggs/
@@ -68,6 +70,16 @@ assets/screenshots/
 # === 临时文件 ===
 *.tmp
 *.bak
+*.bak-*
+
+# === 历史备份归档（.backup_YYYYMMDD/，本地保留不入库） ===
+.backup_*/
+
+# === 临时脚本（tmp 前缀测试残留） ===
+observer_sim/tmp*.py
+
+# === WorkBuddy 验证辅助：剪贴板临时转储（含运行时内容） ===
+WorkBuddy降级监测适配/tools/clipboard_dump.txt
 
 # === SSH 密钥（严禁提交） ===
 *.pem
