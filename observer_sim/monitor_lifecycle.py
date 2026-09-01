@@ -200,10 +200,43 @@ class MonitorLifecycleManager:
         return result
 
     def _find_monitor_processes(self) -> List[int]:
-        """查找所有 monitor_daemon.py 进程的 PID 列表"""
+        """查找 FIFO Monitor 进程的 PID 列表。
+
+        模式过滤（防跨通道误杀）: 仅匹配命令行含 --fifo 的 monitor_daemon.py
+        进程（FIFO 内置 Monitor），排除 --mode mcp_report 的 MCP 申报
+        daemon（Qoder CN / WorkBuddy 通道），避免 startup_cleanup / shutdown /
+        _do_stop 兜底误伤其他监测通道。
+        """
+        # 优先 ps 解析完整命令行以便过滤模式（pgrep 仅返回 PID 无法过滤）
+        try:
+            result = subprocess.run(
+                ["ps", "-eo", "pid,args", "--no-headers"],
+                capture_output=True, text=True, timeout=5,
+            )
+            pids = []
+            for line in result.stdout.split("\n"):
+                if "monitor_daemon" not in line or "grep" in line:
+                    continue
+                parts = line.strip().split(None, 1)
+                if not parts:
+                    continue
+                try:
+                    pid = int(parts[0])
+                except ValueError:
+                    continue
+                if pid == os.getpid():
+                    continue
+                args = parts[1] if len(parts) > 1 else ""
+                # FIFO Monitor 启动命令必带 --fifo；mcp_report 通道一律排除
+                if "--fifo" not in args or "mcp_report" in args:
+                    continue
+                pids.append(pid)
+            return pids
+        except (FileNotFoundError, subprocess.TimeoutExpired):
+            pass
+        # 兜底: pgrep（无法区分模式，仅在 ps 不可用时使用）
         pids = []
         try:
-            # 使用 pgrep 精确匹配
             result = subprocess.run(
                 ["pgrep", "-f", "monitor_daemon\\.py"],
                 capture_output=True, text=True, timeout=5,
@@ -217,24 +250,7 @@ class MonitorLifecycleManager:
                     except ValueError:
                         pass
         except (FileNotFoundError, subprocess.TimeoutExpired):
-            # pgrep 不可用 → 回退到 ps + grep
-            try:
-                result = subprocess.run(
-                    ["ps", "-eo", "pid,args", "--no-headers"],
-                    capture_output=True, text=True, timeout=5,
-                )
-                for line in result.stdout.split("\n"):
-                    if "monitor_daemon.py" in line and "grep" not in line:
-                        parts = line.strip().split(None, 1)
-                        if parts:
-                            try:
-                                pid = int(parts[0])
-                                if pid != os.getpid():
-                                    pids.append(pid)
-                            except ValueError:
-                                pass
-            except (FileNotFoundError, subprocess.TimeoutExpired):
-                pass
+            pass
         return pids
 
     # ── Monitor 启动 ──────────────────────────────────────────
@@ -561,6 +577,26 @@ class MonitorLifecycleManager:
             pass
         return True
 
+    # ── 外部通道进程追踪（Qoder CN / WorkBuddy 网关注册用）─────
+
+    def track_pid(self, pid: int):
+        """注册外部通道（qoder / workbuddy 网关）启动的进程到追踪列表。
+
+        shutdown() 批量终止时覆盖该 pid，使新通道继承“子进程随服务关闭”
+        保护；幂等，重复注册无副作用。
+        """
+        if not pid:
+            return
+        with self._lock:
+            if pid not in self._tracked_pids:
+                self._tracked_pids.append(pid)
+
+    def untrack_pid(self, pid: int):
+        """从追踪列表移除已停止的通道进程。"""
+        with self._lock:
+            if pid in self._tracked_pids:
+                self._tracked_pids.remove(pid)
+
     # ── 任务引用计数 ──────────────────────────────────────────
 
     def acquire_task(self):
@@ -703,3 +739,13 @@ def acquire_task():
 def release_task():
     """释放任务引用"""
     MonitorLifecycleManager.instance().release_task()
+
+
+def track_pid(pid: int):
+    """注册外部通道进程到追踪列表（随服务关闭终止）"""
+    MonitorLifecycleManager.instance().track_pid(pid)
+
+
+def untrack_pid(pid: int):
+    """从追踪列表移除已停止的通道进程"""
+    MonitorLifecycleManager.instance().untrack_pid(pid)

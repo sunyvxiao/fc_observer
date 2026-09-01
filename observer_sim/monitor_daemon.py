@@ -833,6 +833,8 @@ def run_monitor_mcp_report(output_dir: str, config_path: str = "config.yaml",
     host = str(mcp_config.get("host", "127.0.0.1"))
     port = int(mcp_config.get("port", 8765))
     jsonl_dir = mcp_config.get("jsonl_dir")
+    # P1: Hooks 确定性申报摄入配置（enabled=false/缺省时行为不变）
+    hook_ingest = mcp_config.get("hook_ingest") or {}
 
     # ── mcp SDK 可用性（与 check_env 检测项同源）──
     from mcp_bridge.server import (McpReportBroker, mcp_sdk_available,
@@ -874,7 +876,7 @@ def run_monitor_mcp_report(output_dir: str, config_path: str = "config.yaml",
     server_thread = threading.Thread(
         target=run_server,
         kwargs={"host": host, "port": port, "broker": broker,
-                "jsonl_path": jsonl_path},
+                "jsonl_path": jsonl_path, "hook_ingest": hook_ingest},
         name="mcp-report-server", daemon=True)
     server_thread.start()
 
@@ -882,10 +884,14 @@ def run_monitor_mcp_report(output_dir: str, config_path: str = "config.yaml",
     print(f"[monitor] MCP Server: http://{host}:{port}/sse "
           f"(申报 tools: report_tool_call / report_action / report_session)",
           file=sys.stderr)
+    if hook_ingest.get("enabled"):
+        _hook_path = str(hook_ingest.get("path") or "/api/hook-report")
+        print(f"[monitor] Hook 申报摄入: POST http://{host}:{port}{_hook_path} "
+              f"(Qoder CN Hooks 确定性申报通道)", file=sys.stderr)
     print(f"[monitor] 输出: {output_dir}", file=sys.stderr)
     print(f"[monitor] 申报留痕: {jsonl_path or '内存队列 (未落盘)'}",
           file=sys.stderr)
-    print(f"[monitor] 等待 WorkBuddy 申报... (Ctrl+C 停止并生成报告)",
+    print(f"[monitor] 等待申报... (MCP tools / Hook 摄入; Ctrl+C 停止并生成报告)",
           file=sys.stderr)
 
     # ── stdin 优雅停止通道（跨平台确定性停止，供进程管理器/测试驱动）:

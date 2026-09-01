@@ -301,18 +301,49 @@ def build_sse_app(server: "MCPServer", *, host: str = "127.0.0.1",
 
 async def run_server_async(host: str = "127.0.0.1", port: int = 8765,
                            broker: Optional[McpReportBroker] = None,
-                           jsonl_path: Optional[str] = None) -> None:
-    """以 HTTP+SSE 方式运行申报 Server（阻塞至停止）。"""
+                           jsonl_path: Optional[str] = None,
+                           hook_ingest: Optional[Dict[str, Any]] = None) -> None:
+    """以 HTTP+SSE 方式运行申报 Server（阻塞至停止）。
+
+    Args:
+        hook_ingest: Hooks 确定性申报摄入配置（Qoder CN P1）。
+            {"enabled": True, "path": "/api/hook-report",
+             "agent_id_default": "qoder"}
+            enabled 为真时，在同端口同应用上追加非 MCP 协议的
+            POST 摄入路由（共用同一 broker/校验/限流层）；
+            缺省或 enabled 为假时，行为与原实现完全一致。
+    """
     broker = broker or McpReportBroker(jsonl_path=jsonl_path)
     server = create_server(broker=broker)
     logger.info(f"MCP 申报 Server 启动: http://{host}:{port}/sse "
                 f"(tools: {', '.join(REPORT_TOOL_NAMES)})")
+
+    hook_cfg = hook_ingest or {}
+    if hook_cfg.get("enabled"):
+        from .http_ingest import (DEFAULT_HOOK_INGEST_PATH,
+                                  mount_hook_report_route)
+        app = build_sse_app(server, host=host)
+        path = str(hook_cfg.get("path") or DEFAULT_HOOK_INGEST_PATH)
+        mount_hook_report_route(
+            app, path=path, broker=broker,
+            validator=server._observer_validator,        # type: ignore[attr-defined]
+            rate_limiter=server._observer_rate_limiter,  # type: ignore[attr-defined]
+            agent_id_default=str(hook_cfg.get("agent_id_default") or "qoder"))
+        logger.info(f"Hook 申报摄入端点: http://{host}:{port}{path}")
+
+        import uvicorn
+        config = uvicorn.Config(app, host=host, port=port, log_level="warning")
+        await uvicorn.Server(config).serve()
+        return
+
     await server.run_sse_async(host=host, port=port)
 
 
 def run_server(host: str = "127.0.0.1", port: int = 8765,
                broker: Optional[McpReportBroker] = None,
-               jsonl_path: Optional[str] = None) -> None:
-    """同步入口: 以 HTTP+SSE 方式运行申报 Server。"""
+               jsonl_path: Optional[str] = None,
+               hook_ingest: Optional[Dict[str, Any]] = None) -> None:
+    """同步入口: 以 HTTP+SSE 方式运行申报 Server（hook_ingest 见 run_server_async）。"""
     asyncio.run(run_server_async(host=host, port=port, broker=broker,
-                                 jsonl_path=jsonl_path))
+                                 jsonl_path=jsonl_path,
+                                 hook_ingest=hook_ingest))

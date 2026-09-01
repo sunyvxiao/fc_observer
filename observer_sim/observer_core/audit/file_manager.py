@@ -32,6 +32,14 @@ CATEGORY_META = {
     "agent_sim":   ("模拟Agent报告",        "Agent模拟测试产生的报告"),
 }
 
+# 扩展分区显示元数据（extra_roots 注入的监测产物分区）：key -> (标签, 图标)
+EXTRA_PARTITION_META = {
+    "mcp_monitoring": ("MCP 申报监测产物 (WorkBuddy)", "🤖"),
+    "qoder_monitoring": ("Qoder CN 监测产物", "📡"),
+}
+# 四区默认安全根（扩展分区判定基准）
+DEFAULT_ROOT_KEYS = {"records", "monitoring", "reports", "unit_test"}
+
 
 class OutputFileManager:
     """输出文件/报告管理（纯逻辑，不依赖 HTTP）。
@@ -245,40 +253,39 @@ class OutputFileManager:
                 tree["unit_test"] = {"label": "Pytest 测试输出", "icon": "🧪",
                                      "children": children}
 
-        # 5. MCP 申报监测产物（extra_roots 注入的 mcp_monitoring 分区）
-        #    顶层子目录（reports/audit/graphs…）+ 顶层文件（monitoring_summary.json 等）；
+        # 5. 扩展监测产物分区（extra_roots 注入，如 mcp_monitoring /
+        #    qoder_monitoring）：顶层子目录（reports/audit/graphs…）+ 顶层文件；
         #    隐藏文件（daemon pid/stop 运行时文件）由扫描器自动跳过。
-        if "mcp_monitoring" in self.safe_roots:
-            mcp_root = self.safe_roots["mcp_monitoring"]
-            if os.path.isdir(mcp_root):
-                mcp_children: List[Dict] = []
-                try:
-                    entries = sorted(os.listdir(mcp_root))
-                except PermissionError:
-                    entries = []
-                for name in entries:
-                    if name.startswith("."):
-                        continue
-                    full = os.path.join(mcp_root, name)
-                    if os.path.isdir(full):
-                        children = self._scan_dir_files(
-                            full, mcp_root, "mcp_monitoring")
-                        mcp_children.append({
-                            "name": name, "type": "dir",
-                            "children": children,
-                        })
-                    elif os.path.isfile(full):
-                        mcp_children.append({
-                            "name": name, "type": "file",
-                            "size": os.path.getsize(full),
-                            "path": f"mcp_monitoring/{name}",
-                        })
-                if mcp_children:
-                    tree["mcp_monitoring"] = {
-                        "label": "MCP 申报监测产物 (WorkBuddy)",
-                        "icon": "🤖",
-                        "children": mcp_children,
-                    }
+        for key in self.safe_roots:
+            if key in DEFAULT_ROOT_KEYS:
+                continue
+            root = self.safe_roots[key]
+            if not os.path.isdir(root):
+                continue
+            children: List[Dict] = []
+            try:
+                entries = sorted(os.listdir(root))
+            except PermissionError:
+                entries = []
+            for name in entries:
+                if name.startswith("."):
+                    continue
+                full = os.path.join(root, name)
+                if os.path.isdir(full):
+                    children.append({
+                        "name": name, "type": "dir",
+                        "children": self._scan_dir_files(full, root, key),
+                    })
+                elif os.path.isfile(full):
+                    children.append({
+                        "name": name, "type": "file",
+                        "size": os.path.getsize(full),
+                        "path": f"{key}/{name}",
+                    })
+            if children:
+                label, icon = EXTRA_PARTITION_META.get(key, (key, "📁"))
+                tree[key] = {"label": label, "icon": icon,
+                             "children": children}
 
         return {"tree": tree}
 

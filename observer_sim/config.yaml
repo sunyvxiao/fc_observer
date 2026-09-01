@@ -65,16 +65,23 @@ deep_agent:
   duration_s: 60                   # live 模式最大监控时长 (秒)
 
 # ============================================================
-# MCP 申报采集模式配置（Windows WorkBuddy 降级监测，P4）
+# MCP 申报采集模式配置（黑盒 Agent 降级监测，P4）
+# 已接入目标: Qoder CN（P0 MCP 申报通道 + P1 Hooks 确定性申报）
 # 运行入口: python observer.py daemon --mode mcp_report
 # ============================================================
 mcp_report:
-  framework: "pydantic-deep"        # HookRegistry 框架名（工具→事件类型映射）
-  target_agent_id: "workbuddy"      # 默认 Agent 标识
+  framework: "qoder"                # HookRegistry 框架名（工具→事件类型映射，adapter/hook_configs/qoder.yaml）
+  target_agent_id: "qoder"          # 默认 Agent 标识
   poll_timeout_s: 0.2                # collector 消费 broker 的轮询间隔（秒）
-  host: "127.0.0.1"                  # MCP Server 监听地址（HTTP+SSE）
-  port: 8765                         # MCP Server 监听端口
+  host: "127.0.0.1"                  # MCP Server 监听地址（HTTP+SSE；仅本机回环）
+  port: 8765                         # MCP Server 监听端口（/api/hook-report 与 MCP 同端口）
   jsonl_dir: null                    # 申报留痕目录（null = 不落盘，仅内存队列）
+  # P1: Hooks 确定性申报摄入（Qoder CN PostToolUse Hook → reporter → 本端点）
+  # enabled: false 时行为与纯 MCP 申报模式完全一致（不挂载该路由）
+  hook_ingest:
+    enabled: true
+    path: "/api/hook-report"         # POST 摄入端点（与 MCP Server 同端口同应用）
+    agent_id_default: "qoder"        # 申报体未携带 agent_id 时的默认标识
 
 # ============================================================
 # 以下为现有配置段，全部保留不做修改

@@ -174,6 +174,38 @@ class TestObserverFiles(unittest.TestCase):
         self.assertIn("拒绝访问",
                       r.stderr.decode("utf-8", "replace"))
 
+    def test_files_tree_includes_qoder_monitoring(self):
+        """files tree 纳入 qoder_monitoring 分区（产物存在时）。"""
+        out_dir = os.path.join(BASE_DIR, "output", "qoder_monitoring")
+        if not os.path.isdir(out_dir) or not os.listdir(out_dir):
+            self.skipTest("output/qoder_monitoring 为空或不存在")
+        r = _run([OBSERVER, "files", "tree"])
+        self.assertEqual(r.returncode, 0,
+                         r.stderr.decode("utf-8", "replace"))
+        data = json.loads(r.stdout.decode("utf-8"))
+        self.assertIn("qoder_monitoring", data["tree"],
+                      f"文件树缺少 qoder_monitoring 分区: "
+                      f"{list(data['tree'])}")
+        node = data["tree"]["qoder_monitoring"]
+        self.assertEqual(node["label"], "Qoder CN 监测产物")
+        self.assertTrue(node.get("children"), "qoder_monitoring 分区为空")
+        # 文件路径均以分区前缀开头（与 view/delete 前缀约定一致）
+        def _paths(items):
+            for it in items:
+                if it.get("type") == "file" and "path" in it:
+                    yield it["path"]
+                yield from _paths(it.get("children") or [])
+        for p in _paths(node["children"]):
+            self.assertTrue(p.startswith("qoder_monitoring/"), p)
+
+    def test_files_view_qoder_traversal_rejected(self):
+        """qoder_monitoring 前缀同样受路径遍历防护（与其余分区一致）。"""
+        r = _run([OBSERVER, "files", "view",
+                  "qoder_monitoring/../../../etc/passwd"])
+        self.assertNotEqual(r.returncode, 0)
+        self.assertIn("拒绝访问",
+                      r.stderr.decode("utf-8", "replace"))
+
 
 class TestObserverMenu(unittest.TestCase):
     """observer menu 命令行控制台（console.py 调度层，编号菜单 + 短命令）。"""
@@ -199,7 +231,7 @@ class TestObserverMenu(unittest.TestCase):
         r = self._menu(["99", "0"])
         self.assertEqual(r.returncode, 0, r.stderr)
         self.assertIn("无效选项 99", r.stdout)
-        self.assertIn("1-10", r.stdout)  # 菜单项数随 mcp 域加入变为 10
+        self.assertIn("1-11", r.stdout)  # 菜单项数随 qoder 域加入变为 11
 
     def test_menu_help_shortcut_shows_command_table(self):
         r = self._menu(["h", "0"])
@@ -235,9 +267,9 @@ class TestObserverMenu(unittest.TestCase):
         self.assertIn("环境预检", r.stdout)
         self.assertIn("检查汇总", r.stdout)
 
-    def test_menu_option_10_runs_env_check(self):
-        """主菜单数字 10 = 环境检测（mcp 域加入后 env 恒为末位编号）。"""
-        r = self._menu(["10", "0"])
+    def test_menu_option_11_runs_env_check(self):
+        """主菜单数字 11 = 环境检测（env 恒为末位编号，qoder 域加入后为 11）。"""
+        r = self._menu(["11", "0"])
         self.assertEqual(r.returncode, 0, r.stderr)
         self.assertIn("环境预检", r.stdout)
         self.assertIn("检查汇总", r.stdout)

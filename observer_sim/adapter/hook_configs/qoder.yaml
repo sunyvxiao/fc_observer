@@ -1,0 +1,155 @@
+# Hook 配置: Qoder CN（阿里云编程 Agent，黑盒）
+#
+# 将 Qoder CN 的原生工具调用映射为 observer_core RawEvent。
+# 依据: docs/杂项文档/QoderCN监测可行性分析与执行方案.md 映射表
+#       + 官方 Hooks 文档（help.aliyun.com/zh/lingma/hooks-3032541）
+#
+# 两套工具名均覆盖（官方文档"原生名 ↔ 兼容名"映射）:
+#   run_in_terminal=Bash / read_file=Read / create_file=Write /
+#   search_replace=Edit / grep_code=Grep / search_file=Glob /
+#   list_dir=LS / task=Task
+#
+# 数据源: .lingma/settings.json 的 PostToolUse Hook →
+#         scripts/qoder_hook_reporter.py → POST /api/hook-report
+
+framework: qoder
+version: "1.0"
+description: "Qoder CN 编程 Agent Hook 配置（Hooks 确定性申报）"
+
+# 捕获模式: hook（Qoder CN 原生 Hooks 机制，确定性触发）
+capture_mode: hook
+
+# 工具名 → 事件类型 + 参数映射
+tool_mappings:
+  # ── Shell 执行类 ──
+  run_in_terminal:
+    event_type: exec
+    param_rules:
+      executable: "input.command.split()[0] if input.get('command') else tool_name"
+      arguments: "input.command.split() if input.get('command') else [tool_name]"
+
+  bash:                                  # 兼容名 (Bash)
+    event_type: exec
+    param_rules:
+      executable: "input.command.split()[0] if input.get('command') else tool_name"
+      arguments: "input.command.split() if input.get('command') else [tool_name]"
+
+  task:                                  # 子代理调用 → 按执行类处理
+    event_type: exec
+    param_rules:
+      executable: '"task"'
+      arguments: "[str(input.get('description', ''))]"
+
+  # ── 文件读取类 ──
+  read_file:
+    event_type: file_open
+    param_rules:
+      file_path: "input.get('file_path') or input.get('path') or input.get('file') or ''"
+      file_op: '"read"'
+
+  read:                                  # 兼容名 (Read)
+    event_type: file_open
+    param_rules:
+      file_path: "input.get('file_path') or input.get('path') or ''"
+      file_op: '"read"'
+
+  list_dir:
+    event_type: file_open
+    param_rules:
+      file_path: "input.get('path') or input.get('dir_path') or input.get('directory') or ''"
+      file_op: '"read"'
+
+  ls:                                    # 兼容名 (LS)
+    event_type: file_open
+    param_rules:
+      file_path: "input.get('path') or input.get('dir_path') or ''"
+      file_op: '"read"'
+
+  grep_code:
+    event_type: file_open
+    param_rules:
+      file_path: "input.get('path') or input.get('file_path') or ''"
+      file_op: '"read"'
+
+  grep:                                  # 兼容名 (Grep)
+    event_type: file_open
+    param_rules:
+      file_path: "input.get('path') or input.get('file_path') or ''"
+      file_op: '"read"'
+
+  search_file:
+    event_type: file_open
+    param_rules:
+      file_path: "input.get('query') or input.get('pattern') or ''"
+      file_op: '"read"'
+
+  glob:                                  # 兼容名 (Glob)
+    event_type: file_open
+    param_rules:
+      file_path: "input.get('query') or input.get('pattern') or ''"
+      file_op: '"read"'
+
+  # ── 文件写入类 ──
+  create_file:
+    event_type: file_open
+    param_rules:
+      file_path: "input.get('file_path') or input.get('path') or ''"
+      file_op: '"write"'
+
+  write:                                 # 兼容名 (Write)
+    event_type: file_open
+    param_rules:
+      file_path: "input.get('file_path') or input.get('path') or ''"
+      file_op: '"write"'
+
+  search_replace:
+    event_type: file_open
+    param_rules:
+      file_path: "input.get('file_path') or input.get('path') or ''"
+      file_op: '"write"'
+
+  edit:                                  # 兼容名 (Edit)
+    event_type: file_open
+    param_rules:
+      file_path: "input.get('file_path') or input.get('path') or ''"
+      file_op: '"write"'
+
+  delete_file:
+    event_type: file_open
+    param_rules:
+      file_path: "input.get('file_path') or input.get('path') or ''"
+      file_op: '"write"'
+
+  # ── 网络类 ──
+  web_search:
+    event_type: net_conn
+    param_rules:
+      remote_addr: "extract_host(input.get('url') or input.get('query') or '')"
+      remote_port: "443"
+      protocol: '"TCP"'
+
+  web_fetch:
+    event_type: net_conn
+    param_rules:
+      remote_addr: "extract_host(input.get('url') or input.get('query') or '')"
+      remote_port: "443 if 'https' in str(input.get('url', '')) else 80"
+      protocol: '"TCP"'
+
+# 默认映射（未匹配的工具使用此配置；未知工具归 exec 与历史语义一致）
+default_mapping:
+  event_type: exec
+  param_rules:
+    executable: "tool_name"
+    arguments: "[str(input.get('command', input.get('cmd', '')))]"
+
+# Hook 回调配置（与 .lingma/settings.json 模板对齐）
+hook_config:
+  capture_phases:
+    - post_tool          # PostToolUse（主通道，全量）
+    - post_tool_failure  # PostToolUseFailure（失败留痕）
+  capture_events:
+    - PostToolUse
+    - PostToolUseFailure
+  timeout_ms: 30000      # Qoder CN Hook 默认 30s 超时
+  reporter: "scripts/qoder_hook_reporter.py"
+  ingest_path: "/api/hook-report"

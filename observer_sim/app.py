@@ -90,6 +90,25 @@ def _mcp_monitoring_extra_roots():
     except Exception:  # noqa: BLE001
         pass
     return None
+
+
+def _monitoring_extra_roots():
+    """合并全部扩展分区安全根（mcp_monitoring + qoder_monitoring）。
+
+    qoder_monitoring：output/qoder_monitoring（Qoder CN 监测产物，
+    路径由 qoder_report_gateway 约定，无需读配置；不存在时不注入，
+    不影响四区默认行为）。
+    """
+    roots = dict(_mcp_monitoring_extra_roots() or {})
+    try:
+        qoder_dir = os.path.join(BASE_DIR, "output", "qoder_monitoring")
+        if os.path.isdir(qoder_dir):
+            roots["qoder_monitoring"] = os.path.realpath(qoder_dir)
+    except OSError:
+        pass
+    return roots or None
+
+
 SCENARIOS_DIR = os.path.join(BASE_DIR, "scenarios")
 REPORTS_DIR = os.path.realpath(os.path.join(BASE_DIR, "output", "reports"))
 STATIC_DIR = os.path.join(BASE_DIR, "static")
@@ -474,6 +493,15 @@ class ObserverHTTPHandler(BaseHTTPRequestHandler):
         elif path == "/api/mcp-report/task":
             name = params.get("name", [None])[0] or ""
             self._send_json(self._get_mcp_report_task(name))
+        # ── Qoder CN 监测（独立通道，不复用 WorkBuddy /api/mcp-report/*）──
+        elif path == "/api/qoder-monitor/status":
+            self._send_json(self._get_qoder_monitor_status())
+        elif path == "/api/qoder-monitor/events/stream":
+            self._handle_sse_qoder_events_stream(params)
+        elif path == "/api/qoder-monitor/events":
+            self._send_json(self._get_qoder_monitor_events(params))
+        elif path == "/api/qoder-monitor/artifacts":
+            self._send_json(self._get_qoder_monitor_artifacts())
         elif path == "/api/agent-sim/scenarios":
             self._send_json(self._get_agent_sim_scenarios())
         elif path.startswith("/api/agent-sim/run/"):
@@ -520,6 +548,12 @@ class ObserverHTTPHandler(BaseHTTPRequestHandler):
             self._handle_mcp_report_stop()
         elif path == "/api/mcp-report/smoke":
             self._handle_mcp_report_smoke()
+        elif path == "/api/qoder-monitor/start":
+            self._handle_qoder_monitor_start()
+        elif path == "/api/qoder-monitor/stop":
+            self._handle_qoder_monitor_stop()
+        elif path == "/api/qoder-monitor/simulate":
+            self._handle_qoder_monitor_simulate(body)
         else:
             self._send_error(404, "Not Found")
 
@@ -1189,9 +1223,9 @@ class ObserverHTTPHandler(BaseHTTPRequestHandler):
 
     # U7: 文件/报告管理已下沉至 observer_core/audit/file_manager.py，
     # HTTP 层只保留薄绑定；安全根白名单与路径校验由 OutputFileManager 管理
-    # mcp_monitoring 分区：只读 workbuddy_connect.yaml 推导（失败不影响四区）
+    # 扩展分区：mcp_monitoring（workbuddy_connect.yaml 推导）+ qoder_monitoring
     _file_manager = OutputFileManager(BASE_DIR, PROJECT_DIR,
-                                      extra_roots=_mcp_monitoring_extra_roots())
+                                      extra_roots=_monitoring_extra_roots())
 
     def _get_files_tree(self):
         """GET /api/files/tree — 返回分类文件树（薄绑定 OutputFileManager）"""
@@ -2269,6 +2303,177 @@ class ObserverHTTPHandler(BaseHTTPRequestHandler):
                              "error": "busy",
                              "message": "已有烟测任务在进行中"})
 
+    # ══════════════════════════════════════════════════════
+    #  Qoder CN 监测 API（Hooks 确定性申报 + MCP 申报双通道）
+    #  生命周期/状态/事件/模拟注入复用 qoder_report_gateway.py
+    #  （只读 config.yaml mcp_report 段），start/stop 后台线程执行，
+    #  前端轮询 /api/qoder-monitor/status 与 events。
+    #  不复用、不改动 WorkBuddy 的 /api/mcp-report/* 与 FIFO 内置 Monitor。
+    #  SSE 预留（下一步计划）: GET /api/qoder-monitor/events/stream
+    #    约定: text/event-stream，逐条推送与 /events 同构的事件对象；
+    #    数据源为 qoder_report_gateway.stream_events()/get_events()，
+    #    本轮不实现推送，前端以轮询呈现。
+    #  P2 阻断联动预留: PreToolUse 拦截回注（本轮未实现，
+    #    simulate 已支持 hook_event_name=PreToolUse 构造 pre 申报）。
+    # ══════════════════════════════════════════════════════
+
+    def _qoder_gateway(self):
+        """延迟导入门面（避免 Web 服务启动路径引入额外依赖）。"""
+        import qoder_report_gateway
+        return qoder_report_gateway
+
+    def _get_qoder_monitor_status(self):
+        """GET /api/qoder-monitor/status — 通道状态 + 双通道 + 统计 + 任务。"""
+        gw = self._qoder_gateway()
+        try:
+            status = gw.get_status()
+        except Exception as e:  # noqa: BLE001
+            return {"error": str(e)}
+        status["tasks"] = {name: gw.task_state(name)
+                           for name in ("start", "stop")}
+        return status
+
+    def _get_qoder_monitor_events(self, params):
+        """GET /api/qoder-monitor/events?tail=N&agent_id=&decision=
+
+        审计尾随读取（轮询数据源，兼作 SSE 降级兜底）。实时推送见
+        /api/qoder-monitor/events/stream（SSE，事件对象同构）。
+        """
+        gw = self._qoder_gateway()
+        try:
+            tail = int((params.get("tail", ["50"])[0]) or "50")
+        except ValueError:
+            tail = 50
+        agent_id = (params.get("agent_id", [None])[0]) or None
+        decision = (params.get("decision", [None])[0]) or None
+        try:
+            return gw.get_events(tail=tail, agent_id=agent_id,
+                                 decision=decision)
+        except Exception as e:  # noqa: BLE001
+            return {"error": str(e), "events": [],
+                    "counts": {"allow": 0, "alert": 0, "block": 0,
+                               "total": 0}}
+
+    def _handle_sse_qoder_events_stream(self, params):
+        """GET /api/qoder-monitor/events/stream — SSE: Qoder CN 审计事件增量推送。
+
+        数据源复用 qoder_report_gateway.stream_events()（与轮询
+        get_events 同一审计数据源），事件对象结构与
+        /api/qoder-monitor/events 同构。帧类型:
+          connected : 已附着（附 counts 统计与最近历史事件）;
+          event     : 逐条增量事件（seq 递增，附最新 counts 统计）;
+          stream_end: 事件流结束（生成器耗尽；生产用 stream_events 不耗尽）。
+        """
+        gw = self._qoder_gateway()
+        agent_id = (params.get("agent_id", [None])[0]) or None
+        decision = ((params.get("decision", [None])[0]) or "").lower() or None
+        try:
+            tail = int((params.get("tail", ["50"])[0]) or "50")
+        except ValueError:
+            tail = 50
+
+        self.send_response(200)
+        self.send_header("Content-Type", "text/event-stream")
+        self.send_header("Cache-Control", "no-cache")
+        self.send_header("Connection", "keep-alive")
+        self._send_cors_headers()
+        self.end_headers()
+
+        # 首帧附着: 历史事件 + counts（与轮询接口同构）
+        try:
+            snapshot = gw.get_events(tail=tail, agent_id=agent_id,
+                                     decision=decision)
+        except Exception as e:  # noqa: BLE001
+            snapshot = {"events": [], "source": None,
+                        "counts": {"allow": 0, "alert": 0, "block": 0,
+                                   "total": 0}, "error": str(e)}
+        counts = dict(snapshot["counts"])
+        self._sse_send({"type": "connected",
+                        "message": "已连接到 Qoder CN 监测事件流",
+                        "source": (os.path.basename(snapshot["source"])
+                                    if snapshot.get("source") else None),
+                        "counts": counts,
+                        "history": snapshot["events"]})
+
+        try:
+            seq = 0
+            for ev in gw.stream_events(poll_interval=0.5):
+                # counts 按未过滤全量累计（与 get_events 语义同构）
+                counts["total"] += 1
+                act = str(ev.get("decision_action") or "").lower()
+                if act in counts:
+                    counts[act] += 1
+                if agent_id and ev.get("agent_id") != agent_id:
+                    continue
+                if decision and act != decision:
+                    continue
+                seq += 1
+                self._sse_send({"type": "event", "seq": seq,
+                                "counts": counts, "event": ev})
+            self._sse_send({"type": "stream_end", "counts": counts})
+        except (BrokenPipeError, ConnectionResetError, OSError):
+            pass
+
+    def _get_qoder_monitor_artifacts(self):
+        """GET /api/qoder-monitor/artifacts — 报告/审计产物清单。"""
+        gw = self._qoder_gateway()
+        try:
+            return gw.get_artifacts()
+        except Exception as e:  # noqa: BLE001
+            return {"error": str(e), "artifacts": []}
+
+    def _handle_qoder_monitor_start(self):
+        """POST /api/qoder-monitor/start — 后台线程拉起 mcp_report daemon。"""
+        gw = self._qoder_gateway()
+        if gw.run_task("start", gw.start):
+            self._send_json({"success": True, "accepted": True,
+                             "message": "已发起启动，请轮询 status"})
+        else:
+            self._send_json({"success": False, "accepted": False,
+                             "error": "busy",
+                             "message": "已有启动任务在进行中"})
+
+    def _handle_qoder_monitor_stop(self):
+        """POST /api/qoder-monitor/stop — 后台线程优雅停止（生成报告）。"""
+        gw = self._qoder_gateway()
+        if gw.run_task("stop", gw.stop):
+            self._send_json({"success": True, "accepted": True,
+                             "message": "已发起停止，请轮询 status"})
+        else:
+            self._send_json({"success": False, "accepted": False,
+                             "error": "busy",
+                             "message": "已有停止任务在进行中"})
+
+    def _handle_qoder_monitor_simulate(self, body=None):
+        """POST /api/qoder-monitor/simulate — 模拟 Hook 申报注入。
+
+        body: {"tool_name", "tool_args", "session_id",
+               "hook_event_name", "agent_id", "tool_response"}
+        等效 `echo '<Hook JSON>' | scripts/qoder_hook_reporter.py`，
+        同步转发到 POST /api/hook-report 并返回 accepted/rejected 及原因。
+        """
+        if isinstance(body, str):
+            body = {}
+        body = body or {}
+        tool_name = str(body.get("tool_name") or "").strip()
+        if not tool_name:
+            self._send_json({"sent": False, "status": "rejected",
+                             "reason": "missing_tool_name"})
+            return
+        gw = self._qoder_gateway()
+        try:
+            result = gw.simulate(
+                tool_name,
+                tool_args=body.get("tool_args"),
+                session_id=body.get("session_id"),
+                hook_event_name=body.get("hook_event_name") or "PostToolUse",
+                agent_id=body.get("agent_id"),
+                tool_response=body.get("tool_response"))
+        except Exception as e:  # noqa: BLE001
+            result = {"sent": False, "status": "unreachable",
+                      "reason": str(e)}
+        self._send_json(result)
+
     # ══════════════════════════════════════════════════════════
     #  实时监测事件流 (SSE tail audit log)
     # ══════════════════════════════════════════════════════════
@@ -3108,6 +3313,24 @@ def main():
         time.sleep(0.3)
         server.shutdown()
         # ── 关闭阶段清理 ──────────────────────────────────────
+        # 1) 先优雅停止两个申报通道（SIGTERM/停止请求 → 报告完整生成）；
+        #    各网关已将进程注册到 MonitorLifecycleManager 追踪列表，
+        #    即便优雅停止超时，下方 shutdown() 的追踪扫描仍能兜底终止。
+        try:
+            import qoder_report_gateway as _qg
+            if _qg.daemon_alive():
+                print("[关闭] 优雅停止 Qoder CN 监测 daemon...")
+                _qg.stop()
+        except Exception:  # noqa: BLE001
+            pass
+        try:
+            import mcp_report_gateway as _mg
+            if _mg.get_status().get("daemon_running"):
+                print("[关闭] 优雅停止 MCP 申报通道（WorkBuddy）...")
+                _mg.stop()
+        except Exception:  # noqa: BLE001
+            pass
+        # 2) 终止 Monitor 子进程并清理资源（含已追踪的通道进程兜底）
         print("[关闭] 正在终止 Monitor 子进程并清理资源...")
         MonitorLifecycleManager.instance().shutdown()
         print("[关闭] Monitor 资源已清理")

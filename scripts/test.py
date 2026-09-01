@@ -144,6 +144,26 @@ def get_categories() -> List[TestCategory]:
             ],
         ),
         TestCategory(
+            name="mcp",
+            label="MCP/Hook 申报测试",
+            description="黑盒 Agent 申报通道（MCP Server / Hook 摄入 / WorkBuddy）",
+            files=[
+                "test_mcp_bridge_schemas.py",
+                "test_mcp_bridge_validation.py",
+                "test_mcp_bridge_semantic_guard.py",
+                "test_mcp_bridge_server.py",
+                "test_mcp_report_collector.py",
+                "test_http_ingest.py",
+                "test_qoder_hook_reporter.py",
+                "test_qoder_monitor_api.py",
+                "test_monitor_lifecycle.py",
+                "test_hook_registry.py",
+                "test_workbuddy_integration.py",
+                "test_mcp_report_mode.py",
+                "test_mcp_report_e2e.py",
+            ],
+        ),
+        TestCategory(
             name="scenario",
             label="场景测试",
             description="YAML 场景驱动的 simulation 模式回放验证（37 个场景）",
@@ -1470,6 +1490,7 @@ def interactive_menu(env: EnvCapabilities, categories: List[TestCategory]):
     stop_label = f"— {'[' + rec_status + '] 停止录制并保存':<37s} ║" if rec_status else "— 停止录制并保存文件                               ║"
     print(f"║  [A] + 结束录制     {stop_label}")
     print("║  [B] < 回放录制      — 选择历史录制并回放分析             ║")
+    print("║  [C] # MCP/Hook 测试 — 申报通道/Hook 摄入/WorkBuddy 验证  ║")
     print("║                                                          ║")
     print("╠══════════════════════════════════════════════════════════╣")
     print("║  📡 实时监测 (Production Demo)                            ║")
@@ -1492,13 +1513,15 @@ def interactive_menu(env: EnvCapabilities, categories: List[TestCategory]):
     print("╚══════════════════════════════════════════════════════════╝")
     print()
 
-    choice = input("请选择 [0-9/A/B/D/E/F/G]: ").strip().upper()
-    all_names = ["unit", "collector", "integration", "scenario", "e2e", "web"]
+    choice = input("请选择 [0-9/A-C/E/F/G]: ").strip().upper()
+    all_names = ["unit", "collector", "integration", "mcp",
+                 "scenario", "e2e", "web"]
     mapping = {
         "1": ["unit"], "2": ["collector"], "3": ["integration"],
         "4": ["scenario"], "5": ["e2e"], "6": ["web"],
         "7": all_names, "8": ["check"],
         "9": ["record"], "A": ["stop_record"], "B": ["replay"],
+        "C": ["mcp"],
         "D": ["start_monitor"], "E": ["stop_monitor"],
         "F": ["full_verify"], "G": ["agent_sim"],
     }
@@ -1632,6 +1655,8 @@ def main():
     parser.add_argument("--unit", action="store_true", help="单元测试")
     parser.add_argument("--collector", action="store_true", help="采集器测试")
     parser.add_argument("--integration", action="store_true", help="集成测试")
+    parser.add_argument("--mcp", action="store_true",
+                        help="MCP/Hook 申报通道测试（含 Qoder CN Hook 摄入）")
     parser.add_argument("--scenario", action="store_true", help="场景测试（simulation 模式）")
     parser.add_argument("--e2e", action="store_true", help="端到端测试（需 root）")
     parser.add_argument("--web", action="store_true", help="Web API 测试")
@@ -1714,7 +1739,7 @@ def main():
     # 确定要运行的分类
     selected = []
     has_flag = any([args.all, args.unit, args.collector, args.integration,
-                    args.scenario, args.e2e, args.web, args.record,
+                    args.mcp, args.scenario, args.e2e, args.web, args.record,
                     args.replay is not None])
 
     if not has_flag:
@@ -1736,7 +1761,8 @@ def main():
             # 测试完成后返回菜单（录制-回放需要多步操作）
     else:
         if args.all:
-            selected = ["unit", "collector", "integration", "scenario", "e2e", "web"]
+            selected = ["unit", "collector", "integration", "mcp",
+                        "scenario", "e2e", "web"]
         else:
             if args.unit:
                 selected.append("unit")
@@ -1744,6 +1770,8 @@ def main():
                 selected.append("collector")
             if args.integration:
                 selected.append("integration")
+            if args.mcp:
+                selected.append("mcp")
             if args.scenario:
                 selected.append("scenario")
             if args.e2e:

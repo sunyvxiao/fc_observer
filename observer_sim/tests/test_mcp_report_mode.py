@@ -22,7 +22,11 @@ if BASE_DIR not in sys.path:
 # ── 1. config.yaml 枚举 + 配置段 ────────────────────────────────────
 
 def test_config_yaml_declares_mcp_report_mode():
-    """config.yaml: mode 枚举注释含 mcp_report，且存在 mcp_report 配置段。"""
+    """config.yaml: mode 枚举注释含 mcp_report，且存在 mcp_report 配置段。
+
+    当前接入目标为 Qoder CN（P0/P1）: framework=qoder、target_agent_id=qoder，
+    并声明 hook_ingest 摄入配置（enabled/path/agent_id_default）。
+    """
     import yaml
 
     cfg_path = os.path.join(BASE_DIR, "config.yaml")
@@ -32,12 +36,19 @@ def test_config_yaml_declares_mcp_report_mode():
     cfg = yaml.safe_load(text)
     mcp = cfg.get("mcp_report")
     assert isinstance(mcp, dict)
-    assert mcp.get("framework") == "pydantic-deep"
-    assert mcp.get("target_agent_id") == "workbuddy"
+    assert mcp.get("framework") == "qoder"
+    assert mcp.get("target_agent_id") == "qoder"
     assert mcp.get("host") == "127.0.0.1"
     assert mcp.get("port") == 8765
     assert mcp.get("poll_timeout_s") == 0.2
     assert mcp.get("jsonl_dir") is None
+
+    # P1: Hooks 确定性申报摄入配置契约（前端/CLI 对接点）
+    hook = mcp.get("hook_ingest")
+    assert isinstance(hook, dict)
+    assert hook.get("path") == "/api/hook-report"
+    assert isinstance(hook.get("enabled"), bool)
+    assert hook.get("agent_id_default") == "qoder"
 
 
 # ── 2. 采集模式选择纳入 ──────────────────────────────────────────────

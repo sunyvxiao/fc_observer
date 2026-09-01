@@ -301,3 +301,70 @@ def test_extra_roots_delete_category_and_file(tmp_path):
     assert deleted == {"type": "directory", "name": "mcp_monitoring",
                        "files": 1}
     assert os.path.isdir(mcp_dir)  # 根目录保留
+
+
+# ── Qoder CN 监测产物分区（extra_roots 注入扩展）────────────────
+
+def test_extra_roots_injects_qoder_monitoring_partition(tmp_path):
+    """extra_roots 注入 qoder_monitoring 安全根后，build_tree 新增
+    Qoder CN 分区，标签/图标与元数据一致；隐藏运行时文件不展示。"""
+    base = tmp_path / "sim"
+    base.mkdir()
+    qd = tmp_path / "qoder_out"
+    _touch(os.path.join(qd, "reports", "risk_report_q.md"))
+    _touch(os.path.join(qd, "audit", "audit_mcp_report_20260901.jsonl"))
+    _touch(os.path.join(qd, "monitoring_summary.json"))
+    fm = OutputFileManager(str(base), str(tmp_path),
+                           extra_roots={"qoder_monitoring": str(qd)})
+
+    tree = fm.build_tree()["tree"]
+    assert "qoder_monitoring" in tree, f"缺少 qoder_monitoring 分区: {list(tree)}"
+    node = tree["qoder_monitoring"]
+    assert node["label"] == "Qoder CN 监测产物", node["label"]
+    names = [(c["name"], c["type"]) for c in node["children"]]
+    assert ("reports", "dir") in names, names
+    assert ("audit", "dir") in names, names
+    assert ("monitoring_summary.json", "file") in names, names
+    audit = [c for c in node["children"] if c["name"] == "audit"][0]
+    assert audit["children"][0]["path"].startswith("qoder_monitoring/audit/")
+
+
+def test_extra_roots_qoder_and_mcp_parallel(tmp_path):
+    """两扩展分区并存时各自独立渲染，互不覆盖（已有键不覆盖语义）。"""
+    base = tmp_path / "sim"
+    base.mkdir()
+    mcp_dir = tmp_path / "mcp_out"
+    qd = tmp_path / "qoder_out"
+    _touch(os.path.join(mcp_dir, "reports", "m.md"))
+    _touch(os.path.join(qd, "audit", "q.jsonl"))
+    fm = OutputFileManager(str(base), str(tmp_path),
+                           extra_roots={"mcp_monitoring": str(mcp_dir),
+                                        "qoder_monitoring": str(qd)})
+    tree = fm.build_tree()["tree"]
+    assert "mcp_monitoring" in tree and "qoder_monitoring" in tree
+    assert tree["mcp_monitoring"]["label"].startswith("MCP 申报监测产物")
+    assert tree["qoder_monitoring"]["label"] == "Qoder CN 监测产物"
+    # 各分区路径前缀互不串扰
+    mpath = tree["mcp_monitoring"]["children"][0]["children"][0]["path"]
+    qpath = tree["qoder_monitoring"]["children"][0]["children"][0]["path"]
+    assert mpath.startswith("mcp_monitoring/") and not mpath.startswith("qoder")
+    assert qpath.startswith("qoder_monitoring/")
+
+
+def test_extra_roots_qoder_resolve_traversal_and_delete(tmp_path):
+    """qoder_monitoring 前缀可解析/删除；../ 越界仍被拒绝（安全一致）。"""
+    base = tmp_path / "sim"
+    base.mkdir()
+    qd = tmp_path / "qoder_out"
+    _touch(os.path.join(qd, "reports", "r.md"))
+    _touch(os.path.join(str(tmp_path), "secret.txt"))
+    fm = OutputFileManager(str(base), str(tmp_path),
+                           extra_roots={"qoder_monitoring": str(qd)})
+
+    resolved = fm.resolve("qoder_monitoring/reports/r.md")
+    assert resolved == os.path.join(qd, "reports", "r.md")
+    assert fm.resolve("qoder_monitoring/../secret.txt") is None
+    assert fm.resolve_strict("qoder_monitoring/../secret.txt") == \
+        (None, "traversal")
+    deleted = fm.delete_category("qoder_monitoring")
+    assert deleted["files"] == 1 and os.path.isdir(str(qd))  # 根目录保留

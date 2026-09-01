@@ -87,3 +87,10 @@ WorkBuddy降级监测适配/tools/clipboard_dump.txt
 *_ed25519
 fco
 fco.pub
+
+# === 编辑器工具缓存 ===
+.lingma/
+
+# === Qoder CN 端到端测试运行时产物（不入库） ===
+QoderCN监测端到端测试/验收截图_*.png
+QoderCN监测端到端测试/e2e_result_*.json

@@ -25,6 +25,12 @@ import time
 
 import connect_workbuddy as cw
 
+# 进程管理系统（monitor_lifecycle.MonitorLifecycleManager）：
+#   - track_pid/untrack_pid：管家与 daemon 纳入追踪列表，继承“随服务关闭终止”
+#     保护；生命周期管理器已按 --fifo 过滤进程扫描，不会误杀本通道。
+from monitor_lifecycle import track_pid as _lc_track_pid
+from monitor_lifecycle import untrack_pid as _lc_untrack_pid
+
 # ── 后台任务状态（Web 侧异步执行 start/stop/smoke 的共享状态）────
 _TASKS = {}
 
@@ -59,6 +65,21 @@ def run_task(name, fn):
 
     threading.Thread(target=_w, daemon=True).start()
     return True
+
+
+def _read_watch_pids(pid_path):
+    """读管家 JSON pid 文件，返回 [daemon_pid, watchdog_pid]（有效者）。"""
+    pids = []
+    try:
+        with open(pid_path, encoding="utf-8") as f:
+            info = json.load(f)
+        for key in ("daemon", "watchdog"):
+            pid = int(info.get(key) or 0)
+            if pid > 0:
+                pids.append(pid)
+    except (OSError, ValueError, TypeError):
+        pass
+    return pids
 
 
 # ── 状态查询（结构化）────────────────────────────────────────────
@@ -187,13 +208,18 @@ def start(no_rollup=False):
     if no_rollup:
         cmd.append("--no-rollup")
     subprocess = __import__("subprocess")
-    subprocess.Popen(cmd, cwd=cw.BASE_DIR,
-                     creationflags=cw.CREATE_NO_WINDOW)
+    proc = subprocess.Popen(cmd, cwd=cw.BASE_DIR,
+                            creationflags=cw.CREATE_NO_WINDOW)
+    # reap 线程：回收管家进程，避免僵尸条目残留（Web 服务为长驻父进程）
+    threading.Thread(target=proc.wait, daemon=True).start()
     if not cw._wait_port(cfg, float(cfg["daemon"]["ready_timeout_s"])):
         return {"success": False, "error": "not_ready",
                 "message": f"端口 {port} 未在 "
                            f"{cfg['daemon']['ready_timeout_s']}s 内就绪",
                 "log_tail": cw._log_tail(log_path, 30)}
+    # 进程追踪：管家 + daemon 均纳入 MonitorLifecycleManager 追踪列表
+    for pid in _read_watch_pids(pid_path):
+        _lc_track_pid(pid)
     return {"success": True, "running": True,
             "url": f"http://{host}:{port}{cfg['server']['sse_path']}",
             "log_path": log_path}
@@ -203,7 +229,10 @@ def stop():
     """优雅停止 MCP 申报 daemon（触发报告生成）并返回产物。"""
     cfg = load_cfg()
     out_dir, pid_path, _, stop_path = cw._out_paths(cfg)
+    tracked = _read_watch_pids(pid_path)  # 停止前记录，成功后解除追踪
     if not cw._daemon_alive(pid_path):
+        for pid in tracked:
+            _lc_untrack_pid(pid)
         if os.path.exists(pid_path):
             try:
                 os.remove(pid_path)
@@ -221,6 +250,8 @@ def stop():
     if cw._daemon_alive(pid_path):
         return {"success": False, "error": "timeout",
                 "message": "daemon 未在 45s 内退出"}
+    for pid in tracked:
+        _lc_untrack_pid(pid)
     time.sleep(1.0)
     return {"success": True, "stopped": True,
             "artifacts": get_artifacts()["artifacts"]}

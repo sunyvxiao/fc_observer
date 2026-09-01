@@ -112,5 +112,56 @@ test("GET / (index.html)", f"{BASE}/",
 test("GET /api/scenario/result/xxx", f"{BASE}/api/scenario/result/xxx",
      lambda d: "error" in d or d.get("status") == "not_found")
 
+# 14. Qoder CN 监测: 状态（独立通道，不复用 WorkBuddy 网关）
+test("GET /api/qoder-monitor/status", f"{BASE}/api/qoder-monitor/status",
+     lambda d: "daemon_running" in d and "channels" in d
+               and "tasks" in d and "sse_reserved" in d)
+
+# 15. Qoder CN 监测: 审计事件尾随（轮询数据源，兼作 SSE 降级兜底）
+test("GET /api/qoder-monitor/events?tail=5", f"{BASE}/api/qoder-monitor/events?tail=5",
+     lambda d: isinstance(d.get("events"), list)
+               and set(d.get("counts", {})) == {"allow", "alert", "block", "total"})
+
+# 16. Qoder CN 监测: 产物清单
+test("GET /api/qoder-monitor/artifacts", f"{BASE}/api/qoder-monitor/artifacts",
+     lambda d: isinstance(d.get("artifacts"), list))
+
+# 17. Qoder CN 监测: 模拟注入（daemon 未启动时确定性返回 unreachable）
+test("POST /api/qoder-monitor/simulate (unreachable)", f"{BASE}/api/qoder-monitor/simulate",
+     lambda d: d.get("status") in ("unreachable", "accepted")
+               and d.get("sent") in (True, False),
+     method="POST", body={"tool_name": "read_file",
+                          "tool_args": {"file_path": "observer_sim/config.yaml"}})
+
+# 18. Qoder CN 监测: 模拟注入缺 tool_name → 结构化拒绝
+test("POST /api/qoder-monitor/simulate (missing tool)", f"{BASE}/api/qoder-monitor/simulate",
+     lambda d: d.get("status") == "rejected"
+               and d.get("reason") == "missing_tool_name",
+     method="POST", body={})
+
+# 19. Qoder CN 监测: SSE 事件流（已实现，验证 text/event-stream 与 connected 首帧）
+def _check_sse_stream():
+    try:
+        req = urllib.request.Request(f"{BASE}/api/qoder-monitor/events/stream")
+        resp = urllib.request.urlopen(req, timeout=8)
+        ctype = resp.headers.get("Content-Type", "")
+        line = resp.readline().decode("utf-8", errors="replace")
+        resp.close()
+        return ("text/event-stream" in ctype and line.startswith("data: ")
+                and '"type": "connected"' in line)
+    except Exception as e:
+        print(f"  FAIL: GET /api/qoder-monitor/events/stream — {e}")
+        return None
+
+_sse_r = _check_sse_stream()
+if _sse_r is None:
+    failed += 1
+elif _sse_r:
+    print("  PASS: GET /api/qoder-monitor/events/stream (SSE connected 首帧)")
+    passed += 1
+else:
+    print("  FAIL: GET /api/qoder-monitor/events/stream — 首帧不符合预期")
+    failed += 1
+
 print(f"\n=== Results: {passed} passed, {failed} failed ===")
 sys.exit(1 if failed > 0 else 0)

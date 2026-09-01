@@ -163,14 +163,32 @@ def _wait_port(cfg: dict, timeout_s: float) -> bool:
     return False
 
 
+def _is_zombie(pid: int) -> bool:
+    """Linux 下判定进程是否为僵尸（与 monitor_lifecycle 判定同构）。
+
+    停止窗口内 daemon 优雅退出后短窗口可能以 zombie 残留，
+    os.kill(pid, 0) 对僵尸仍返回成功，需读 /proc/<pid>/stat 状态字段区分。
+    """
+    try:
+        with open(f"/proc/{pid}/stat", "r") as f:
+            stat_content = f.read().strip()
+        rparen = stat_content.rfind(")")
+        if rparen >= 0 and rparen + 2 < len(stat_content):
+            return stat_content[rparen + 2] == "Z"
+    except OSError:
+        pass
+    return False
+
+
 def _pid_alive(pid: int) -> bool:
     """跨平台进程存活检查（Windows 下 os.kill(pid, 0) 不可用）。"""
     if sys.platform != "win32":
         try:
             os.kill(pid, 0)
-            return True
         except OSError:
             return False
+        # 排除僵尸进程（避免停止后短窗口内 _daemon_alive 误报存活）
+        return not _is_zombie(pid)
     try:
         import ctypes
         PROCESS_QUERY_LIMITED_INFORMATION = 0x1000

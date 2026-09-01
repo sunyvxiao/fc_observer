@@ -206,10 +206,26 @@ def _mcp_extra_roots():
     return None
 
 
+def _monitoring_extra_roots():
+    """合并全部扩展分区安全根（mcp_monitoring + qoder_monitoring）。
+
+    与 app.py _monitoring_extra_roots 同构：qoder_monitoring 为
+    output/qoder_monitoring（Qoder CN 监测产物），不存在时不注入。
+    """
+    roots = dict(_mcp_extra_roots() or {})
+    try:
+        qoder_dir = os.path.join(BASE_DIR, "output", "qoder_monitoring")
+        if os.path.isdir(qoder_dir):
+            roots["qoder_monitoring"] = os.path.realpath(qoder_dir)
+    except OSError:
+        pass
+    return roots or None
+
+
 def _manager():
     from observer_core.audit.file_manager import OutputFileManager
     return OutputFileManager(BASE_DIR, os.path.dirname(BASE_DIR),
-                             extra_roots=_mcp_extra_roots())
+                             extra_roots=_monitoring_extra_roots())
 
 
 def _cmd_run(argv: list) -> int:
@@ -305,7 +321,8 @@ def _cmd_files(argv: list) -> int:
 
     if action == "delete-category":
         if not path:
-            print("用法: observer files delete-category <records|monitoring|reports|unit_test>",
+            print("用法: observer files delete-category "
+                  "<records|monitoring|mcp_monitoring|qoder_monitoring|reports|unit_test>",
                   file=sys.stderr)
             return 1
         if path not in manager.safe_roots:
