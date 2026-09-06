@@ -632,3 +632,766 @@ class ReportExporter:
 
         logger.info(f"[ReportExporter] Summary saved: {filepath}")
         return filepath
+
+    def append_completeness_section(self, report_path: Optional[str],
+                                    analysis: dict) -> bool:
+        """在报告页脚「---」前插入「申报完整性核对」小节（T1.4，产出层）。
+
+        幂等: 报告已含该小节时跳过。找不到页脚分隔线时退回末尾追加。
+
+        Returns:
+            bool: True 已写入（或已存在）；False 报告文件不可用。
+        """
+        if not report_path or not os.path.isfile(report_path):
+            return False
+        try:
+            with open(report_path, "r", encoding="utf-8") as f:
+                content = f.read()
+        except OSError:
+            return False
+        if "申报完整性核对" in content:
+            return True  # 幂等
+        section = render_completeness_md(analysis)
+        marker = "\n---\n"
+        idx = content.rfind(marker)
+        if idx >= 0:
+            new_content = content[:idx] + "\n" + section + content[idx:]
+        else:
+            new_content = content.rstrip("\n") + "\n\n" + section
+        try:
+            with open(report_path, "w", encoding="utf-8") as f:
+                f.write(new_content)
+        except OSError:
+            return False
+        logger.info(
+            f"[ReportExporter] Completeness section appended: {report_path}")
+        return True
+
+    def append_hook_coverage_section(self, report_path: Optional[str],
+                                     analysis: Optional[dict]) -> bool:
+        """在报告页脚「---」前插入「hook 覆盖比对」小节（P1-2，产出层）。
+
+        幂等: 报告已含该小节时跳过。找不到页脚分隔线时退回末尾追加。
+
+        Returns:
+            bool: True 已写入（或已存在）；False 报告文件不可用。
+        """
+        if not report_path or not os.path.isfile(report_path):
+            return False
+        try:
+            with open(report_path, "r", encoding="utf-8") as f:
+                content = f.read()
+        except OSError:
+            return False
+        if "hook 覆盖比对" in content:
+            return True  # 幂等
+        section = render_hook_coverage_md(analysis)
+        marker = "\n---\n"
+        idx = content.rfind(marker)
+        if idx >= 0:
+            new_content = content[:idx] + "\n" + section + content[idx:]
+        else:
+            new_content = content.rstrip("\n") + "\n\n" + section
+        try:
+            with open(report_path, "w", encoding="utf-8") as f:
+                f.write(new_content)
+        except OSError:
+            return False
+        logger.info(
+            f"[ReportExporter] Hook coverage section appended: {report_path}")
+        return True
+
+    def append_crosscheck_section(self, report_path: Optional[str],
+                                  summary: Optional[dict]) -> bool:
+        """在报告页脚「---」前插入「进程交叉校验」小节（T3.1，产出层）。
+
+        幂等: 报告已含该小节时跳过。找不到页脚分隔线时退回末尾追加。
+
+        Returns:
+            bool: True 已写入（或已存在）；False 报告文件不可用。
+        """
+        if not report_path or not os.path.isfile(report_path):
+            return False
+        try:
+            with open(report_path, "r", encoding="utf-8") as f:
+                content = f.read()
+        except OSError:
+            return False
+        if "进程交叉校验" in content:
+            return True  # 幂等
+        section = render_crosscheck_md(summary)
+        marker = "\n---\n"
+        idx = content.rfind(marker)
+        if idx >= 0:
+            new_content = content[:idx] + "\n" + section + content[idx:]
+        else:
+            new_content = content.rstrip("\n") + "\n\n" + section
+        try:
+            with open(report_path, "w", encoding="utf-8") as f:
+                f.write(new_content)
+        except OSError:
+            return False
+        logger.info(
+            f"[ReportExporter] Crosscheck section appended: {report_path}")
+        return True
+
+    def append_file_crosscheck_section(self, report_path: Optional[str],
+                                       summary: Optional[dict]) -> bool:
+        """在报告页脚「---」前插入「文件交叉校验」小节（T3.2，产出层）。
+
+        幂等: 报告已含该小节时跳过。找不到页脚分隔线时退回末尾追加。
+
+        Returns:
+            bool: True 已写入（或已存在）；False 报告文件不可用。
+        """
+        if not report_path or not os.path.isfile(report_path):
+            return False
+        try:
+            with open(report_path, "r", encoding="utf-8") as f:
+                content = f.read()
+        except OSError:
+            return False
+        if "文件交叉校验" in content:
+            return True  # 幂等
+        section = render_file_crosscheck_md(summary)
+        marker = "\n---\n"
+        idx = content.rfind(marker)
+        if idx >= 0:
+            new_content = content[:idx] + "\n" + section + content[idx:]
+        else:
+            new_content = content.rstrip("\n") + "\n\n" + section
+        try:
+            with open(report_path, "w", encoding="utf-8") as f:
+                f.write(new_content)
+        except OSError:
+            return False
+        logger.info(
+            f"[ReportExporter] File crosscheck section appended: {report_path}")
+        return True
+
+    def append_snapshot_checker_section(self, report_path: Optional[str],
+                                        summary: Optional[dict]) -> bool:
+        """在报告页脚「---」前插入「用户态快照校验」小节（P1-3，产出层）。
+
+        幂等: 报告已含该小节时跳过。找不到页脚分隔线时退回末尾追加。
+
+        Returns:
+            bool: True 已写入（或已存在）；False 报告文件不可用。
+        """
+        if not report_path or not os.path.isfile(report_path):
+            return False
+        try:
+            with open(report_path, "r", encoding="utf-8") as f:
+                content = f.read()
+        except OSError:
+            return False
+        if "用户态快照校验" in content:
+            return True  # 幂等
+        section = render_snapshot_checker_md(summary)
+        marker = "\n---\n"
+        idx = content.rfind(marker)
+        if idx >= 0:
+            new_content = content[:idx] + "\n" + section + content[idx:]
+        else:
+            new_content = content.rstrip("\n") + "\n\n" + section
+        try:
+            with open(report_path, "w", encoding="utf-8") as f:
+                f.write(new_content)
+        except OSError:
+            return False
+        logger.info(
+            f"[ReportExporter] Snapshot checker section appended: "
+            f"{report_path}")
+        return True
+
+    def append_consistency_section(self, report_path: Optional[str],
+                                   summary: Optional[dict]) -> bool:
+        """在报告页脚「---」前插入「一致性核对」小节（P2-2，产出层）。
+
+        幂等: 报告已含该小节时跳过。找不到页脚分隔线时退回末尾追加。
+
+        Returns:
+            bool: True 已写入（或已存在）；False 报告文件不可用。
+        """
+        if not report_path or not os.path.isfile(report_path):
+            return False
+        try:
+            with open(report_path, "r", encoding="utf-8") as f:
+                content = f.read()
+        except OSError:
+            return False
+        if "一致性核对" in content:
+            return True  # 幂等
+        section = render_consistency_md(summary)
+        marker = "\n---\n"
+        idx = content.rfind(marker)
+        if idx >= 0:
+            new_content = content[:idx] + "\n" + section + content[idx:]
+        else:
+            new_content = content.rstrip("\n") + "\n\n" + section
+        try:
+            with open(report_path, "w", encoding="utf-8") as f:
+                f.write(new_content)
+        except OSError:
+            return False
+        logger.info(
+            f"[ReportExporter] Consistency section appended: {report_path}")
+        return True
+
+    def append_coverage_matrix_section(self, report_path: Optional[str],
+                                       matrix: Optional[dict]) -> bool:
+        """在报告页脚「---」前插入「双路径覆盖矩阵」小节（P2-3，产出层）。
+
+        幂等: 报告已含该小节时跳过。找不到页脚分隔线时退回末尾追加。
+
+        Returns:
+            bool: True 已写入（或已存在）；False 报告文件不可用。
+        """
+        if not report_path or not os.path.isfile(report_path):
+            return False
+        try:
+            with open(report_path, "r", encoding="utf-8") as f:
+                content = f.read()
+        except OSError:
+            return False
+        if "双路径覆盖矩阵" in content:
+            return True  # 幂等
+        section = render_coverage_matrix_md(matrix)
+        marker = "\n---\n"
+        idx = content.rfind(marker)
+        if idx >= 0:
+            new_content = content[:idx] + "\n" + section + content[idx:]
+        else:
+            new_content = content.rstrip("\n") + "\n\n" + section
+        try:
+            with open(report_path, "w", encoding="utf-8") as f:
+                f.write(new_content)
+        except OSError:
+            return False
+        logger.info(
+            f"[ReportExporter] Coverage matrix section appended: "
+            f"{report_path}")
+        return True
+
+
+# ── T1.4 申报完整性核对与覆盖置信度（产出层）────────────────────────
+# 只解析 mcp_reports.jsonl 申报留痕做会话配对 + 静默区间检测，
+# 不改动任何检测/研判逻辑；置信度措辞固定声明仅反映申报侧完整性。
+
+COMPLETENESS_NOTE = "仅反映申报侧完整性，不代表行为覆盖"
+
+
+def analyze_report_completeness(jsonl_path: Optional[str],
+                                silence_alert_s: int = 600) -> dict:
+    """核对申报留痕完整性，输出覆盖置信度（T1.4）。
+
+    解析 mcp_reports.jsonl（MCP 申报留痕）:
+    - report_session start/end 配对 → 未闭合会话标注
+    - 相邻申报 received_at_ms 间隔超过 silence_alert_s → 可疑静默区间
+    - 置信度: 高 = 会话全部闭合且无静默；低 = 无留痕/无会话级申报；
+      中 = 其余（存在未闭合会话或静默区间）。
+
+    Args:
+        jsonl_path:      mcp_reports.jsonl 路径；None 表示未配置落盘
+        silence_alert_s: 静默阈值（秒）；<=0 时不检测静默区间
+
+    Returns:
+        dict: {checked, reason, record_count, session_count,
+               unclosed_sessions, end_without_start, silent_gaps,
+               silence_threshold_s, confidence, confidence_reason, note}
+    """
+    result = {
+        "checked": False,
+        "reason": "",
+        "record_count": 0,
+        "session_count": 0,
+        "unclosed_sessions": [],
+        "end_without_start": [],
+        "silent_gaps": [],
+        "silence_threshold_s": int(silence_alert_s or 0),
+        "confidence": "低",
+        "confidence_reason": "",
+        "note": COMPLETENESS_NOTE,
+    }
+    if not jsonl_path:
+        result["reason"] = "申报留痕未落盘，完整性核对跳过"
+        result["confidence_reason"] = "jsonl_dir 未配置，无申报留痕可核对"
+        return result
+    if not os.path.isfile(jsonl_path):
+        result["reason"] = "申报留痕未落盘，完整性核对跳过"
+        result["confidence_reason"] = "申报留痕文件不存在"
+        return result
+
+    records: List[dict] = []
+    try:
+        with open(jsonl_path, "r", encoding="utf-8") as f:
+            for line in f:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    obj = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                if isinstance(obj, dict):
+                    records.append(obj)
+    except OSError as e:
+        result["reason"] = f"申报留痕读取失败，完整性核对跳过 ({e})"
+        result["confidence_reason"] = "申报留痕读取失败"
+        return result
+
+    result["checked"] = True
+    result["record_count"] = len(records)
+
+    # ── 会话 start/end 配对 ──
+    starts: Dict[str, Optional[int]] = {}
+    ends: Dict[str, Optional[int]] = {}
+    for rec in records:
+        if rec.get("type") != "report_session":
+            continue
+        payload = rec.get("payload") or {}
+        sid = payload.get("session_id")
+        if not sid:
+            continue
+        status = str(payload.get("status") or "").lower()
+        if status == "start":
+            starts[sid] = payload.get("timestamp_ms")
+        elif status == "end":
+            ends[sid] = payload.get("timestamp_ms")
+    unclosed = sorted(set(starts) - set(ends))
+    end_wo_start = sorted(set(ends) - set(starts))
+    result["unclosed_sessions"] = unclosed
+    result["end_without_start"] = end_wo_start
+    result["session_count"] = len(set(starts) | set(ends))
+
+    # ── 申报连续性: 相邻 received_at_ms 间隔超过阈值 → 可疑静默区间 ──
+    if result["silence_threshold_s"] > 0:
+        ts_list = []
+        for rec in records:
+            rts = rec.get("received_at_ms")
+            if isinstance(rts, (int, float)):
+                ts_list.append(float(rts))
+        ts_list.sort()
+        gaps = []
+        for prev, cur in zip(ts_list, ts_list[1:]):
+            duration_s = (cur - prev) / 1000.0
+            if duration_s > result["silence_threshold_s"]:
+                gaps.append({
+                    "from_ms": int(prev),
+                    "to_ms": int(cur),
+                    "duration_s": round(duration_s, 1),
+                    "from_iso": _ms_to_iso(prev),
+                    "to_iso": _ms_to_iso(cur),
+                })
+        result["silent_gaps"] = gaps
+
+    # ── 覆盖置信度 ──
+    if result["session_count"] == 0:
+        result["confidence"] = "低"
+        result["confidence_reason"] = (
+            "无会话级申报（report_session），无法核对会话闭合")
+    elif unclosed or end_wo_start or result["silent_gaps"]:
+        result["confidence"] = "中"
+        reasons = []
+        if unclosed:
+            reasons.append(f"{len(unclosed)} 个会话未闭合（疑似漏报）")
+        if end_wo_start:
+            reasons.append(
+                f"{len(end_wo_start)} 个会话仅有 end 申报（疑似缺失 start）")
+        if result["silent_gaps"]:
+            reasons.append(f"{len(result['silent_gaps'])} 个可疑静默区间")
+        result["confidence_reason"] = "；".join(reasons)
+    else:
+        result["confidence"] = "高"
+        result["confidence_reason"] = "会话全部闭合且申报连续"
+    return result
+
+
+def _ms_to_iso(ms: float) -> str:
+    """epoch 毫秒 → ISO 字符串（容错）。"""
+    try:
+        return datetime.fromtimestamp(ms / 1000.0).isoformat(timespec="seconds")
+    except (OverflowError, OSError, ValueError):
+        return str(int(ms))
+
+
+def render_completeness_md(analysis: dict) -> str:
+    """将完整性核对结果渲染为 Markdown「申报完整性核对」小节（T1.4）。"""
+    lines = ["## 申报完整性核对", ""]
+    lines.append(f"- **覆盖置信度**: {analysis.get('confidence', '低')}")
+    if analysis.get("confidence_reason"):
+        lines.append(f"- **依据**: {analysis['confidence_reason']}")
+    if not analysis.get("checked"):
+        lines.append(f"- **核对结果**: {analysis.get('reason', '未核对')}")
+    else:
+        lines.append(f"- **申报记录数**: {analysis.get('record_count', 0)}")
+        lines.append(f"- **会话数**: {analysis.get('session_count', 0)}")
+        unclosed = analysis.get("unclosed_sessions") or []
+        ews = analysis.get("end_without_start") or []
+        if unclosed:
+            shown = "，".join(str(s) for s in unclosed[:5])
+            if len(unclosed) > 5:
+                shown += f" 等 {len(unclosed)} 个"
+            lines.append(f"- **未闭合会话**: {shown} — 会话未闭合，疑似漏报")
+        if ews:
+            shown = "，".join(str(s) for s in ews[:5])
+            if len(ews) > 5:
+                shown += f" 等 {len(ews)} 个"
+            lines.append(f"- **仅结束未开始会话**: {shown} — 疑似缺失 start 申报")
+        gaps = analysis.get("silent_gaps") or []
+        if gaps:
+            lines.append(f"- **可疑静默区间**: {len(gaps)} 个（相邻申报间隔"
+                         f"超过 {analysis.get('silence_threshold_s', 0)}s）")
+            for g in gaps[:5]:
+                lines.append(f"  - {g.get('from_iso', '-')} ~ "
+                             f"{g.get('to_iso', '-')}，"
+                             f"持续 {g.get('duration_s', 0):g}s")
+        else:
+            lines.append("- **可疑静默区间**: 无")
+    lines.append(f"- **说明**: {analysis.get('note', COMPLETENESS_NOTE)}")
+    lines.append("")
+    return "\n".join(lines)
+
+
+# ── P1-2 hook 覆盖比对（产出层）───────────────────────────────
+# 只渲染 collector.mcp_report_collector.analyze_hook_coverage 的
+# 比对结果（hook 事件数 vs 申报事件数），不改动任何检测/研判逻辑。
+
+
+def render_hook_coverage_md(analysis: Optional[dict]) -> str:
+    """将 hook 覆盖比对结果渲染为 Markdown「hook 覆盖比对」小节（P1-2）。"""
+    lines = ["## hook 覆盖比对（申报 vs hook 双通道）", ""]
+    if not analysis:
+        lines.append("- **状态**: 未执行")
+        lines.append("")
+        return "\n".join(lines)
+    if not analysis.get("checked"):
+        lines.append(f"- **状态**: 不可核对（{analysis.get('reason', '未核对')}）")
+        lines.append(f"- **说明**: {analysis.get('note', '')}")
+        lines.append("")
+        return "\n".join(lines)
+
+    lines.append(
+        f"- **覆盖置信度**: {analysis.get('coverage_confidence', '低')}")
+    if analysis.get("confidence_reason"):
+        lines.append(f"- **依据**: {analysis['confidence_reason']}")
+    lines.append(f"- **申报工具调用数**: {analysis.get('reported_tool_calls', 0)}；"
+                 f"hook 执行前裁决: {analysis.get('hook_pre_events', 0)}；"
+                 f"执行后审计: {analysis.get('hook_post_events', 0)}")
+    if analysis.get("hook_deny_count"):
+        lines.append(f"- **deny 拦截数**: {analysis['hook_deny_count']}")
+    corrupt = analysis.get("corrupt_lines") or {}
+    if corrupt:
+        lines.append(f"- **留痕损坏行（容错跳过）**: {sum(corrupt.values())} 行")
+    tools = analysis.get("tools") or {}
+    if tools:
+        lines.append("- **工具级比对**:")
+        for tool, info in sorted(tools.items()):
+            pre_cov = info.get("pre_coverage")
+            cov_text = (f"{pre_cov:.0%}" if pre_cov is not None else "-")
+            lines.append(
+                f"  - {tool}: 申报 {info.get('reported', 0)} / hook执行前 "
+                f"{info.get('hook_pre', 0)} / 执行后 {info.get('hook_post', 0)} "
+                f"（覆盖 {cov_text}，状态 {info.get('status', '?')}"
+                + (f"，deny {info.get('deny', 0)}"
+                   if info.get('deny') else "") + "）")
+    unreported = analysis.get("unreported_denies") or []
+    if unreported:
+        lines.append(f"- **deny 拦截但申报未报（疑似漏报）**: {len(unreported)} 个工具")
+        for u in unreported[:5]:
+            lines.append(f"  - {u.get('tool_name', '?')}: "
+                         f"deny {u.get('deny_count', 0)} 次")
+    if analysis.get("bash_blindspot_note"):
+        lines.append(f"- **Bash 盲区报告**: {analysis['bash_blindspot_note']}")
+    lines.append(f"- **说明**: {analysis.get('note', '')}")
+    lines.append("")
+    return "\n".join(lines)
+
+
+# ── T3.1 进程快照交叉校验（产出层）────────────────────────────
+# 只渲染 lightweight_crosscheck 的比对结果（疑似二级操作告警），
+# 不改动任何检测/研判逻辑；比对窗口声明随文输出。
+
+CROSSCHECK_NOTE = (
+    "比对窗口仅为会话 start/end 边界快照差异，"
+    "窗口内启动又退出的进程不可见；"
+    "白名单外新增进程判定为「疑似二级操作」，仅告警不拦截")
+
+
+def render_crosscheck_md(summary: Optional[dict]) -> str:
+    """将进程快照交叉校验结果渲染为 Markdown「进程交叉校验」小节（T3.1）。"""
+    lines = ["## 进程交叉校验（会话快照比对）", ""]
+    if not summary or not summary.get("enabled"):
+        lines.append("- **状态**: 未启用")
+        lines.append("")
+        return "\n".join(lines)
+    if not summary.get("available"):
+        lines.append("- **状态**: 不可用（进程快照失败，未做比对）")
+        for u in (summary.get("unavailable") or [])[:3]:
+            lines.append(f"  - 会话 {u.get('session_id', '?')} "
+                         f"({u.get('phase')}): {u.get('reason')}")
+        lines.append(f"- **说明**: {summary.get('note', CROSSCHECK_NOTE)}")
+        lines.append("")
+        return "\n".join(lines)
+
+    lines.append(f"- **已比对会话数**: {summary.get('sessions_checked', 0)}")
+    findings = summary.get("findings") or []
+    if findings:
+        lines.append(f"- **疑似二级操作（申报外新增进程）**: {len(findings)} 个会话")
+        for f in findings[:5]:
+            suspects = f.get("suspects") or []
+            shown = ", ".join(
+                f"{s.get('name', '?')}(pid={s.get('pid', '?')})"
+                for s in suspects[:5])
+            if len(suspects) > 5:
+                shown += f" 等 {len(suspects)} 个"
+            lines.append(f"  - 会话 {f.get('session_id', '?')}: {shown}")
+            for s in suspects[:3]:
+                cmd = " ".join(s.get("cmdline") or [])[:80]
+                if cmd:
+                    lines.append(f"    - 命令行: {cmd}")
+    else:
+        lines.append("- **疑似二级操作**: 无（未发现申报外新增进程）")
+    unavailable = summary.get("unavailable") or []
+    if unavailable:
+        lines.append(f"- **快照不可用会话**: {len(unavailable)} 个（未参与比对）")
+    lines.append(f"- **说明**: {summary.get('note', CROSSCHECK_NOTE)}")
+    lines.append("")
+    return "\n".join(lines)
+
+
+# ── T3.2 文件快照交叉校验（产出层）────────────────────────────
+# 只渲染 FileCrossChecker 的比对结果（申报外受保护目录变更告警），
+# 不改动任何检测/研判逻辑；比对窗口声明随文输出。
+
+FILE_CROSSCHECK_NOTE = (
+    "比对窗口仅为会话 start/end 边界快照差异，"
+    "窗口内创建又删除的文件不可见；"
+    "受保护目录外变更不比对；"
+    "变更文件判定为「疑似二级操作」，仅告警不拦截")
+
+
+def render_file_crosscheck_md(summary: Optional[dict]) -> str:
+    """将文件快照交叉校验结果渲染为 Markdown「文件交叉校验」小节（T3.2）。"""
+    lines = ["## 文件交叉校验（受保护目录快照比对）", ""]
+    if not summary or not summary.get("enabled"):
+        lines.append("- **状态**: 未启用")
+        lines.append("")
+        return "\n".join(lines)
+    if not summary.get("available"):
+        lines.append("- **状态**: 不可用（文件快照失败，未做比对）")
+        for u in (summary.get("unavailable") or [])[:3]:
+            lines.append(f"  - 会话 {u.get('session_id', '?')} "
+                         f"({u.get('phase')}): {u.get('reason')}")
+        lines.append(f"- **说明**: {summary.get('note', FILE_CROSSCHECK_NOTE)}")
+        lines.append("")
+        return "\n".join(lines)
+
+    lines.append(f"- **已比对会话数**: {summary.get('sessions_checked', 0)}")
+    findings = summary.get("findings") or []
+    if findings:
+        lines.append(f"- **疑似二级操作（申报外文件变更）**: {len(findings)} 个会话")
+        for f in findings[:5]:
+            changes = f.get("changes") or {}
+            n_add = len(changes.get("added") or {})
+            n_mod = len(changes.get("modified") or {})
+            n_del = len(changes.get("removed") or {})
+            lines.append(f"  - 会话 {f.get('session_id', '?')}: "
+                         f"新增 {n_add} / 修改 {n_mod} / 删除 {n_del}")
+            for kind in ("added", "modified", "removed"):
+                items = changes.get(kind) or {}
+                for p in list(items)[:3]:
+                    lines.append(f"    - {kind}: {p}")
+    else:
+        lines.append("- **疑似二级操作**: 无（未发现申报外文件变更）")
+    unavailable = summary.get("unavailable") or []
+    if unavailable:
+        lines.append(f"- **快照不可用会话**: {len(unavailable)} 个（未参与比对）")
+    lines.append(f"- **说明**: {summary.get('note', FILE_CROSSCHECK_NOTE)}")
+    lines.append("")
+    return "\n".join(lines)
+
+
+# ── P1-3 用户态快照校验（产出层）───────────────────────────────
+# 只渲染 SnapshotChecker 的比对结果（定时快照未申报变更 + 4663 未申报
+# 访问告警），不改动任何检测/研判逻辑；比对窗口声明随文输出。
+
+SNAPSHOT_CHECKER_NOTE = (
+    "定时快照比对仅覆盖采样时刻差异；4663 审计仅在系统审计策略启用且"
+    "目标目录配置 SACL 时产生事件；差异访问判定为「疑似二级操作」，"
+    "仅告警不拦截")
+
+
+def render_snapshot_checker_md(summary: Optional[dict]) -> str:
+    """将用户态快照校验结果渲染为 Markdown「用户态快照校验」小节（P1-3）。"""
+    lines = ["## 用户态快照校验（定时快照 + 4663 审计）", ""]
+    if not summary or not summary.get("enabled"):
+        lines.append("- **状态**: 未启用")
+        lines.append("")
+        return "\n".join(lines)
+    lines.append(f"- **快照次数**: {summary.get('ticks', 0)}"
+                 f"（间隔 {summary.get('interval_s', '?')}s）")
+    if not summary.get("available"):
+        lines.append("- **状态**: 不可用（快照未成功，未做比对）")
+        for u in (summary.get("unavailable") or [])[:3]:
+            lines.append(f"  - {u.get('phase', '?')}: {u.get('reason')}")
+        lines.append(f"- **说明**: {summary.get('note', SNAPSHOT_CHECKER_NOTE)}")
+        lines.append("")
+        return "\n".join(lines)
+
+    findings = summary.get("findings") or []
+    if findings:
+        lines.append(f"- **疑似二级操作（申报外访问/变更）**: {len(findings)} 起")
+        for f in findings[:5]:
+            kind = f.get("kind")
+            if kind == "unreported_file_change":
+                changes = f.get("changes") or {}
+                n_add = len(changes.get("added") or {})
+                n_mod = len(changes.get("modified") or {})
+                n_del = len(changes.get("removed") or {})
+                lines.append(f"  - tick {f.get('tick', '?')} 未申报文件变更: "
+                             f"新增 {n_add} / 修改 {n_mod} / 删除 {n_del}")
+                for kind_name in ("added", "modified", "removed"):
+                    items = changes.get(kind_name) or {}
+                    for p in list(items)[:3]:
+                        lines.append(f"    - {kind_name}: {p}")
+            elif kind == "unreported_file_access":
+                accesses = f.get("accesses") or []
+                lines.append(f"  - 4663 未申报文件访问 {len(accesses)} 起:")
+                for a in accesses[:5]:
+                    lines.append(f"    - {a.get('object_name', '?')} "
+                                 f"(进程 {a.get('process_name', '?')}, "
+                                 f"mask {a.get('access_mask', '?')})")
+            else:
+                lines.append(f"  - {kind}: {json.dumps(f, ensure_ascii=False, default=str)[:200]}")
+    else:
+        lines.append("- **疑似二级操作**: 无（未发现申报外访问/变更）")
+    unavailable = summary.get("unavailable") or []
+    if unavailable:
+        lines.append(f"- **不可用记录**: {len(unavailable)} 条（未参与比对）")
+        for u in unavailable[:3]:
+            lines.append(f"  - {u.get('phase', '?')}: {u.get('reason')}")
+            if u.get("guidance"):
+                lines.append(f"    指引: {u['guidance']}")
+    lines.append(f"- **说明**: {summary.get('note', SNAPSHOT_CHECKER_NOTE)}")
+    lines.append("")
+    return "\n".join(lines)
+
+
+# ── P2-2 双源一致性核对（产出层）────────────────────────────
+# 只渲染 ConsistencyChecker 的三类不一致比对结果（仅告警不拦截），
+# 不改动任何检测/研判逻辑；比对窗口声明随文输出。
+
+CONSISTENCY_CHECKER_NOTE = (
+    "核对基于四源留痕（申报 / hook 执行前裁决 / hook 执行后审计 / "
+    "快照校验），仅反映留痕侧观测一致性；定时快照仅覆盖采样时刻差异；"
+    "各维度源缺失时独立标记不可核对，不虚构比对")
+
+
+def render_consistency_md(summary: Optional[dict]) -> str:
+    """将双源一致性核对结果渲染为 Markdown「一致性核对」小节（P2-2）。"""
+    lines = ["## 一致性核对（申报 / hook / 快照 四源交叉）", ""]
+    if not summary or not summary.get("enabled"):
+        lines.append("- **状态**: 未启用")
+        lines.append("")
+        return "\n".join(lines)
+    if not summary.get("checked"):
+        lines.append("- **状态**: 未执行")
+        lines.append("")
+        return "\n".join(lines)
+
+    issues = summary.get("issues") or []
+    if issues:
+        lines.append(f"- **不一致告警**: {len(issues)} 起")
+        for i in issues[:8]:
+            kind = i.get("kind")
+            if kind == "unreported_hook_deny":
+                lines.append(
+                    f"  - 申报未报但 hook 拦截: 会话 "
+                    f"{i.get('session_id', '?')} "
+                    f"{i.get('tool_name', '?')} → {i.get('target', '?')}")
+            elif kind == "hook_blindspot_change":
+                lines.append(
+                    f"  - hook 盲区（快照发现 hook 未观测）: "
+                    f"{i.get('path', '?')}（{i.get('finding_kind', '?')}）")
+            elif kind == "report_snapshot_conflict":
+                lines.append(
+                    f"  - 申报与快照矛盾（申报写入无落地证据）: 会话 "
+                    f"{i.get('session_id', '?')} {i.get('tool_name', '?')} "
+                    f"→ {i.get('path', '?')}")
+            else:
+                lines.append(
+                    f"  - {kind}: "
+                    f"{json.dumps(i, ensure_ascii=False, default=str)[:200]}")
+    else:
+        lines.append("- **不一致告警**: 无")
+    unavailable = summary.get("unavailable") or []
+    if unavailable:
+        lines.append(f"- **不可核对维度**: {len(unavailable)} 个")
+        for u in unavailable[:3]:
+            lines.append(f"  - {u.get('dimension', '?')}: {u.get('reason')}")
+            if u.get("guidance"):
+                lines.append(f"    指引: {u['guidance']}")
+    sources = summary.get("sources") or {}
+    if sources:
+        lines.append(
+            f"- **留痕源**: 申报 {sources.get('agent_reports', 0)} / "
+            f"hook 执行前 {sources.get('hook_pre_entries', 0)} / "
+            f"执行后 {sources.get('hook_post_entries', 0)} / "
+            f"快照 finding {sources.get('snapshot_findings', 0)} / "
+            f"变更全集路径 {sources.get('snapshot_change_paths', 0)}")
+    corrupt = summary.get("corrupt_lines") or {}
+    if corrupt:
+        lines.append(f"- **留痕损坏行（容错跳过）**: {sum(corrupt.values())} 行")
+    lines.append(f"- **说明**: {summary.get('note', CONSISTENCY_CHECKER_NOTE)}")
+    lines.append("")
+    return "\n".join(lines)
+
+
+# ── P2-3 双路径覆盖矩阵（产出层）────────────────────────────────
+# 只渲染 collector.mcp_report_collector.build_coverage_matrix 的
+# 「工具 × 通道」覆盖矩阵结果，不改动任何检测/研判逻辑。
+
+_COVERAGE_MATRIX_GLYPHS = {
+    "covered": "✅",
+    "uncovered": "❌",
+    "unavailable": "⚠️",
+}
+
+
+def render_coverage_matrix_md(matrix: Optional[dict]) -> str:
+    """将双路径覆盖矩阵渲染为 Markdown「双路径覆盖矩阵」小节（P2-3）。"""
+    lines = ["## 双路径覆盖矩阵（工具 × 通道）", ""]
+    if not matrix:
+        lines.append("- **状态**: 未执行")
+        lines.append("")
+        return "\n".join(lines)
+    if not matrix.get("checked"):
+        lines.append(f"- **状态**: 不可核对（{matrix.get('reason', '未核对')}）")
+        lines.append(f"- **说明**: {matrix.get('note', '')}")
+        lines.append("")
+        return "\n".join(lines)
+
+    tools = matrix.get("tools") or {}
+    lines.append("| 工具 | 申报 | hook执行前 | hook执行后 | 快照兜底 |")
+    lines.append("|---|---|---|---|---|")
+    for tool in sorted(tools):
+        # 防御：跳过空工具名（历史 gate_error 条目）避免渲染空行。
+        if not (tool or "").strip():
+            continue
+        row = tools[tool] or {}
+        cells = " | ".join(
+            _COVERAGE_MATRIX_GLYPHS.get(row.get(ch), "❌")
+            for ch in ("mcp_report", "hook_pre", "hook_post", "snapshot"))
+        lines.append(f"| {tool} | {cells} |")
+    counts = matrix.get("counts") or {}
+    if counts:
+        detail = "、".join(f"{k} {v}" for k, v in sorted(counts.items()))
+        lines.append("")
+        lines.append(f"- **工具覆盖状态汇总**: {detail}")
+    unavailable = matrix.get("unavailable_channels") or []
+    if unavailable:
+        lines.append(f"- **不可核对通道**: {', '.join(unavailable)}")
+    lines.append(f"- **说明**: {matrix.get('note', '')}")
+    lines.append("")
+    return "\n".join(lines)

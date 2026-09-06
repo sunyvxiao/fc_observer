@@ -20,7 +20,9 @@ __pycache__/
 .pytest_cache/
 .pytest_cache/**
 .pytest_basetemp/
+.pytest_basetemp*/
 observer_sim/.pytest_basetemp/
+observer_sim/.pytest_basetemp*/
 dist/
 build/
 .eggs/
@@ -37,6 +39,8 @@ desktop.ini
 
 # === 运行时输出 ===
 observer_sim/output/
+# 测试留痕归档（对照测试批次归档、历史审计留痕，本地保留不入库）
+observer_sim/output_backup/
 *.log
 demo_output.txt
 mode_test.txt
@@ -77,12 +81,28 @@ assets/screenshots/
 
 # === 临时脚本（tmp 前缀测试残留） ===
 observer_sim/tmp*.py
+# === 临时验证/分析脚本（下划线前缀，用毕即删，不入库） ===
+_verify_*.py
+_smoke_*.py
+_p1_*.py
+_check_*.py
+observer_sim/_verify_*.py
+observer_sim/_smoke_*.py
+observer_sim/_p1_*.py
+observer_sim/_check_*.py
+# === 剪贴板/OCR 验证残留 ===
+_clipcheck.txt
+clip_verify.txt
+ocr_result.txt
+ocr_run.ps1
 
 # === WorkBuddy 验证辅助：剪贴板临时转储（含运行时内容） ===
 WorkBuddy降级监测适配/tools/clipboard_dump.txt
 
-# === SSH 密钥（严禁提交） ===
+# === SSH 密钥与凭证（严禁提交） ===
 *.pem
+*.key
+*.pfx
 *_rsa
 *_ed25519
 fco

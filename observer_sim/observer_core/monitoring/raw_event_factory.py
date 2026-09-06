@@ -11,11 +11,16 @@ RawEventFactory — dict 结构 → RawEvent 的唯一转换点（计划 MCP T2 
 后续 mcp_report_collector（MCP 申报数据）亦经本工厂构造 RawEvent，
 保证申报数据与既有数据源走同一条转换路径。
 
+P2-1 起 hook 留痕条目（hook_decisions / hook_post_decisions jsonl）
+亦可经 from_hook_entry 归一为 RawEvent 视图（双源融合，P2-2 一致性
+核对器的 hook 侧证据转换点）。
+
 工具名分类表为单一事实来源（合并自 app.py 与 deep_agent_collector
 的历史集合，后者为超集；未知工具归 exec，与历史 fallback 语义一致）。
 """
 
 import re
+from datetime import datetime
 from typing import Optional, Tuple
 
 from models.event import RawEvent
@@ -62,6 +67,17 @@ def extract_host_port(url: str, default_host: str = "unknown.host",
             443 if url.startswith("https") else 80)
         return host, port
     return default_host, default_port
+
+
+def _iso_to_ns(ts) -> int:
+    """ISO 时间戳 → 纳秒 epoch（hook 留痕条目时间；无法解析返回 0）。"""
+    if not ts:
+        return 0
+    try:
+        dt = datetime.fromisoformat(str(ts).replace("Z", ""))
+        return int(dt.timestamp() * 1_000_000_000)
+    except (ValueError, TypeError):
+        return 0
 
 
 class RawEventFactory:
@@ -154,6 +170,59 @@ class RawEventFactory:
             remote_addr=remote_addr,
             remote_port=remote_port,
             protocol=protocol,
+        )
+
+    @staticmethod
+    def from_hook_entry(entry: dict, *, event_id: str,
+                        session_id: Optional[str] = None) -> RawEvent:
+        """hook 留痕条目（pre/post）→ RawEvent（P2-1 双源融合归一视图）。
+
+        hook 条目关键字段: tool_name / target（提取的路径或命令文本）
+        / timestamp（ISO）/ session_id。事件类型经 classify_tool 分类；
+        黑盒宿主无真实 pid（pid=0）。decision/gate_error/protected 等
+        hook 语义不在 RawEvent 15 字段内，由调用方（P2-2 一致性核对器）
+        从原条目读取。
+
+        session_id: 显式覆盖（缺省读条目 session_id）。
+        """
+        tool_name = str(entry.get("tool_name", "") or "").lower().strip()
+        event_type = classify_tool(tool_name)
+
+        executable = None
+        arguments = None
+        file_path = None
+        file_op = None
+
+        target = entry.get("target")
+        if event_type == "exec":
+            if target:
+                parts = str(target).split()
+                executable = parts[0] if parts else None
+                arguments = parts[1:] if len(parts) > 1 else None
+            else:
+                executable = tool_name or None
+        elif event_type == "file_open":
+            file_path = str(target)[:500] if target is not None else None
+            file_op = "read" if tool_name in READ_TOOLS else "write"
+        # net_conn: hook 条目无远端信息（remote_* 保持 None）
+
+        return RawEvent(
+            event_id=event_id,
+            timestamp_ns=_iso_to_ns(entry.get("timestamp", "")),
+            event_type=event_type,
+            pid=0,
+            ppid=0,
+            agent_id="workbuddy",
+            agent_framework="hook",
+            session_id=(session_id
+                        or str(entry.get("session_id", "") or "")) or None,
+            executable=executable,
+            arguments=arguments,
+            file_path=file_path,
+            file_op=file_op,
+            remote_addr=None,
+            remote_port=None,
+            protocol=None,
         )
 
     @staticmethod

@@ -57,7 +57,12 @@ from observer_core.blocking.blocking_coordinator import BlockingCoordinator
 from observer_core.blocking.command_sender import MockCommandSender
 from observer_core.audit.behavior_graph import BehaviorGraph
 from observer_core.audit.audit_logger import AuditLogger
-from observer_core.audit.report_exporter import ReportExporter
+from observer_core.audit.report_exporter import (
+    ReportExporter, analyze_report_completeness)
+from collector.lightweight_crosscheck import (
+    ProcessCrossChecker, parse_reported_commands,
+    FileCrossChecker, FileSnapshotter, parse_reported_paths)
+from collector.windows_audit_reader import AuditCrossChecker
 from observer_core.audit.output_sink import DefaultOutputSink
 from observer_core.pipeline_runner import PipelineRunner
 
@@ -835,6 +840,43 @@ def run_monitor_mcp_report(output_dir: str, config_path: str = "config.yaml",
     jsonl_dir = mcp_config.get("jsonl_dir")
     # P1: Hooks 确定性申报摄入配置（enabled=false/缺省时行为不变）
     hook_ingest = mcp_config.get("hook_ingest") or {}
+    # T1.3: 申报静默告警阈值（秒）；0 = 关闭静默检测。
+    # 经 connect_workbuddy.py _prepare_config 从 workbuddy_connect.yaml
+    # 的 daemon.silence_alert_s 写入临时 config 的 mcp_report 段。
+    silence_alert_s = int(mcp_config.get("silence_alert_s", 0) or 0)
+    # T3.1: 进程快照交叉校验（第 3 层，用户态 psutil 边界快照比对；
+    # enabled=false/缺省时行为不变）。
+    crosscheck_cfg = mcp_config.get("crosscheck_process") or {}
+    # T3.2: 文件快照交叉校验（受保护目录边界快照比对；
+    # enabled=false/缺省时行为不变；protected_dirs 为空时不启用）。
+    crosscheck_file_cfg = mcp_config.get("crosscheck_file") or {}
+    # T3.3: Windows 审计日志交叉校验（系统审计 4688/4104 独立观测源；
+    # enabled=false/缺省时行为不变；审计未启用时如实标记不可用 + 指引）。
+    crosscheck_audit_cfg = mcp_config.get("crosscheck_audit") or {}
+    # P1-3: 用户态快照交叉校验（定时驱动 + 4663 对象访问审计；
+    # enabled=false/缺省时行为不变；protected_dirs 为空时回退用
+    # crosscheck_file.protected_dirs 口径；审计未启用时如实标记不可用）。
+    snapshot_checker_cfg = mcp_config.get("snapshot_checker") or {}
+    # P2-2: 双源一致性核对（四源留痕交叉比对，仅告警不拦截；
+    # enabled=false/缺省时行为不变；各维度依赖源缺失时独立
+    # unavailable，不中断其余维度）。
+    consistency_cfg = mcp_config.get("consistency_checker") or {}
+
+    # ── hook 留痕路径解析（P1-2 覆盖比对 / P2-2 一致性核对共用）──
+    hook_cfg = config.get("hook") or {}
+    config_dir = os.path.dirname(os.path.abspath(config_path))
+
+    def _resolve_hook_path(p, default):
+        p = str(p or default)
+        return p if os.path.isabs(p) else os.path.join(config_dir, p)
+
+    # P1-3 / P2-2 共用受保护目录口径（snapshot_checker 未声明时回退
+    # crosscheck_file 口径，同一数据源避免配置分裂）。
+    snap_dirs = [str(d) for d in
+                 (snapshot_checker_cfg.get("protected_dirs") or []) if d]
+    if not snap_dirs:
+        snap_dirs = [str(d) for d in
+                     (crosscheck_file_cfg.get("protected_dirs") or []) if d]
 
     # ── mcp SDK 可用性（与 check_env 检测项同源）──
     from mcp_bridge.server import (McpReportBroker, mcp_sdk_available,
@@ -871,6 +913,189 @@ def run_monitor_mcp_report(output_dir: str, config_path: str = "config.yaml",
         return 1
     _mcp_collector = collector
 
+    # ── T3.1 进程 + T3.2 文件快照交叉校验（第 3 层；仅告警不拦截，
+    # 不改判定管线）。经 collector 会话回调在 report_session start/end
+    # 边界做进程/文件快照；停止监测时 finish() 比对并产出
+    # crosscheck_process.jsonl / crosscheck_file.jsonl 留痕与报告小节。
+    crosscheck = None
+    file_crosscheck = None
+    if crosscheck_cfg.get("enabled"):
+        crosscheck = ProcessCrossChecker(
+            output_dir=output_dir,
+            whitelist_extra=list(crosscheck_cfg.get("whitelist_extra") or []),
+            agent_process_names=list(
+                crosscheck_cfg.get("agent_process_names") or []),
+            agent_process_dirs=list(
+                crosscheck_cfg.get("agent_process_dirs") or []),
+        )
+    protected_dirs = [str(d) for d in
+                      (crosscheck_file_cfg.get("protected_dirs") or []) if d]
+    if crosscheck_file_cfg.get("enabled") and protected_dirs:
+        file_crosscheck = FileCrossChecker(
+            output_dir=output_dir,
+            snapshotter=FileSnapshotter(
+                protected_dirs,
+                max_files=int(crosscheck_file_cfg.get(
+                    "max_files") or 2000),
+                hash_max_size=int(crosscheck_file_cfg.get(
+                    "hash_max_size") or 10 * 1024 * 1024),
+            ),
+        )
+
+    # ── T3.3 Windows 审计日志交叉校验（第 3 层；仅告警不拦截，
+    # 不改判定管线）。经 collector 会话回调记录会话 UTC 窗口，
+    # 停止监测时 finish() 查询 4688/4104 并比对产出
+    # crosscheck_audit.jsonl 留痕与报告小节；审计未启用/无权限时
+    # 如实标记不可用并输出启用指引（不静默失败）。
+    audit_crosscheck = None
+    if crosscheck_audit_cfg.get("enabled"):
+        wanted = {str(c) for c in (crosscheck_audit_cfg.get("channels")
+                                   or [4688, 4104])}
+        from collector.windows_audit_reader import CHANNEL_DEFS
+        channels = {k: v for k, v in CHANNEL_DEFS.items() if k in wanted}
+        from collector.windows_audit_reader import WindowsAuditReader
+        audit_crosscheck = AuditCrossChecker(
+            output_dir=output_dir,
+            reader=WindowsAuditReader(
+                channels=channels,
+                timeout_s=float(crosscheck_audit_cfg.get("timeout_s")
+                                or 30.0)),
+            lookback_s=int(crosscheck_audit_cfg.get("lookback_s") or 60),
+            max_events=int(crosscheck_audit_cfg.get("max_events") or 500),
+            agent_process_names=list(
+                crosscheck_audit_cfg.get("agent_process_names") or []),
+            whitelist_extra=list(
+                crosscheck_audit_cfg.get("whitelist_extra") or []),
+        )
+
+    # ── P1-3 用户态快照交叉校验（定时驱动 + 4663 对象访问审计；
+    # 仅告警不拦截，不改判定管线）。定时线程逐 tick 快照比对；
+    # 停止监测时 finish() 末次比对 + 4663 查询并产出
+    # snapshot_checker.jsonl 留痕与报告小节；快照失败/审计未启用时
+    # 如实标记不可用并输出启用指引（不静默失败）。
+    snapshot_checker = None
+    if snapshot_checker_cfg.get("enabled") and snap_dirs:
+        from observer_core.monitoring.snapshot_checker import (
+            ObjectAccessAuditReader, SnapshotChecker)
+        snap_audit = None
+        if snapshot_checker_cfg.get("audit_4663", True):
+            snap_audit = ObjectAccessAuditReader(
+                timeout_s=float(
+                    snapshot_checker_cfg.get("timeout_s") or 30.0))
+        snapshot_checker = SnapshotChecker(
+            output_dir=output_dir,
+            snapshotter=FileSnapshotter(
+                snap_dirs,
+                max_files=int(snapshot_checker_cfg.get("max_files")
+                              or 2000),
+                hash_max_size=int(
+                    snapshot_checker_cfg.get("hash_max_size")
+                    or 10 * 1024 * 1024),
+            ),
+            protected_dirs=snap_dirs,
+            interval_s=int(snapshot_checker_cfg.get("interval_s") or 30),
+            audit_reader=snap_audit,
+            lookback_s=int(snapshot_checker_cfg.get("lookback_s") or 60),
+            max_events=int(snapshot_checker_cfg.get("max_events") or 500),
+            whitelist_extra=list(
+                snapshot_checker_cfg.get("whitelist_extra") or []),
+        )
+
+    # ── P2-2 双源一致性核对（四源留痕交叉比对：申报 / hook 执行前
+    # 裁决 / hook 执行后审计 / 快照校验；仅告警不拦截，不改判定
+    # 管线）。停止监测时 finish() 比对并产出 consistency_issues.jsonl
+    # 留痕与报告小节；各维度依赖源缺失时独立 unavailable（P2-4）。
+    consistency_checker = None
+    if consistency_cfg.get("enabled"):
+        from observer_core.monitoring.consistency_checker import (
+            ConsistencyChecker)
+        consistency_checker = ConsistencyChecker(
+            output_dir=output_dir,
+            reports_path=jsonl_path,
+            pre_decisions_path=_resolve_hook_path(
+                hook_cfg.get("decisions_file"),
+                "output/hook_decisions.jsonl"),
+            post_decisions_path=_resolve_hook_path(
+                hook_cfg.get("post_decisions_file"),
+                "output/hook_post_decisions.jsonl"),
+            snapshot_findings_path=os.path.join(
+                output_dir, "snapshot_checker.jsonl"),
+            snapshot_changes_path=os.path.join(
+                output_dir, "snapshot_changes.jsonl"),
+            protected_dirs=snap_dirs,
+        )
+
+    # 会话快照回调的执行器（P2 前置修复：进程/文件快照在采集线程内
+    # 同步执行会阻塞申报消费——psutil 全量枚举实测 1~3s，期间 shutdown
+    # 会丢弃队列剩余申报（e2e 竞态失败）。单 worker 保序（同会话 start
+    # 先于 end 完成），finish 前 shutdown(wait=True) 保证快照完成。
+    _snapshot_executor = None
+    if crosscheck is not None or file_crosscheck is not None \
+            or audit_crosscheck is not None:
+        from concurrent.futures import ThreadPoolExecutor
+        _snapshot_executor = ThreadPoolExecutor(
+            max_workers=1, thread_name_prefix="mcp-session-snapshot")
+
+        def _do_session_snapshot(session_id, status, payload):
+            if not session_id:
+                return
+            if status == "start":
+                if crosscheck is not None:
+                    crosscheck.on_session_start(session_id)
+                if file_crosscheck is not None:
+                    file_crosscheck.on_session_start(session_id)
+                if audit_crosscheck is not None:
+                    audit_crosscheck.on_session_start(session_id, payload)
+            elif status == "end":
+                if crosscheck is not None:
+                    crosscheck.on_session_end(session_id)
+                if file_crosscheck is not None:
+                    file_crosscheck.on_session_end(session_id)
+                if audit_crosscheck is not None:
+                    audit_crosscheck.on_session_end(session_id, payload)
+            # pause/resume 不做快照（窗口以 start/end 为界）
+
+        def _on_session(session_id, status, payload):
+            if not session_id:
+                return
+            # 快照异步执行，不阻塞申报消费线程（采集侧不被观测侧阻塞）。
+            try:
+                _snapshot_executor.submit(
+                    _do_session_snapshot, session_id, status, payload)
+            except RuntimeError:
+                # executor 已关闭（停止窗口内新会话申报）: 降级为同步执行
+                _do_session_snapshot(session_id, status, payload)
+
+        collector.set_session_listener(_on_session)
+
+    if crosscheck is not None:
+        print(f"[monitor] 进程交叉校验: 已启用 (T3.1 会话快照比对, "
+              f"agent 进程名 {list(crosscheck_cfg.get('agent_process_names') or []) or '默认'})",
+              file=sys.stderr)
+    else:
+        print("[monitor] 进程交叉校验: 未启用", file=sys.stderr)
+    if file_crosscheck is not None:
+        print(f"[monitor] 文件交叉校验: 已启用 (T3.2 受保护目录 {len(protected_dirs)} 个)",
+              file=sys.stderr)
+    else:
+        print("[monitor] 文件交叉校验: 未启用"
+              + ("（未声明 protected_dirs）" if crosscheck_file_cfg.get(
+                  "enabled") else ""), file=sys.stderr)
+    if audit_crosscheck is not None:
+        channels = "、".join(sorted(audit_crosscheck._reader.channels))
+        print(f"[monitor] 系统审计交叉校验: 已启用 (T3.3 通道 {channels})",
+              file=sys.stderr)
+    else:
+        print("[monitor] 系统审计交叉校验: 未启用", file=sys.stderr)
+    if snapshot_checker is not None:
+        print(f"[monitor] 用户态快照校验: 已启用 (P1-3 定时 "
+              f"{snapshot_checker._interval_s}s 快照比对"
+              f"{' + 4663 审计' if snapshot_checker._audit_reader else ''}"
+              f"，受保护目录 {len(snapshot_checker._dirs)} 个)",
+              file=sys.stderr)
+    else:
+        print("[monitor] 用户态快照校验: 未启用", file=sys.stderr)
+
     # ── MCP Server（HTTP+SSE，后台线程；daemon 线程随主进程退出）──
     # run_server 内部用同一 broker 创建 Server，保证与 collector 同队列。
     server_thread = threading.Thread(
@@ -893,6 +1118,60 @@ def run_monitor_mcp_report(output_dir: str, config_path: str = "config.yaml",
           file=sys.stderr)
     print(f"[monitor] 等待申报... (MCP tools / Hook 摄入; Ctrl+C 停止并生成报告)",
           file=sys.stderr)
+
+    # ── 静默检测（T1.3 连接器健康看门狗）──
+    # 距上次申报（broker.last_publish_monotonic，任何申报类型均计入）超过
+    # silence_alert_s 秒 → 日志提示「疑似连接器失连」。
+    # 仅提示、不判定、不自动干预；恢复申报后自动解除提示。
+    if silence_alert_s > 0:
+        # 检查周期取阈值一半（上限 60s，下限 1s），保证小阈值下也能
+        # 及时告警与解除提示（检查时刻 gap 可落到阈值以内）。
+        check_interval = max(1, min(60, silence_alert_s // 2))
+
+        def _silence_watch():
+            alerted = False
+            while not monitor._should_stop:
+                time.sleep(check_interval)
+                gap = time.monotonic() - broker.last_publish_monotonic
+                if gap > silence_alert_s and not alerted:
+                    print(f"[monitor] [警告] 疑似连接器失连或未加载提示词: "
+                          f"距上次申报已超过 {silence_alert_s}s。"
+                          f"请检查 WorkBuddy 连接器状态，或执行 "
+                          f"python connect_workbuddy.py preflight",
+                          file=sys.stderr)
+                    alerted = True
+                elif gap <= silence_alert_s and alerted:
+                    print("[monitor] [提示] 申报已恢复，静默告警解除",
+                          file=sys.stderr)
+                    alerted = False
+
+        threading.Thread(target=_silence_watch, daemon=True,
+                         name="mcp-silence-watch").start()
+        print(f"[monitor] 静默检测: 已启用 (阈值 {silence_alert_s}s, "
+              f"检查周期 {check_interval}s)", file=sys.stderr)
+    else:
+        print("[monitor] 静默检测: 已关闭 (silence_alert_s=0)", file=sys.stderr)
+
+    # ── P1-3 用户态快照校验定时线程（每 interval_s 秒一次 tick 快照
+    # 比对；申报路径每次从 jsonl 全量解析扁平化——留痕量级小，
+    # 全量解析开销可忽略；首次 tick 仅记 baseline）。──
+    if snapshot_checker is not None:
+        _snap_interval = max(1, int(snapshot_checker._interval_s))
+
+        def _snapshot_tick_watch():
+            while not monitor._should_stop:
+                time.sleep(_snap_interval)
+                if monitor._should_stop:
+                    break
+                reported_flat = []
+                for paths in (parse_reported_paths(jsonl_path) or {}).values():
+                    reported_flat.extend(paths)
+                snapshot_checker.tick(reported_paths=reported_flat)
+
+        threading.Thread(target=_snapshot_tick_watch, daemon=True,
+                         name="mcp-snapshot-checker").start()
+        print(f"[monitor] 用户态快照定时线程: 每 {_snap_interval}s "
+              f"一次快照比对", file=sys.stderr)
 
     # ── stdin 优雅停止通道（跨平台确定性停止，供进程管理器/测试驱动）:
     # 读入一行 stop/shutdown/quit 即触发与 SIGINT 相同的优雅停止。
@@ -925,10 +1204,16 @@ def run_monitor_mcp_report(output_dir: str, config_path: str = "config.yaml",
         collector.detach()
         _mcp_collector = None
 
+    # 等待会话快照任务完成（保证 crosscheck 各 finish 比对前快照齐备；
+    # 采集循环已退出，不会再有新任务提交）。
+    if _snapshot_executor is not None:
+        _snapshot_executor.shutdown(wait=True)
+
     # 阶段 3：优雅停止 flush 半满桶 → 汇总剩余 L2 为 L3 → 导出天级报告
     monitor._shutdown_rollup()
 
     # ── 生成最终报告 ──
+    summary = None
     if total_events > 0:
         print(f"[monitor] {'='*50}", file=sys.stderr)
         print(f"[monitor] 正在生成风险分析报告...", file=sys.stderr)
@@ -950,6 +1235,228 @@ def run_monitor_mcp_report(output_dir: str, config_path: str = "config.yaml",
         print(f"[monitor]   📋 审计日志: {summary['audit_file']}", file=sys.stderr)
     else:
         print(f"[monitor] 无申报事件，跳过报告生成", file=sys.stderr)
+
+    # ── T1.4 申报完整性核对与覆盖置信度（产出层：只读申报留痕做会话
+    # 配对与静默区间检测，不触碰检测/研判逻辑）──
+    # 无论是否实际核对（jsonl 未落盘 → checked=False），只要生成了报告
+    # 就如实标注核对结果（含「申报留痕未落盘，完整性核对跳过」）。
+    completeness = analyze_report_completeness(jsonl_path, silence_alert_s)
+    if summary and summary.get("report_path"):
+        _ok = ReportExporter(output_dir=output_dir).append_completeness_section(
+            summary["report_path"], completeness)
+        if not _ok:
+            print(f"[monitor] WARNING: 完整性小节未写入报告: "
+                  f"{summary['report_path']}", file=sys.stderr)
+
+    # ── P1-2: hook 事件数 vs 申报事件数比对（产出层：只读三处留痕
+    # 计数比对输出 coverage_confidence，不触碰检测/研判逻辑）──
+    # （hook_cfg / _resolve_hook_path 已在启动阶段定义，与 P2-2 共用）
+    from collector.mcp_report_collector import (analyze_hook_coverage,
+                                                build_coverage_matrix)
+    hook_coverage = analyze_hook_coverage(
+        reports_path=jsonl_path,
+        pre_decisions_path=_resolve_hook_path(
+            hook_cfg.get("decisions_file"), "output/hook_decisions.jsonl"),
+        post_decisions_path=_resolve_hook_path(
+            hook_cfg.get("post_decisions_file"),
+            "output/hook_post_decisions.jsonl"))
+    if summary and summary.get("report_path"):
+        _ok_hc = ReportExporter(
+            output_dir=output_dir).append_hook_coverage_section(
+            summary["report_path"], hook_coverage)
+        if not _ok_hc:
+            print(f"[monitor] WARNING: hook 覆盖比对小节未写入报告: "
+                  f"{summary['report_path']}", file=sys.stderr)
+    _hc_extra = ("；" + hook_coverage["bash_blindspot_note"]
+                 if hook_coverage.get("bash_blindspot_note") else "")
+    print(f"[monitor] hook 覆盖比对: 置信度 "
+          f"{hook_coverage['coverage_confidence']}"
+          f"（申报 {hook_coverage['reported_tool_calls']} / "
+          f"hook执行前 {hook_coverage['hook_pre_events']} / "
+          f"执行后 {hook_coverage['hook_post_events']}{_hc_extra}）",
+          file=sys.stderr)
+
+    # ── T3.1 进程快照交叉校验收尾（产出层：比对 + 留痕 + 报告小节）──
+    # 未闭合会话由 finish() 补 end 快照；比对结果只读呈现，不触碰
+    # 检测/研判逻辑；申报留痕缺失时以会话回调登记的申报命令为准。
+    crosscheck_summary = None
+    if crosscheck is not None:
+        crosscheck_summary = crosscheck.finish(
+            reported_by_session=parse_reported_commands(jsonl_path))
+        if summary and summary.get("report_path"):
+            _ok_cc = ReportExporter(
+                output_dir=output_dir).append_crosscheck_section(
+                summary["report_path"], crosscheck_summary)
+            if not _ok_cc:
+                print(f"[monitor] WARNING: 交叉校验小节未写入报告: "
+                      f"{summary['report_path']}", file=sys.stderr)
+
+    # ── T3.2 文件快照交叉校验收尾（产出层：比对 + 留痕 + 报告小节）──
+    # 未闭合会话由 finish() 补 end 快照；比对结果只读呈现，不触碰
+    # 检测/研判逻辑；申报留痕缺失时以会话回调登记的申报路径为准。
+    file_crosscheck_summary = None
+    if file_crosscheck is not None:
+        file_crosscheck_summary = file_crosscheck.finish(
+            reported_paths_by_session=parse_reported_paths(jsonl_path))
+        if summary and summary.get("report_path"):
+            _ok_fc = ReportExporter(
+                output_dir=output_dir).append_file_crosscheck_section(
+                summary["report_path"], file_crosscheck_summary)
+            if not _ok_fc:
+                print(f"[monitor] WARNING: 文件交叉校验小节未写入报告: "
+                      f"{summary['report_path']}", file=sys.stderr)
+
+    # ── T3.3 Windows 审计日志交叉校验收尾（产出层：查询 + 比对 +
+    # 留痕 + 报告小节）。审计未启用/无权限时如实标记不可用并输出
+    # 启用指引；申报留痕缺失时以会话回调登记的申报命令/路径为准。
+    audit_crosscheck_summary = None
+    if audit_crosscheck is not None:
+        audit_crosscheck_summary = audit_crosscheck.finish(
+            reported_commands_by_session=parse_reported_commands(jsonl_path),
+            reported_paths_by_session=parse_reported_paths(jsonl_path))
+        if summary and summary.get("report_path"):
+            _ok_ac = ReportExporter(
+                output_dir=output_dir).append_audit_crosscheck_section(
+                summary["report_path"], audit_crosscheck_summary)
+            if not _ok_ac:
+                print(f"[monitor] WARNING: 系统审计交叉校验小节未写入报告: "
+                      f"{summary['report_path']}", file=sys.stderr)
+
+    # ── P1-3 用户态快照校验收尾（产出层：末次比对 + 4663 查询 +
+    # 留痕 + 报告小节）。快照失败/审计未启用时如实标记不可用并输出
+    # 启用指引；申报路径从留痕全量解析扁平化传入。
+    snapshot_checker_summary = None
+    if snapshot_checker is not None:
+        reported_flat = []
+        for paths in (parse_reported_paths(jsonl_path) or {}).values():
+            reported_flat.extend(paths)
+        snapshot_checker_summary = snapshot_checker.finish(
+            reported_paths=reported_flat)
+        if summary and summary.get("report_path"):
+            _ok_snap = ReportExporter(
+                output_dir=output_dir).append_snapshot_checker_section(
+                summary["report_path"], snapshot_checker_summary)
+            if not _ok_snap:
+                print(f"[monitor] WARNING: 用户态快照校验小节未写入报告: "
+                      f"{summary['report_path']}", file=sys.stderr)
+
+    # ── P2-3 双路径覆盖矩阵（产出层：工具 × 通道覆盖状态可视化；
+    # 复用 hook 覆盖比对工具计数 + 快照校验可用性，仅呈现不判定）。
+    # 无条件构建：留痕缺失/快照不可用时如实标注不可核对，不静默。──
+    coverage_matrix = build_coverage_matrix(
+        hook_coverage=hook_coverage,
+        snapshot_summary=snapshot_checker_summary)
+    if summary and summary.get("report_path"):
+        _ok_cm = ReportExporter(
+            output_dir=output_dir).append_coverage_matrix_section(
+            summary["report_path"], coverage_matrix)
+        if not _ok_cm:
+            print(f"[monitor] WARNING: 双路径覆盖矩阵小节未写入报告: "
+                  f"{summary['report_path']}", file=sys.stderr)
+
+    # ── P2-2 双源一致性核对收尾（产出层：四源解析 + 三类比对 +
+    # 留痕 + 报告小节）。各维度依赖源缺失时独立 unavailable，
+    # 不中断其余维度；比对结果只读呈现，不触碰检测/研判逻辑。
+    # 必须在 snapshot_checker.finish() 之后执行（快照变更全集留痕
+    # 由末次 tick 落盘，维度③依赖该留痕）。
+    consistency_summary = None
+    if consistency_checker is not None:
+        consistency_summary = consistency_checker.finish()
+        if summary and summary.get("report_path"):
+            _ok_csy = ReportExporter(
+                output_dir=output_dir).append_consistency_section(
+                summary["report_path"], consistency_summary)
+            if not _ok_csy:
+                print(f"[monitor] WARNING: 一致性核对小节未写入报告: "
+                      f"{summary['report_path']}", file=sys.stderr)
+
+    if summary:
+        # monitoring_summary.json 同步输出置信度与交叉校验结果
+        summary["completeness"] = completeness
+        if crosscheck_summary is not None:
+            summary["crosscheck"] = crosscheck_summary
+        if file_crosscheck_summary is not None:
+            summary["file_crosscheck"] = file_crosscheck_summary
+        if audit_crosscheck_summary is not None:
+            summary["audit_crosscheck"] = audit_crosscheck_summary
+        if snapshot_checker_summary is not None:
+            summary["snapshot_checker"] = snapshot_checker_summary
+        if consistency_summary is not None:
+            summary["consistency_checker"] = consistency_summary
+        if coverage_matrix is not None:
+            summary["coverage_matrix"] = coverage_matrix
+        _summary_path = os.path.join(output_dir, "monitoring_summary.json")
+        try:
+            with open(_summary_path, "w", encoding="utf-8") as f:
+                json.dump(summary, f, ensure_ascii=False, indent=2, default=str)
+        except OSError as e:
+            print(f"[monitor] WARNING: 汇总文件更新失败: {e}", file=sys.stderr)
+    if completeness.get("checked"):
+        print(f"[monitor] 申报完整性: "
+              f"置信度={completeness['confidence']} "
+              f"（{completeness['confidence_reason']}）| "
+              f"{completeness['note']}", file=sys.stderr)
+    else:
+        print(f"[monitor] 申报完整性: 未核对（{completeness['reason']}）",
+              file=sys.stderr)
+
+    # ── T3.1 交叉校验结果打印（如实声明可用性）──
+    if crosscheck_summary is not None:
+        if crosscheck_summary.get("available"):
+            n_findings = len(crosscheck_summary.get("findings") or [])
+            print(f"[monitor] 进程交叉校验: 已比对会话 "
+                  f"{crosscheck_summary['sessions_checked']} 个 | "
+                  f"疑似二级操作 {n_findings} 起"
+                  + (" ⚠️" if n_findings else " ✅"), file=sys.stderr)
+        else:
+            print(f"[monitor] 进程交叉校验: 不可用（进程快照失败，未做比对）",
+                  file=sys.stderr)
+
+    # ── T3.2 文件交叉校验结果打印（如实声明可用性）──
+    if file_crosscheck_summary is not None:
+        if file_crosscheck_summary.get("available"):
+            n_ff = len(file_crosscheck_summary.get("findings") or [])
+            print(f"[monitor] 文件交叉校验: 已比对会话 "
+                  f"{file_crosscheck_summary['sessions_checked']} 个 | "
+                  f"疑似二级操作 {n_ff} 起"
+                  + (" ⚠️" if n_ff else " ✅"), file=sys.stderr)
+        else:
+            print(f"[monitor] 文件交叉校验: 不可用（文件快照失败，未做比对）",
+                  file=sys.stderr)
+
+    # ── T3.3 系统审计交叉校验结果打印（如实声明可用性与指引）──
+    if audit_crosscheck_summary is not None:
+        if audit_crosscheck_summary.get("available"):
+            n_af = len(audit_crosscheck_summary.get("findings") or [])
+            print(f"[monitor] 系统审计交叉校验: 已比对会话 "
+                  f"{audit_crosscheck_summary['sessions_checked']} 个 | "
+                  f"疑似二级操作 {n_af} 起"
+                  + (" ⚠️" if n_af else " ✅"), file=sys.stderr)
+        else:
+            print(f"[monitor] 系统审计交叉校验: 不可用（审计通道不可读）",
+                  file=sys.stderr)
+            for g in (audit_crosscheck_summary.get("guidance") or [])[:3]:
+                print(f"[monitor]   - 启用指引: {g}", file=sys.stderr)
+
+    # ── P2-2 双源一致性核对结果打印（如实声明各维度可用性）──
+    if consistency_summary is not None:
+        counts = consistency_summary.get("issue_counts") or {}
+        n_issues = sum(counts.values())
+        n_unavail = len(consistency_summary.get("unavailable") or [])
+        detail = "、".join(f"{k}={v}" for k, v in sorted(counts.items()))
+        print(f"[monitor] 双源一致性核对: 不一致 {n_issues} 起 "
+              f"（{detail or '无'}）| 不可核对维度 {n_unavail} 个"
+              + (" ⚠️" if n_issues else " ✅"), file=sys.stderr)
+
+    # ── P2-3 双路径覆盖矩阵结果打印（如实声明通道可用性）──
+    if coverage_matrix is not None and coverage_matrix.get("checked"):
+        counts = coverage_matrix.get("counts") or {}
+        detail = "、".join(f"{k}={v}" for k, v in sorted(counts.items()))
+        n_cm_unavail = len(coverage_matrix.get("unavailable_channels") or [])
+        print(f"[monitor] 双路径覆盖矩阵: 工具 "
+              f"{len(coverage_matrix.get('tools') or {})} 个"
+              f"（{detail or '无'}）| 不可核对通道 {n_cm_unavail} 个",
+              file=sys.stderr)
 
     return 0
 

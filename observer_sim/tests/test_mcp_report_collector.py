@@ -221,6 +221,59 @@ class TestMcpReportCollectorConversion(unittest.TestCase):
         self.assertEqual(collector.session_count, 1)
         self.assertEqual(collector.tool_call_count, 0)
 
+    def test_session_listener_called(self):
+        """T3.1: report_session 消费时同步回调 (session_id, status, payload)"""
+        broker = _broker_with_records([
+            {"type": "report_session", "event_id": "s1",
+             "payload": {"agent_id": "wb", "session_id": "sess-x",
+                         "status": "start", "timestamp_ms": 1}},
+            {"type": "report_session", "event_id": "s2",
+             "payload": {"agent_id": "wb", "session_id": "sess-x",
+                         "status": "end", "timestamp_ms": 2}},
+        ])
+        collector = self._make_collector(broker)
+        calls = []
+        collector.set_session_listener(
+            lambda sid, status, payload: calls.append((sid, status)))
+        _collect(collector, expected=1, timeout=1.0)
+
+        self.assertEqual(calls, [("sess-x", "start"), ("sess-x", "end")])
+
+    def test_session_listener_exception_isolated(self):
+        """T3.1: 回调抛异常不破坏采集循环（异常隔离）"""
+        broker = _broker_with_records([
+            {"type": "report_session", "event_id": "s1",
+             "payload": {"agent_id": "wb", "session_id": "sess-y",
+                         "status": "start", "timestamp_ms": 1}},
+            {"type": "report_session", "event_id": "s2",
+             "payload": {"agent_id": "wb", "session_id": "sess-y",
+                         "status": "end", "timestamp_ms": 2}},
+        ])
+        collector = self._make_collector(broker)
+        calls = []
+
+        def _boom(sid, status, payload):
+            calls.append((sid, status))
+            raise RuntimeError("listener boom")
+
+        collector.set_session_listener(_boom)
+        _collect(collector, expected=1, timeout=1.0)
+
+        # 两条记录都被消费（异常不影响后续回调与计数）
+        self.assertEqual(calls, [("sess-y", "start"), ("sess-y", "end")])
+        self.assertEqual(collector.session_count, 2)
+
+    def test_no_listener_set_noop(self):
+        """T3.1: 未注册 listener 时 report_session 行为与历史一致"""
+        broker = _broker_with_records([
+            {"type": "report_session", "event_id": "s1",
+             "payload": {"agent_id": "wb", "session_id": "sess-z",
+                         "status": "start", "timestamp_ms": 1}},
+        ])
+        collector = self._make_collector(broker)
+        _collect(collector, expected=1, timeout=1.0)
+        self.assertEqual(collector.session_count, 1)
+
 
 class TestMcpReportCollectorRobustness(unittest.TestCase):
     """恶意/畸形申报不破坏管线"""

@@ -27,7 +27,8 @@ from models.risk import (
 )
 from observer_core.audit.behavior_graph import BehaviorGraph, BehaviorNode, BehaviorEdge
 from observer_core.audit.audit_logger import AuditLogger, AuditEntry
-from observer_core.audit.report_exporter import ReportExporter
+from observer_core.audit.report_exporter import (
+    ReportExporter, render_file_crosscheck_md)
 
 
 def _make_raw_event(event_id: str, agent_id: str, event_type: str,
@@ -419,6 +420,82 @@ class TestReportExporter(unittest.TestCase):
         self.assertIn("scenario-01", content)
         self.assertIn("scenario-02", content)
         self.assertIn("scenario-03", content)
+
+
+class TestFileCrosscheckReportSection(unittest.TestCase):
+    """T3.2 文件交叉校验报告小节渲染/追加（产出层）。"""
+
+    def test_render_disabled(self):
+        """summary 缺失（未启用）→ 如实渲染「未启用」。"""
+        md = render_file_crosscheck_md(None)
+        self.assertIn("未启用", md)
+        self.assertNotIn("已比对会话数", md)
+
+    def test_render_unavailable(self):
+        """快照失败（available=False）→ 「不可用」+ 失败原因。"""
+        summary = {"enabled": True, "available": False,
+                   "sessions_checked": 0, "findings": [], "note": "n",
+                   "unavailable": [{"session_id": "s1", "phase": "start",
+                                    "reason": "文件快照不可用"}]}
+        md = render_file_crosscheck_md(summary)
+        self.assertIn("不可用", md)
+        self.assertIn("s1", md)
+        self.assertIn("文件快照不可用", md)
+
+    def test_render_findings(self):
+        """有 findings → 渲染「疑似二级操作（申报外文件变更）」+ 明细。"""
+        summary = {"enabled": True, "available": True,
+                   "sessions_checked": 1, "note": "n",
+                   "findings": [{"session_id": "s1",
+                                 "changes": {"added": {"@0/secret.txt": {}},
+                                             "modified": {"@0/a.txt": {}},
+                                             "removed": {"@0/b.txt": {}}}}]}
+        md = render_file_crosscheck_md(summary)
+        self.assertIn("疑似二级操作（申报外文件变更）", md)
+        self.assertIn("s1", md)
+        self.assertIn("新增 1 / 修改 1 / 删除 1", md)
+        self.assertIn("@0/secret.txt", md)
+
+    def test_render_clean(self):
+        """无 findings → 「无（未发现申报外文件变更）」。"""
+        summary = {"enabled": True, "available": True,
+                   "sessions_checked": 1, "findings": [], "note": "n"}
+        md = render_file_crosscheck_md(summary)
+        self.assertIn("未发现申报外文件变更", md)
+
+    def test_append_section_and_idempotent(self):
+        """追加到页脚「---」前；重复追加幂等（不重复小节）。"""
+        d = tempfile.mkdtemp()
+        try:
+            p = os.path.join(d, "r.md")
+            with open(p, "w", encoding="utf-8") as f:
+                f.write("# 报告\n\n正文\n\n---\n")
+            exporter = ReportExporter(output_dir=d)
+            summary = {"enabled": True, "available": True,
+                       "sessions_checked": 1, "findings": [], "note": "n"}
+            self.assertTrue(
+                exporter.append_file_crosscheck_section(p, summary))
+            with open(p, encoding="utf-8") as f:
+                c = f.read()
+            self.assertIn("文件交叉校验（受保护目录快照比对）", c)
+            self.assertLess(c.index("文件交叉校验"), c.index("---"))
+            self.assertTrue(
+                exporter.append_file_crosscheck_section(p, None))
+            self.assertEqual(
+                c.count("文件交叉校验（受保护目录快照比对）"), 1)
+        finally:
+            shutil.rmtree(d)
+
+    def test_append_missing_report_returns_false(self):
+        """报告文件不存在 → 返回 False（如实失败，不抛异常）。"""
+        d = tempfile.mkdtemp()
+        try:
+            exporter = ReportExporter(output_dir=d)
+            self.assertFalse(
+                exporter.append_file_crosscheck_section(
+                    os.path.join(d, "nope.md"), None))
+        finally:
+            shutil.rmtree(d)
 
 
 class TestPhase5Integration(unittest.TestCase):

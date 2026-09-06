@@ -493,6 +493,8 @@ class ObserverHTTPHandler(BaseHTTPRequestHandler):
         elif path == "/api/mcp-report/task":
             name = params.get("name", [None])[0] or ""
             self._send_json(self._get_mcp_report_task(name))
+        elif path == "/api/mcp-report/summary":
+            self._send_json(self._get_mcp_report_summary())
         # ── Qoder CN 监测（独立通道，不复用 WorkBuddy /api/mcp-report/*）──
         elif path == "/api/qoder-monitor/status":
             self._send_json(self._get_qoder_monitor_status())
@@ -2260,6 +2262,15 @@ class ObserverHTTPHandler(BaseHTTPRequestHandler):
         gw = self._mcp_gateway()
         return gw.task_state(name if name in ("start", "stop", "smoke")
                              else "start")
+
+    def _get_mcp_report_summary(self):
+        """GET /api/mcp-report/summary — 监测汇总 JSON（含 P2-3
+        coverage_matrix 覆盖矩阵、consistency_checker 一致性核对等）。"""
+        gw = self._mcp_gateway()
+        try:
+            return gw.get_summary()
+        except Exception as e:  # noqa: BLE001
+            return {"available": False, "error": str(e)}
 
     def _handle_mcp_report_start(self, body=None):
         """POST /api/mcp-report/start — 后台线程启动 MCP 申报 daemon。

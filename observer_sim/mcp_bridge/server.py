@@ -17,6 +17,7 @@ import json
 import logging
 import os
 import queue
+import re
 import threading
 import time
 import uuid
@@ -66,9 +67,18 @@ class McpReportBroker:
     - publish(): MCP tool handler 侧入队（uvicorn 事件循环线程）
     - consume(): 采集器侧出队（任意线程），队列满时丢弃最旧并计数
     - 可选 JSONL 落盘: 每行一条申报记录（合规留痕，与队列内容一致）
+    - P1-4 方案 A: note_host_session() 登记宿主会话 UUID（hook 通知通道
+      上报），resolve_session_id() 供申报工具对齐 Agent 自造 session_id
     """
 
     MAX_QUEUE_SIZE = 10000
+
+    # 宿主会话 UUID 有效期（毫秒）。会话级关联键，超期视为会话已结束。
+    HOST_SESSION_TTL_MS = 8 * 3600 * 1000
+
+    _UUID_RE = re.compile(
+        r"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}"
+        r"-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$")
 
     def __init__(self, jsonl_path: Optional[str] = None,
                  max_queue_size: int = MAX_QUEUE_SIZE):
@@ -78,6 +88,12 @@ class McpReportBroker:
         self._received = 0
         self._lock = threading.Lock()
         self._jsonl_path = jsonl_path
+        # P1-4 方案 A: agent_id → {"session_id": 宿主 UUID, "updated_ms": ...}
+        self._host_sessions: Dict[str, Dict[str, Any]] = {}
+        # T1.3: 最近一次申报到达时间（monotonic），供 daemon 静默检测线程
+        # 读取。publish() 时刷新（任何申报类型均计入，含不产事件的
+        # report_action / report_session）。
+        self.last_publish_monotonic = time.monotonic()
         if jsonl_path:
             os.makedirs(os.path.dirname(os.path.abspath(jsonl_path)),
                         exist_ok=True)
@@ -90,6 +106,8 @@ class McpReportBroker:
         """
         event_id = report.get("event_id") or f"mcp_{uuid.uuid4().hex[:12]}"
         received_at_ms = report.get("received_at_ms") or int(time.time() * 1000)
+        # T1.3: 刷新「最近申报时间」（静默检测据此判断连接器是否失连）
+        self.last_publish_monotonic = time.monotonic()
         record = dict(report)
         record["event_id"] = event_id
         record["received_at_ms"] = received_at_ms
@@ -147,6 +165,53 @@ class McpReportBroker:
     @property
     def jsonl_path(self) -> Optional[str]:
         return self._jsonl_path
+
+    # ── P1-4 方案 A: 宿主会话 UUID 登记与解析 ────────────────────────────
+
+    def note_host_session(self, agent_id: str, session_id: Optional[str],
+                          now_ms: Optional[int] = None) -> bool:
+        """登记宿主 hook 上报的会话 UUID（仅标准 UUID 格式登记，TTL 过期前有效）。
+
+        数据源: 宿主 PreToolUse hook 的通知（session_id 为宿主注入的会话
+        UUID，第 2 轨关联键）。返回 True 表示登记成功。
+        """
+        sid = str(session_id or "").strip()
+        if not sid or not self._UUID_RE.match(sid):
+            return False
+        with self._lock:
+            self._host_sessions[str(agent_id or "")] = {
+                "session_id": sid,
+                "updated_ms": now_ms if now_ms is not None
+                else int(time.time() * 1000),
+            }
+        return True
+
+    def resolve_session_id(self, agent_id: str, candidate: Optional[str],
+                           now_ms: Optional[int] = None):
+        """方案 A: 申报侧 session_id 对齐宿主 UUID。
+
+        返回 (resolved, original)：
+        - candidate 已是本会话宿主 UUID：不改写，original=None
+        - 替换发生（非 UUID 自造值、Agent 自报的不同 UUID、或空值）：
+          resolved=宿主 UUID，original 记录原值（空值记 ""）
+        - 无宿主登记或已过期：原样返回，original=None
+        """
+        cand = str(candidate or "").strip()
+        now = now_ms if now_ms is not None else int(time.time() * 1000)
+        with self._lock:
+            hs = self._host_sessions.get(str(agent_id or ""))
+            if not hs or (now - hs["updated_ms"]) > self.HOST_SESSION_TTL_MS:
+                return cand, None
+            host_uuid = hs["session_id"]
+        if cand == host_uuid:
+            return cand, None
+        # Agent 自造值/不同 UUID/空值：统一以宿主 UUID 为准，原值留痕。
+        return host_uuid, cand
+
+    def host_session_state(self) -> Dict[str, Any]:
+        """导出宿主会话登记快照（测试/诊断用）。"""
+        with self._lock:
+            return {k: dict(v) for k, v in self._host_sessions.items()}
 
 
 # ── MCP Server 构建 ──────────────────────────────────────────────────────────
@@ -210,6 +275,11 @@ def create_server(
             "timestamp_ms": timestamp_ms, "action_type": action_type,
             "result": result,
         }
+        # P1-4 方案 A: session_id 对齐宿主 UUID（非 UUID 自造值替换，
+        # 原值留痕 original_session_id 供审计追溯）。
+        resolved, original = broker.resolve_session_id(agent_id, session_id)
+        if original is not None:
+            arguments["session_id"] = resolved
         reason = validator.check_size(arguments)
         if reason:
             return _reject(reason)
@@ -221,6 +291,8 @@ def create_server(
             return _reject(e.reason)
         received_at_ms = int(time.time() * 1000)
         payload = model.normalized(received_at_ms)
+        if original is not None:
+            payload["original_session_id"] = original
         record = _build_report_record(TOOL_REPORT_TOOL_CALL, payload)
         receipt = broker.publish(record)
         return {"status": "accepted", **receipt}
@@ -240,6 +312,10 @@ def create_server(
             "action": action, "detail": detail or {},
             "session_id": session_id, "timestamp_ms": timestamp_ms,
         }
+        # P1-4 方案 A: 与 report_tool_call 相同的 session 对齐口径。
+        resolved, original = broker.resolve_session_id(agent_id, session_id)
+        if original is not None:
+            arguments["session_id"] = resolved
         reason = validator.check_size(arguments)
         if reason:
             return _reject(reason)
@@ -251,6 +327,8 @@ def create_server(
             return _reject(e.reason)
         received_at_ms = int(time.time() * 1000)
         payload = model.normalized(received_at_ms)
+        if original is not None:
+            payload["original_session_id"] = original
         record = _build_report_record(TOOL_REPORT_ACTION, payload)
         receipt = broker.publish(record)
         return {"status": "accepted", **receipt}
@@ -269,6 +347,10 @@ def create_server(
             "session_type": session_type, "status": status,
             "timestamp_ms": timestamp_ms,
         }
+        # P1-4 方案 A: 与 report_tool_call 相同的 session 对齐口径。
+        resolved, original = broker.resolve_session_id(agent_id, session_id)
+        if original is not None:
+            arguments["session_id"] = resolved
         reason = validator.check_size(arguments)
         if reason:
             return _reject(reason)
@@ -280,6 +362,8 @@ def create_server(
             return _reject(e.reason)
         received_at_ms = int(time.time() * 1000)
         payload = model.normalized(received_at_ms)
+        if original is not None:
+            payload["original_session_id"] = original
         record = _build_report_record(TOOL_REPORT_SESSION, payload)
         receipt = broker.publish(record)
         return {"status": "accepted", **receipt}

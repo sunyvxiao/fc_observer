@@ -38,8 +38,97 @@ observer:
   config: "config.yaml"
   # 报告输出目录（相对 project_dir；停止服务后生成报告/审计/图谱）
   output_dir: "output/mcp_monitoring"
-  # 申报留痕 JSONL 目录（相对 project_dir；null = 仅内存队列不落盘）
-  jsonl_dir: null
+  # 申报留痕 JSONL 目录（相对 project_dir；null = 仅内存队列不落盘；
+  # 建议保持已配置，报告完整性核对与覆盖置信度依赖此留痕）
+  jsonl_dir: "output/mcp_monitoring/jsonl"
+  # 安全提示词文件路径（相对 project_dir 或绝对路径）；
+  # configure-workbuddy 时将其内容注入 mcp.json observer 条目的
+  # instructions 字段，使新会话自动生效（替代手动粘贴首条消息）；
+  # null = 不注入，保持手动粘贴方式。
+  # 注意: WorkBuddy 是否消费 instructions 字段需实测（见开发计划 T2.0）
+  instructions_file: "../WorkBuddy降级监测适配/安全提示词内容.md"
+  # T3.1 进程快照交叉校验（第 3 层，用户态 psutil 会话边界快照比对，
+  # 仅告警不拦截）；启动 daemon 时经脚本写入临时 config 的 mcp_report 段。
+  # agent_process_names: WorkBuddy 自身进程名（白名单，防误报）；
+  # whitelist_extra: 额外白名单进程名。
+  crosscheck_process:
+    enabled: true
+    agent_process_names: ["WorkBuddy.exe", "workbuddy.exe"]
+    whitelist_extra: []
+  # T3.2 文件快照交叉校验（第 3 层，受保护目录会话边界哈希快照比对，
+  # 仅告警不拦截）；protected_dirs 为空时不启用。
+  # protected_dirs: 受保护目录清单（绝对路径或相对 observer.project_dir）；
+  # 建议只声明变更频率低、含敏感数据的目录，控制快照耗时。
+  # max_files: 单次快照文件数上限（超出截断并如实标记）；
+  # hash_max_size: 单文件哈希上限（字节，超出仅记 size/mtime）。
+  crosscheck_file:
+    enabled: false
+    protected_dirs: []
+    max_files: 2000
+    hash_max_size: 10485760
+  # T3.3 Windows 审计日志交叉校验（第 3 层，系统审计 4688/4104 独立
+  # 观测源，经 PowerShell Get-WinEvent 用户态读取，零新依赖；
+  # 仅告警不拦截）；enabled=true 时 daemon 停止前按会话窗口查询比对，
+  # 输出「疑似二级操作」告警；审计未启用/无权限时如实标记不可用
+  # 并在报告与日志中输出启用指引（不静默失败）。
+  # channels: 审计通道（4688 = Security 进程创建，需管理员 +
+  #   「审核进程创建」策略；4104 = PowerShell 脚本块日志，需 gpedit 启用）；
+  # lookback_s: 比对窗口前扩秒数（覆盖会话 start 前的审计事件）；
+  # max_events: 单会话单通道最大事件数；
+  # timeout_s: 单通道查询超时（秒）；
+  # agent_process_names: WorkBuddy 自身进程名白名单（防误报）；
+  # whitelist_extra: 额外白名单进程名。
+  crosscheck_audit:
+    enabled: false
+    channels: [4688, 4104]
+    lookback_s: 60
+    max_events: 500
+    timeout_s: 30
+    agent_process_names: ["WorkBuddy.exe", "workbuddy.exe"]
+    whitelist_extra: []
+  # P1-3 用户态快照交叉校验（定时驱动 + 4663 对象访问审计；仅告警不
+  # 拦截）；启动 daemon 时经脚本写入临时 config 的 mcp_report 段。
+  # interval_s: 定时快照间隔（秒）；protected_dirs 为空时回退用
+  # crosscheck_file.protected_dirs（同一受保护目录口径）；
+  # audit_4663: 停止时按 lookback_s 窗口查询 Security 4663
+  # （需管理员开启对象访问审计 + 目录 SACL，未启用时如实标记不可用）。
+  snapshot_checker:
+    enabled: true
+    interval_s: 2
+    protected_dirs: ["output/hook_testdata"]
+    max_files: 2000
+    hash_max_size: 10485760
+    audit_4663: true
+    lookback_s: 60
+    max_events: 500
+    timeout_s: 30
+    whitelist_extra: []
+  # P2-2 双源一致性核对（申报 / hook 执行前裁决 / hook 执行后审计 /
+  # 快照校验 四源留痕交叉比对，三类不一致仅告警不拦截；
+  # 启动 daemon 时经脚本写入临时 config 的 mcp_report 段。
+  # 四源路径由 monitor_daemon 按 output_dir / hook 配置 / snapshot_checker
+  # 留痕固定名称推导，本段只传开关；受保护目录口径同 snapshot_checker
+  # （为空时回退 crosscheck_file.protected_dirs）。
+  consistency_checker:
+    enabled: true
+
+# ── P0 拦截路径 hook 部署（宿主 settings.json hooks PreToolUse）───
+# 由 connect_workbuddy.py hook-deploy/hook-remove/hook-status 子命令使用。
+# D-2 规则唯一基准: hook 判定脚本不内嵌业务规则，资源级红线唯一数据源
+# 为 observer/config.yaml 的 hook.protected_paths/protected_extensions；
+# 本段只描述部署参数（挂载点/matcher/超时），不含任何业务规则。
+hook:
+  # 宿主 settings.json 路径（空 = 自动派生 workbuddy.user_data_dir/settings.json）
+  settings_path: ""
+  # matcher 集 v1（P0-4）: 文件/搜索类工具全量 + Bash（5.3.14 实测
+  # 不经过 PreToolUse，保留注册用于版本探测，预期不触发）
+  matcher: "Read|Write|Edit|Glob|Grep|PowerShell|Bash"
+  # hook 判定脚本路径（相对 observer.project_dir）
+  gate_script: "observer_core/blocking/hook_gate.py"
+  # P1-1: PostToolUse 审计 hook 脚本路径（相对 observer.project_dir）
+  post_script: "observer_core/blocking/hook_post_audit.py"
+  # hook 执行超时（秒；hook 必须在 <5s 内完成判定，含 2s 通知超时）
+  timeout: 10
 
 # ── 守护进程管理参数（脚本自用，一般无需修改）──────────────────
 daemon:
@@ -51,3 +140,7 @@ daemon:
   ready_timeout_s: 30
   # 停止请求文件（相对 observer.output_dir；stop 命令创建，管家消费）
   stop_request_file: ".stop_request"
+  # 申报静默告警阈值（秒）：距上次申报超过该时长，daemon 日志输出
+  # 「疑似连接器失连或未加载提示词」提示（仅提示、不判定、不自动干预）；
+  # 0 = 关闭静默检测。启动 daemon 时经脚本写入临时 config 的 mcp_report 段。
+  silence_alert_s: 600

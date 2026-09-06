@@ -116,6 +116,11 @@ def create_hook_report_handler(broker, validator, rate_limiter,
 
         received_at_ms = int(time.time() * 1000)
         payload = model.normalized(received_at_ms)
+        # P1-4 方案 A: hook 通知通道上报的 session_id 是宿主注入的会话
+        # UUID（第 2 轨关联键）——登记到 broker，供申报工具对齐 Agent
+        # 自造 session_id。非 UUID 格式（如旧版上报器）自动忽略。
+        broker.note_host_session(payload.get("agent_id"),
+                                 body.get("session_id"))
         record = {"type": TOOL_REPORT_TOOL_CALL, "payload": payload}
         receipt = broker.publish(record)
         return JSONResponse({"status": "accepted", **receipt},

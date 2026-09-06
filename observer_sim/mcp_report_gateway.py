@@ -175,6 +175,29 @@ def get_artifacts():
     return {"output_dir": out_dir, "artifacts": items}
 
 
+def get_summary():
+    """output/mcp_monitoring/monitoring_summary.json 结构化读取。
+
+    P2-3: 将监测汇总（含 coverage_matrix 覆盖矩阵、consistency_checker
+    一致性核对、hook 覆盖比对等产出字段）暴露给 Web API；文件不存在
+    时如实标记 unavailable。
+    """
+    cfg = load_cfg()
+    out_dir, _, _, _ = cw._out_paths(cfg)
+    summary_path = os.path.join(out_dir, "monitoring_summary.json")
+    if not os.path.isfile(summary_path):
+        return {"available": False, "message": "No summary yet",
+                "summary_path": summary_path}
+    try:
+        with open(summary_path, encoding="utf-8") as f:
+            data = json.load(f)
+        return {"available": True, "summary_path": summary_path,
+                "summary": data}
+    except (OSError, ValueError) as e:
+        return {"available": False, "error": str(e),
+                "summary_path": summary_path}
+
+
 def get_logs(lines=60):
     cfg = load_cfg()
     _, _, log_path, _ = cw._out_paths(cfg)

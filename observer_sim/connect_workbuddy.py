@@ -14,6 +14,9 @@ connect_workbuddy.py — WorkBuddy 接入方寸观察者系统的自动化脚本
     unconfigure-workbuddy 从 WorkBuddy mcp.json 移除 observer 条目（保留备份）
     launch-workbuddy     启动 WorkBuddy.exe（若未运行）
     restart-workbuddy    优雅关闭并重启 WorkBuddy（使 MCP 配置生效）
+    hook-deploy          部署拦截路径 hook 到 ~/.workbuddy/settings.json（含预检）
+    hook-remove          从 settings.json 移除 observer hook（保留备份）
+    hook-status          查看 hook 部署状态 + 配置预检 + 最近决策留痕
     report               列出最新风险报告/审计/图谱产物
 
 用法:
@@ -85,12 +88,51 @@ def load_config(path: str) -> dict:
     cfg["observer"].setdefault("config", "config.yaml")
     cfg["observer"].setdefault("output_dir", "output/mcp_monitoring")
     cfg["observer"].setdefault("jsonl_dir", None)
+    cfg["observer"].setdefault("instructions_file", None)
+    cfg["observer"].setdefault("crosscheck_process", None)
+    cfg["observer"].setdefault("crosscheck_file", None)
+    cfg["observer"].setdefault("crosscheck_audit", None)
+    cfg["observer"].setdefault("snapshot_checker", None)
+    cfg["observer"].setdefault("consistency_checker", None)
     cfg.setdefault("daemon", {})
     cfg["daemon"].setdefault("pid_file", ".mcp_daemon.pid")
     cfg["daemon"].setdefault("log_file", "mcp_daemon.log")
     cfg["daemon"].setdefault("stop_request_file", ".stop_request")
     cfg["daemon"].setdefault("ready_timeout_s", 30)
+    # 申报静默告警阈值（秒）；0 = 关闭静默检测。
+    # 经 _prepare_config 写入临时 config 的 mcp_report 段供 daemon 使用。
+    cfg["daemon"].setdefault("silence_alert_s", 600)
+    # P0: 拦截路径 hook 部署参数（matcher 集/超时/挂载点，不含业务规则）
+    cfg.setdefault("hook", {})
+    cfg["hook"].setdefault("settings_path", "")
+    cfg["hook"].setdefault(
+        "matcher", "Read|Write|Edit|Glob|Grep|PowerShell|Bash")
+    cfg["hook"].setdefault("gate_script",
+                           "observer_core/blocking/hook_gate.py")
+    cfg["hook"].setdefault("timeout", 10)
     return cfg
+
+
+def _resolve_instructions(cfg: dict):
+    """读取 instructions_file 内容（相对 observer.project_dir 或绝对路径）。
+
+    返回 None 表示不注入（未配置 / 文件不存在 / 读取失败），调用方据此
+    不写 instructions 字段，行为与历史版本一致。
+    """
+    rel = cfg["observer"].get("instructions_file")
+    if not rel:
+        return None
+    project = cfg["observer"]["project_dir"]
+    path = rel if os.path.isabs(rel) else os.path.join(project, rel)
+    if not os.path.isfile(path):
+        print(f"[configure] 警告: instructions 文件不存在（跳过注入）: {path}")
+        return None
+    try:
+        with open(path, encoding="utf-8") as f:
+            return f.read()
+    except OSError as e:
+        print(f"[configure] 警告: instructions 文件读取失败（{e}），跳过注入")
+        return None
 
 
 def _out_paths(cfg: dict):
@@ -133,6 +175,86 @@ def _prepare_config(cfg: dict, out_dir: str):
     if jsonl_dir:
         mcp["jsonl_dir"] = jsonl_dir
         changed = True
+    silence = int(cfg.get("daemon", {}).get("silence_alert_s", 0) or 0)
+    if silence > 0 and mcp.get("silence_alert_s") != silence:
+        mcp["silence_alert_s"] = silence
+        changed = True
+    # T3.1: 进程快照交叉校验配置合并（enabled 时写入 mcp_report 段）；
+    # agent_process_dirs 未显式配置时自动派生自 workbuddy.install_dir，
+    # 使 WorkBuddy 安装目录下的子进程（electron helper 等）免于误报。
+    crosscheck = cfg.get("observer", {}).get("crosscheck_process") or None
+    if isinstance(crosscheck, dict) and crosscheck.get("enabled"):
+        cc = dict(crosscheck)
+        if not cc.get("agent_process_dirs"):
+            install_dir = cfg.get("workbuddy", {}).get("install_dir")
+            if install_dir:
+                cc["agent_process_dirs"] = [str(install_dir)]
+        if mcp.get("crosscheck_process") != cc:
+            mcp["crosscheck_process"] = cc
+            changed = True
+    # T3.2: 文件快照交叉校验配置合并（enabled 时写入 mcp_report 段）；
+    # protected_dirs 相对路径统一解析为 project_dir 下的绝对路径，
+    # 避免 daemon 工作目录不同导致快照目录错位；
+    # protected_dirs 为空时 monitor_daemon 不启用该能力（行为不变）。
+    crosscheck_file = cfg.get("observer", {}).get("crosscheck_file") or None
+    if isinstance(crosscheck_file, dict) and crosscheck_file.get("enabled"):
+        cf = dict(crosscheck_file)
+        resolved = []
+        for d in (cf.get("protected_dirs") or []):
+            if not d:  # 过滤空串/None，避免 str(None) 变成非法路径
+                continue
+            d = str(d)
+            resolved.append(d if os.path.isabs(d)
+                            else os.path.join(project, d))
+        cf["protected_dirs"] = resolved
+        if mcp.get("crosscheck_file") != cf:
+            mcp["crosscheck_file"] = cf
+            changed = True
+    # T3.3: Windows 审计日志交叉校验配置合并（enabled 时写入 mcp_report 段）；
+    # 审计未启用/无权限时 daemon 如实标记不可用并输出启用指引（不静默失败）。
+    crosscheck_audit = cfg.get("observer", {}).get("crosscheck_audit") or None
+    if isinstance(crosscheck_audit, dict) and crosscheck_audit.get("enabled"):
+        ca = dict(crosscheck_audit)
+        if mcp.get("crosscheck_audit") != ca:
+            mcp["crosscheck_audit"] = ca
+            changed = True
+    # P1-3: 用户态快照交叉校验配置合并（enabled 时写入 mcp_report 段）；
+    # protected_dirs 相对路径统一解析为 project_dir 下的绝对路径（同 T3.2 口径）；
+    # protected_dirs 为空时保留空清单，monitor_daemon 回退用
+    # crosscheck_file.protected_dirs（同一受保护目录口径，避免配置分裂）。
+    crosscheck_snap = cfg.get("observer", {}).get("snapshot_checker") or None
+    if isinstance(crosscheck_snap, dict) and crosscheck_snap.get("enabled"):
+        cs = dict(crosscheck_snap)
+        resolved_dirs = []
+        for d in (cs.get("protected_dirs") or []):
+            if not d:
+                continue
+            d = str(d)
+            resolved_dirs.append(d if os.path.isabs(d)
+                                 else os.path.join(project, d))
+        cs["protected_dirs"] = resolved_dirs
+        if mcp.get("snapshot_checker") != cs:
+            mcp["snapshot_checker"] = cs
+            changed = True
+    # P2-2: 双源一致性核对配置合并（enabled 时写入 mcp_report 段）；
+    # 四源路径由 monitor_daemon 按 output_dir / hook 配置 / snapshot_checker
+    # 留痕固定名称推导，本段只传递开关（无路径需解析）。
+    consistency = cfg.get("observer", {}).get("consistency_checker") or None
+    if isinstance(consistency, dict) and consistency.get("enabled"):
+        csy = dict(consistency)
+        if mcp.get("consistency_checker") != csy:
+            mcp["consistency_checker"] = csy
+            changed = True
+    # P1-2: hook 留痕路径相对路径解析为 project_dir 下绝对路径后写入
+    # 临时 config——daemon 读临时 config 时（工作目录非 project_dir），
+    # hook.decisions_file / post_decisions_file 相对路径会错位导致
+    # 覆盖比对计数为 0（实测坑 2026-09-05）。
+    hook_cfg = data.get("hook") or {}
+    for key in ("decisions_file", "post_decisions_file"):
+        p = hook_cfg.get(key)
+        if p and not os.path.isabs(str(p)):
+            hook_cfg[key] = os.path.join(project, str(p))
+            changed = True
     if not changed:
         return src, None
     os.makedirs(out_dir, exist_ok=True)
@@ -578,6 +700,71 @@ def cmd_check(cfg: dict) -> int:
     return 0
 
 
+def cmd_preflight(cfg: dict) -> int:
+    """会话前健康检查（T1.3 连接器健康看门狗）。
+
+    聚合「mcp.json 注册 + 端口可达 + 申报三工具就绪」输出
+    「会话可用/不可用」结论；任一环节失败给出分步处理指引。
+    返回码 0 = 可用；15 = 不可用（区别于 check 的 5~9）。
+    """
+    host = cfg["server"]["host"]
+    port = int(cfg["server"]["port"])
+    problems = []
+
+    # 1/3 mcp.json observer 条目注册状态
+    mcp_path = cfg["workbuddy"]["mcp_config_path"]
+    entry = None
+    if os.path.isfile(mcp_path):
+        with open(mcp_path, encoding="utf-8") as f:
+            mcp_data = json.load(f)
+        entry = mcp_data.get("mcpServers", {}).get(OBSERVER_SERVER_NAME)
+    if entry and not entry.get("disabled"):
+        print(f"[preflight] 1/3 mcp.json 注册: OK (url={entry.get('url')})")
+    else:
+        problems.append("mcp.json 未注册 observer 或条目被 disabled"
+                        "（执行 configure-workbuddy）")
+        print("[preflight] 1/3 mcp.json 注册: FAIL")
+
+    # 2/3 端口可达（daemon 运行中）
+    if _port_open(host, port):
+        print(f"[preflight] 2/3 MCP Server 端口: OK ({host}:{port})")
+    else:
+        problems.append("MCP Server 端口不可达（先执行 start）")
+        print(f"[preflight] 2/3 MCP Server 端口: FAIL ({host}:{port})")
+
+    # 3/3 initialize + 申报三工具就绪
+    if _port_open(host, port):
+        try:
+            _, tool_names = _mcp_roundtrip(cfg, [], list_tools=True)
+        except ConfigError as e:
+            print(f"[preflight] 3/3 申报 tools 就绪: FAIL ({e})")
+        except Exception as e:  # noqa: BLE001
+            print(f"[preflight] 3/3 申报 tools 就绪: FAIL (initialize 异常: {e})")
+        else:
+            expected = ["report_action", "report_session", "report_tool_call"]
+            missing = [t for t in expected if t not in tool_names]
+            if not missing:
+                print("[preflight] 3/3 申报 tools 就绪: OK")
+            else:
+                problems.append(f"申报 tools 缺失: {missing}"
+                                "（执行 logs 查看 daemon 日志）")
+                print(f"[preflight] 3/3 申报 tools 就绪: FAIL (缺失 {missing})")
+    else:
+        print("[preflight] 3/3 申报 tools 就绪: 跳过（端口不可达）")
+
+    print("[preflight] " + "=" * 46)
+    if not problems:
+        print("[preflight] [OK] 会话可用: 连接器健康，"
+              "可打开 WorkBuddy 新会话开始工作")
+        return 0
+    print("[preflight] [FAIL] 会话不可用，请按顺序处理:")
+    for i, p in enumerate(problems, 1):
+        print(f"[preflight]   {i}. {p}")
+    print("[preflight] 处理完成后重新执行: "
+          "python connect_workbuddy.py preflight")
+    return 15
+
+
 def cmd_smoke(cfg: dict) -> int:
     agent = cfg["workbuddy"]["agent_id"]
     session_id = f"smoke-{int(time.time())}"
@@ -636,13 +823,21 @@ def cmd_configure_workbuddy(cfg: dict, remove: bool = False) -> int:
         else:
             print("[configure] mcp.json 中没有 observer 条目，无需移除")
     else:
-        servers[OBSERVER_SERVER_NAME] = {
+        entry = {
             "type": "sse",
             "url": (f"http://{cfg['server']['host']}:"
                     f"{int(cfg['server']['port'])}{cfg['server']['sse_path']}"),
             "timeout": int(cfg["server"].get("timeout_ms", 30000)),
             "description": OBSERVER_DESCRIPTION,
         }
+        # T1.2: instructions 自动注入（instructions_file 已配置且可读时）；
+        # 未配置/文件缺失时不写该字段，行为与历史版本一致。
+        instructions = _resolve_instructions(cfg)
+        if instructions:
+            entry["instructions"] = instructions
+            print("[configure] 已注入 instructions（来自 "
+                  f"observer.instructions_file），新会话自动生效")
+        servers[OBSERVER_SERVER_NAME] = entry
         print(f"[configure] 已在 mcp.json 注册 observer → "
               f"{servers[OBSERVER_SERVER_NAME]['url']}")
     with open(path, "w", encoding="utf-8") as f:
@@ -715,6 +910,505 @@ def cmd_logs(cfg: dict) -> int:
     return 0
 
 
+# ── P0: 拦截路径 hook 部署（hook-deploy / hook-remove / hook-status）─
+# 部署对象: ~/.workbuddy/settings.json hooks.PreToolUse（宿主执行前闸门）
+# 依据: 计划 P0-3/P0-4 + 复测工程坑（1.3-6: 正斜杠/重启/快照加载）。
+
+OBSERVER_HOOK_MARKER = "hook_gate.py"
+OBSERVER_POST_MARKER = "hook_post_audit.py"  # P1-1: PostToolUse 审计条目标记
+
+
+def _hook_paths(cfg: dict):
+    """返回 (settings_path, gate_abs) 绝对路径。
+
+    settings_path 空 → 自动派生 workbuddy.user_data_dir/settings.json。
+    """
+    project = cfg["observer"]["project_dir"]
+    settings_path = cfg["hook"].get("settings_path") or ""
+    if not settings_path:
+        settings_path = os.path.join(
+            cfg["workbuddy"]["user_data_dir"], "settings.json")
+    settings_path = (settings_path if os.path.isabs(settings_path)
+                     else os.path.join(project, settings_path))
+    gate_abs = cfg["hook"]["gate_script"]
+    gate_abs = (gate_abs if os.path.isabs(gate_abs)
+                else os.path.join(project, gate_abs))
+    return settings_path, gate_abs
+
+
+def _hook_post_abs(cfg: dict) -> str:
+    """返回 hook_post_audit.py 绝对路径（P1-1）。"""
+    project = cfg["observer"]["project_dir"]
+    post_script = cfg["hook"].get(
+        "post_script", "observer_core/blocking/hook_post_audit.py")
+    post_abs = (post_script if os.path.isabs(post_script)
+                else os.path.join(project, post_script))
+    return post_abs
+
+
+def _hook_python(cfg: dict) -> str:
+    """解析 hook 执行用 python 解释器绝对路径（含空格时加引号，正斜杠）。"""
+    python = cfg["observer"].get("python", "python")
+    found = shutil.which(python) or shutil.which("python") or sys.executable
+    found = str(found).replace("\\", "/")
+    if " " in found:
+        found = f'"{found}"'
+    return found
+
+
+def _hook_command(cfg: dict) -> str:
+    """生成 hook command（python + gate_script，强制正斜杠）。
+
+    复测坑（1.3-6）: command 路径反斜杠会被宿主 shell 剥掉致脚本无法启动，
+    必须正斜杠；含空格段加引号。
+    """
+    python = _hook_python(cfg)
+    _, gate_abs = _hook_paths(cfg)
+    gate = gate_abs.replace("\\", "/")
+    if " " in gate:
+        gate = f'"{gate}"'
+    return f"{python} {gate}"
+
+
+def _hook_post_command(cfg: dict) -> str:
+    """生成 PostToolUse hook command（python + post_script，正斜杠）。"""
+    python = _hook_python(cfg)
+    post_abs = _hook_post_abs(cfg).replace("\\", "/")
+    if " " in post_abs:
+        post_abs = f'"{post_abs}"'
+    return f"{python} {post_abs}"
+
+
+def _find_observer_hooks(pre_entries: list,
+                         marker: str = OBSERVER_HOOK_MARKER) -> list:
+    """识别 hook 事件数组中 observer 部署的条目（command 含 marker）。
+
+    返回条目列表（供幂等替换/移除），不修改入参。
+    """
+    result = []
+    for entry in (pre_entries or []):
+        if not isinstance(entry, dict):
+            continue
+        hooks = entry.get("hooks")
+        if not isinstance(hooks, list):
+            continue
+        for h in hooks:
+            if isinstance(h, dict) and marker in str(
+                    h.get("command", "")):
+                result.append(entry)
+                break
+    return result
+
+
+def _hook_preflight(cfg: dict, command: str) -> list:
+    """部署前预检清单（P0-3），返回问题列表（空 = 通过）。
+
+    TC-08: command 路径含反斜杠 → 拒绝并提示正斜杠。
+    """
+    problems = []
+    settings_path, gate_abs = _hook_paths(cfg)
+    # 1) command 路径正斜杠（复测坑 1.3-6）
+    if "\\" in command:
+        problems.append("hook command 路径含反斜杠，必须使用正斜杠"
+                        f"（command={command}）")
+    # 2) hook_gate.py 存在
+    if not os.path.isfile(gate_abs):
+        problems.append(f"hook 判定脚本不存在: {gate_abs}")
+    # 2b) P1-1: hook_post_audit.py 存在 + 审计留痕配置预检
+    post_abs = _hook_post_abs(cfg)
+    if not os.path.isfile(post_abs):
+        problems.append(f"PostToolUse 审计脚本不存在: {post_abs}")
+    post_command = _hook_post_command(cfg)
+    if "\\" in post_command:
+        problems.append("PostToolUse hook command 路径含反斜杠，必须使用"
+                        f"正斜杠（command={post_command}）")
+    # 3) python 解释器可达
+    python = cfg["observer"].get("python", "python")
+    if not (shutil.which(python) or shutil.which("python")):
+        problems.append(f"python 解释器不可达: {python}（检查 observer.python）")
+    # 4) hook_gate --check-config 通过（资源级红线配置有效性）
+    if not problems and os.path.isfile(gate_abs):
+        try:
+            out = subprocess.run(
+                [cfg["observer"].get("python", "python"), gate_abs,
+                 "--check-config"],
+                capture_output=True, text=True, timeout=30,
+                encoding="utf-8", errors="replace")
+        except (OSError, subprocess.TimeoutExpired) as e:
+            problems.append(f"hook_gate --check-config 执行失败: {e}")
+        else:
+            if out.returncode != 0:
+                problems.append(
+                    "hook_gate --check-config 未通过: "
+                    + (out.stderr or out.stdout or "").strip()[:400])
+    # 4b) P1-1: hook_post_audit --check-config 通过（审计留痕配置有效性）
+    if not problems and os.path.isfile(post_abs):
+        try:
+            out = subprocess.run(
+                [cfg["observer"].get("python", "python"), post_abs,
+                 "--check-config"],
+                capture_output=True, text=True, timeout=30,
+                encoding="utf-8", errors="replace")
+        except (OSError, subprocess.TimeoutExpired) as e:
+            problems.append(f"hook_post_audit --check-config 执行失败: {e}")
+        else:
+            if out.returncode != 0:
+                problems.append(
+                    "hook_post_audit --check-config 未通过: "
+                    + (out.stderr or out.stdout or "").strip()[:400])
+    # 5) settings.json 已存在时必须 JSON 有效（防写坏宿主配置）
+    if os.path.isfile(settings_path):
+        try:
+            with open(settings_path, encoding="utf-8") as f:
+                json.load(f)
+        except ValueError as e:
+            problems.append(f"settings.json 不是合法 JSON: {e}")
+    # 6) settings.json 所在目录存在
+    parent = os.path.dirname(settings_path)
+    if not os.path.isdir(parent):
+        problems.append(f"settings.json 目录不存在: {parent}")
+    return problems
+
+
+def _hook_decisions_path(cfg: dict) -> str:
+    """读取 observer config.yaml 的 hook.decisions_file（绝对路径）。"""
+    project = cfg["observer"]["project_dir"]
+    src = cfg["observer"]["config"]
+    src = src if os.path.isabs(src) else os.path.join(project, src)
+    try:
+        with open(src, encoding="utf-8") as f:
+            data = yaml.safe_load(f) or {}
+        rel = str((data.get("hook") or {}).get("decisions_file", "") or "")
+    except (OSError, ValueError, AttributeError):
+        return ""
+    if not rel:
+        return ""
+    return rel if os.path.isabs(rel) else os.path.join(project, rel)
+
+
+def _hook_post_decisions_path(cfg: dict) -> str:
+    """读取 observer config.yaml 的 hook.post_decisions_file（P1-1，绝对）。"""
+    project = cfg["observer"]["project_dir"]
+    src = cfg["observer"]["config"]
+    src = src if os.path.isabs(src) else os.path.join(project, src)
+    try:
+        with open(src, encoding="utf-8") as f:
+            data = yaml.safe_load(f) or {}
+        rel = str((data.get("hook") or {}).get(
+            "post_decisions_file", "output/hook_post_decisions.jsonl") or "")
+    except (OSError, ValueError, AttributeError):
+        return ""
+    if not rel:
+        return ""
+    return rel if os.path.isabs(rel) else os.path.join(project, rel)
+
+
+def cmd_hook_deploy(cfg: dict) -> int:
+    """部署拦截路径 hook（PreToolUse）+ 审计 hook（PostToolUse，P1-1）
+    到宿主 settings.json（备份 + 合并 + 预检）。
+
+    幂等: 已部署的 observer 条目会被替换而非重复追加；其余条目原样保留。
+    写回用 python io.open（R-8: PowerShell 写文件失败坑）。
+    """
+    settings_path, _ = _hook_paths(cfg)
+    matcher = str(cfg["hook"].get("matcher") or "")
+    timeout = int(cfg["hook"].get("timeout", 10))
+    if not matcher:
+        print("[hook-deploy] 失败: hook.matcher 为空（拒绝部署空 matcher）")
+        return 21
+    command = _hook_command(cfg)
+    post_command = _hook_post_command(cfg)
+    problems = _hook_preflight(cfg, command)
+    if problems:
+        print("[hook-deploy] 预检失败，拒绝部署:")
+        for p in problems:
+            print(f"  - {p}")
+        return 22
+    stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
+    bak = f"{settings_path}.bak-observer-hook-{stamp}"
+    data = {}
+    if os.path.isfile(settings_path):
+        shutil.copy2(settings_path, bak)
+        print(f"[hook-deploy] 已备份: {bak}")
+        with open(settings_path, encoding="utf-8") as f:
+            data = json.load(f)
+    hooks_cfg = data.setdefault("hooks", {})
+    pre_entries = hooks_cfg.setdefault("PreToolUse", [])
+    if not isinstance(pre_entries, list):
+        print("[hook-deploy] 失败: hooks.PreToolUse 不是数组，"
+              "拒绝覆盖（请人工检查 settings.json）")
+        return 23
+    new_entry = {
+        "matcher": matcher,
+        "hooks": [{
+            "type": "command",
+            "command": command,
+            "timeout": timeout,
+        }],
+    }
+    obs_ids = {id(e) for e in _find_observer_hooks(pre_entries)}
+    kept = [e for e in pre_entries if id(e) not in obs_ids]
+    pre_entries[:] = kept + [new_entry]
+    # P1-1: PostToolUse 审计 hook 条目（幂等替换，matcher 同 PreToolUse）
+    post_entries = hooks_cfg.setdefault("PostToolUse", [])
+    if not isinstance(post_entries, list):
+        print("[hook-deploy] 失败: hooks.PostToolUse 不是数组，"
+              "拒绝覆盖（请人工检查 settings.json）")
+        return 23
+    post_new_entry = {
+        "matcher": matcher,
+        "hooks": [{
+            "type": "command",
+            "command": post_command,
+            "timeout": timeout,
+        }],
+    }
+    post_obs_ids = {id(e) for e in _find_observer_hooks(
+        post_entries, marker=OBSERVER_POST_MARKER)}
+    post_kept = [e for e in post_entries if id(e) not in post_obs_ids]
+    post_entries[:] = post_kept + [post_new_entry]
+    try:
+        with open(settings_path, "w", encoding="utf-8") as f:
+            json.dump(data, f, ensure_ascii=False, indent=2)
+            f.write("\n")
+    except OSError as e:
+        print(f"[hook-deploy] 失败: settings.json 写入失败（{e}）；"
+              "若 WorkBuddy 占用文件请先退出 WorkBuddy；"
+              f"可用备份回滚: {bak}")
+        return 24
+    try:
+        with open(settings_path, encoding="utf-8") as f:
+            json.load(f)
+    except ValueError as e:
+        print(f"[hook-deploy] 失败: 写回后 JSON 校验失败（{e}），"
+              f"请用备份回滚: {bak}")
+        return 25
+    print(f"[hook-deploy] OK 已部署 hook 到 {settings_path}")
+    print(f"[hook-deploy]   matcher: {matcher}")
+    print(f"[hook-deploy]   PreToolUse command: {command}")
+    print(f"[hook-deploy]   PostToolUse command: {post_command}")
+    print(f"[hook-deploy]   timeout: {timeout}")
+    if _ps_info("WorkBuddy"):
+        print("[hook-deploy] 提示: WorkBuddy 正在运行，settings.json 修改"
+              "需**完全重启**后生效（restart-workbuddy）")
+    print("[hook-deploy] 卸载/回滚: python connect_workbuddy.py "
+          f"hook-remove（备份: {bak}）")
+    return 0
+
+
+def cmd_hook_remove(cfg: dict) -> int:
+    """从 settings.json 移除 observer hook 条目（PreToolUse + PostToolUse，
+    保留备份与其余配置）。"""
+    settings_path, _ = _hook_paths(cfg)
+    if not os.path.isfile(settings_path):
+        print(f"[hook-remove] settings.json 不存在，无需移除: {settings_path}")
+        return 0
+    stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
+    bak = f"{settings_path}.bak-observer-hook-{stamp}"
+    shutil.copy2(settings_path, bak)
+    print(f"[hook-remove] 已备份: {bak}")
+    with open(settings_path, encoding="utf-8") as f:
+        data = json.load(f)
+    hooks_cfg = data.get("hooks") or {}
+    pre_entries = hooks_cfg.get("PreToolUse") or []
+    obs_ids = {id(e) for e in _find_observer_hooks(pre_entries)}
+    kept = [e for e in pre_entries if id(e) not in obs_ids]
+    removed_n = len(pre_entries) - len(kept)
+    # P1-1: 同步移除 PostToolUse observer 条目
+    post_entries = hooks_cfg.get("PostToolUse") or []
+    post_obs_ids = {id(e) for e in _find_observer_hooks(
+        post_entries, marker=OBSERVER_POST_MARKER)}
+    post_kept = [e for e in post_entries if id(e) not in post_obs_ids]
+    removed_n += len(post_entries) - len(post_kept)
+    if removed_n == 0:
+        print("[hook-remove] settings.json 中没有 observer hook 条目，"
+              "无需移除")
+        return 0
+    if kept:
+        hooks_cfg["PreToolUse"] = kept
+    else:
+        hooks_cfg.pop("PreToolUse", None)
+    if post_kept:
+        hooks_cfg["PostToolUse"] = post_kept
+    else:
+        hooks_cfg.pop("PostToolUse", None)
+    if not hooks_cfg:
+        data.pop("hooks", None)
+    with open(settings_path, "w", encoding="utf-8") as f:
+        json.dump(data, f, ensure_ascii=False, indent=2)
+        f.write("\n")
+    print(f"[hook-remove] OK 已移除 {removed_n} 个 observer hook 条目"
+          f"（备份: {bak}）")
+    if _ps_info("WorkBuddy"):
+        print("[hook-remove] 提示: WorkBuddy 正在运行，"
+              "需完全重启后移除生效")
+    return 0
+
+
+def cmd_hook_status(cfg: dict) -> int:
+    """hook 部署状态 + hook_gate 配置预检 + 最近决策留痕。"""
+    settings_path, gate_abs = _hook_paths(cfg)
+    print(f"[hook-status] settings.json: {settings_path}"
+          f"（{'存在' if os.path.isfile(settings_path) else '不存在'}）")
+    if os.path.isfile(settings_path):
+        try:
+            with open(settings_path, encoding="utf-8") as f:
+                data = json.load(f)
+            hooks_cfg = data.get("hooks") or {}
+            pre_entries = hooks_cfg.get("PreToolUse") or []
+            obs_ids = {id(e) for e in _find_observer_hooks(pre_entries)}
+            print(f"[hook-status] PreToolUse 条目数: {len(pre_entries)}"
+                  f"（observer 部署: {len(obs_ids)}）")
+            for e in pre_entries:
+                is_obs = id(e) in obs_ids
+                hh = e.get("hooks") or []
+                first = hh[0] if hh and isinstance(hh[0], dict) else {}
+                print(f"[hook-status]   {'[observer]' if is_obs else '          '}"
+                      f" matcher={e.get('matcher', '')}"
+                      f" command={first.get('command', '')}"
+                      f" timeout={first.get('timeout', '-')}")
+            # P1-1: PostToolUse 审计 hook 条目状态
+            post_entries = hooks_cfg.get("PostToolUse") or []
+            post_obs_ids = {id(e) for e in _find_observer_hooks(
+                post_entries, marker=OBSERVER_POST_MARKER)}
+            print(f"[hook-status] PostToolUse 条目数: {len(post_entries)}"
+                  f"（observer 审计部署: {len(post_obs_ids)}）")
+            for e in post_entries:
+                is_obs = id(e) in post_obs_ids
+                hh = e.get("hooks") or []
+                first = hh[0] if hh and isinstance(hh[0], dict) else {}
+                print(f"[hook-status]   {'[observer]' if is_obs else '          '}"
+                      f" matcher={e.get('matcher', '')}"
+                      f" command={first.get('command', '')}"
+                      f" timeout={first.get('timeout', '-')}")
+        except ValueError as e:
+            print(f"[hook-status] 警告: settings.json 解析失败: {e}")
+    else:
+        print("[hook-status] 未部署（执行 hook-deploy）")
+    # hook_gate 配置预检
+    python = cfg["observer"].get("python", "python")
+    if os.path.isfile(gate_abs):
+        try:
+            out = subprocess.run([python, gate_abs, "--check-config"],
+                                 capture_output=True, text=True, timeout=30,
+                                 encoding="utf-8", errors="replace")
+            if out.returncode == 0:
+                print("[hook-status] hook_gate --check-config: OK")
+            else:
+                print("[hook-status] hook_gate --check-config: FAIL")
+                print((out.stderr or out.stdout or "").strip()[:500])
+        except (OSError, subprocess.TimeoutExpired) as e:
+            print(f"[hook-status] hook_gate 执行失败: {e}")
+    else:
+        print(f"[hook-status] hook_gate 不存在: {gate_abs}")
+    # 最近决策留痕（三轨证据第 2 轨）
+    decisions = _hook_decisions_path(cfg)
+    if os.path.isfile(decisions):
+        with open(decisions, encoding="utf-8") as f:
+            lines = f.read().splitlines()
+        print(f"[hook-status] 决策留痕: {decisions}（{len(lines)} 条）")
+        for line in lines[-5:]:
+            try:
+                e = json.loads(line)
+                print(f"[hook-status]   {str(e.get('timestamp', ''))[:19]}"
+                      f" {e.get('tool_name', '')} -> {e.get('decision', '')}"
+                      f"{(' (gate_error)') if e.get('gate_error') else ''}")
+            except ValueError:
+                pass
+    else:
+        print("[hook-status] 决策留痕: 尚无记录（hook 未触发过）")
+    # P1-1: PostToolUse 审计留痕尾部
+    post_decisions = _hook_post_decisions_path(cfg)
+    if os.path.isfile(post_decisions):
+        with open(post_decisions, encoding="utf-8") as f:
+            plines = f.read().splitlines()
+        print(f"[hook-status] PostToolUse 审计留痕: {post_decisions}"
+              f"（{len(plines)} 条）")
+        for line in plines[-5:]:
+            try:
+                e = json.loads(line)
+                print(f"[hook-status]   {str(e.get('timestamp', ''))[:19]}"
+                      f" {e.get('tool_name', '')}"
+                      f" protected={e.get('protected', '-')}"
+                      f"{(' (gate_error)') if e.get('gate_error') else ''}")
+            except ValueError:
+                pass
+    else:
+        print("[hook-status] PostToolUse 审计留痕: 尚无记录（hook 未触发过）")
+    if _ps_info("WorkBuddy"):
+        print("[hook-status] 提示: WorkBuddy 运行中；settings.json 修改后"
+              "需完全重启生效")
+    return 0
+
+
+# ── P1-2: 申报完整性核对 + 覆盖置信度（coverage 子命令）──────────
+# 只读三处留痕做计数比对，不改动任何状态；用于宿主实测后核验。
+
+def cmd_coverage(cfg: dict) -> int:
+    """hook 事件数 vs 申报事件数比对，输出 coverage_confidence（P1-2）。"""
+    project = cfg["observer"]["project_dir"]
+    src = cfg["observer"]["config"]
+    src = src if os.path.isabs(src) else os.path.join(project, src)
+    if not os.path.isfile(src):
+        print(f"[coverage] 观察者配置不存在: {src}")
+        return 1
+    with open(src, encoding="utf-8") as f:
+        data = yaml.safe_load(f) or {}
+    hook_cfg = data.get("hook") or {}
+
+    def _abs(p, default):
+        p = str(p or default)
+        return p if os.path.isabs(p) else os.path.join(project, p)
+
+    jsonl_dir = cfg["observer"].get("jsonl_dir")
+    reports_path = None
+    if jsonl_dir:
+        d = jsonl_dir if os.path.isabs(jsonl_dir) \
+            else os.path.join(project, jsonl_dir)
+        reports_path = os.path.join(d, "mcp_reports.jsonl")
+    pre_path = _abs(hook_cfg.get("decisions_file"),
+                    "output/hook_decisions.jsonl")
+    post_path = _abs(hook_cfg.get("post_decisions_file"),
+                     "output/hook_post_decisions.jsonl")
+
+    from collector.mcp_report_collector import analyze_hook_coverage
+    a = analyze_hook_coverage(reports_path=reports_path,
+                              pre_decisions_path=pre_path,
+                              post_decisions_path=post_path)
+    print("[coverage] P1-2 申报完整性核对 + hook 覆盖比对")
+    print(f"  申报留痕: {reports_path or '未配置（null）'}")
+    print(f"  hook 执行前裁决留痕: {pre_path}")
+    print(f"  hook 执行后审计留痕: {post_path}")
+    if not a["checked"]:
+        print(f"[coverage] 不可核对: {a['reason']}")
+        print(f"[coverage] 覆盖置信度: {a['coverage_confidence']}"
+              f"（{a['confidence_reason']}）")
+        return 2
+    print(f"[coverage] 计数: 申报工具调用 {a['reported_tool_calls']} 条；"
+          f"hook 执行前裁决 {a['hook_pre_events']} 条；"
+          f"执行后审计 {a['hook_post_events']} 条；"
+          f"deny {a['hook_deny_count']} 条；"
+          f"gate_error {a['hook_gate_error_count']} 条")
+    corrupt = a.get("corrupt_lines") or {}
+    if corrupt:
+        print(f"[coverage] 留痕损坏行（容错跳过）: {sum(corrupt.values())} 行")
+    for tool, info in sorted((a.get("tools") or {}).items()):
+        pre_cov = info.get("pre_coverage")
+        cov = f"{pre_cov:.0%}" if pre_cov is not None else "-"
+        print(f"  - {tool}: 申报 {info['reported']} / hook执行前 "
+              f"{info['hook_pre']} / 执行后 {info['hook_post']}"
+              f"（覆盖 {cov}，状态 {info['status']}）")
+    for u in a.get("unreported_denies") or []:
+        print(f"[coverage] 疑似漏报: {u['tool_name']} deny "
+              f"{u['deny_count']} 次但申报未报")
+    if a.get("bash_blindspot_note"):
+        print(f"[coverage] Bash 盲区: {a['bash_blindspot_note']}")
+    print(f"[coverage] 覆盖置信度: {a['coverage_confidence']}"
+          f"（{a['confidence_reason']}）")
+    print(f"[coverage] 说明: {a['note']}")
+    return 0
+
+
 # ── 入口 ────────────────────────────────────────────────────────
 
 def build_parser() -> argparse.ArgumentParser:
@@ -734,6 +1428,8 @@ def build_parser() -> argparse.ArgumentParser:
     sub.add_parser("stop", help="优雅停止 daemon 并验证报告生成")
     sub.add_parser("status", help="查看 daemon/WorkBuddy/MCP 配置状态")
     sub.add_parser("check", help="连通性自检（端口+initialize+call_tool）")
+    sub.add_parser("preflight",
+                   help="会话前健康检查（mcp.json 注册+端口+三工具就绪）")
     sub.add_parser("smoke", help="模拟 WorkBuddy 申报烟测")
     sub.add_parser("logs", help="查看 daemon 日志尾部")
     sub.add_parser("configure-workbuddy",
@@ -741,6 +1437,14 @@ def build_parser() -> argparse.ArgumentParser:
     sub.add_parser("unconfigure-workbuddy", help="从 WorkBuddy 移除 observer 条目")
     sub.add_parser("launch-workbuddy", help="启动 WorkBuddy（若未运行）")
     sub.add_parser("restart-workbuddy", help="优雅重启 WorkBuddy")
+    sub.add_parser("hook-deploy",
+                   help="部署拦截路径 hook 到 settings.json（预检+备份）")
+    sub.add_parser("hook-remove",
+                   help="从 settings.json 移除 observer hook（保留备份）")
+    sub.add_parser("hook-status",
+                   help="hook 部署状态 + 配置预检 + 最近决策留痕")
+    sub.add_parser("coverage",
+                   help="P1-2: hook 事件数 vs 申报事件数比对（覆盖置信度）")
     sub.add_parser("report", help="列出最新报告/审计产物")
     parser.add_argument("--internal-watch", action="store_true",
                         help=argparse.SUPPRESS)
@@ -750,6 +1454,11 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def main(argv=None) -> int:
+    # Windows 控制台缺省 GBK：统一输出 UTF-8 + 容错，避免中文/emoji/
+    # 替换字符触发 UnicodeEncodeError（GBK 无法编码导致子命令崩溃）。
+    for stream in (sys.stdout, sys.stderr):
+        if hasattr(stream, "reconfigure"):
+            stream.reconfigure(encoding="utf-8", errors="replace")
     parser = build_parser()
     args = parser.parse_args(argv)
     if args.internal_watch:
@@ -766,6 +1475,7 @@ def main(argv=None) -> int:
         "stop": lambda: cmd_stop(cfg),
         "status": lambda: cmd_status(cfg),
         "check": lambda: cmd_check(cfg),
+        "preflight": lambda: cmd_preflight(cfg),
         "smoke": lambda: cmd_smoke(cfg),
         "logs": lambda: cmd_logs(cfg),
         "configure-workbuddy": lambda: cmd_configure_workbuddy(cfg),
@@ -773,6 +1483,10 @@ def main(argv=None) -> int:
                                                                  remove=True),
         "launch-workbuddy": lambda: cmd_launch_workbuddy(cfg),
         "restart-workbuddy": lambda: cmd_restart_workbuddy(cfg),
+        "hook-deploy": lambda: cmd_hook_deploy(cfg),
+        "hook-remove": lambda: cmd_hook_remove(cfg),
+        "hook-status": lambda: cmd_hook_status(cfg),
+        "coverage": lambda: cmd_coverage(cfg),
         "report": lambda: cmd_report(cfg),
     }
     try:

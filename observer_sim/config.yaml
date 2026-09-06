@@ -76,12 +76,90 @@ mcp_report:
   host: "127.0.0.1"                  # MCP Server 监听地址（HTTP+SSE；仅本机回环）
   port: 8765                         # MCP Server 监听端口（/api/hook-report 与 MCP 同端口）
   jsonl_dir: null                    # 申报留痕目录（null = 不落盘，仅内存队列）
+  # T1.3: 申报静默告警阈值（秒）；距上次申报超过该时长输出「疑似连接器失连」
+  # 提示（仅提示、不判定、不自动干预）；0 = 关闭。缺省 0；
+  # WorkBuddy 接入由 connect_workbuddy.py 从 workbuddy_connect.yaml 写入。
+  silence_alert_s: 0
+  # T3.1: 进程快照交叉校验（第 3 层，用户态 psutil 会话边界快照比对；
+  # 仅告警不拦截；enabled=false/缺省时行为不变。
+  # WorkBuddy 接入由 connect_workbuddy.py 从 workbuddy_connect.yaml 写入。
+  crosscheck_process:
+    enabled: false
+    whitelist_extra: []           # 额外白名单进程名（小写，不含 .exe 也兼容）
+    agent_process_names: []       # Agent 自身进程名（默认无；WorkBuddy 接入时写入）
+  # T3.2: 文件快照交叉校验（第 3 层，受保护目录会话边界哈希快照比对；
+  # 仅告警不拦截；protected_dirs 为空时不启用；enabled=false/缺省时行为不变。
+  # WorkBuddy 接入由 connect_workbuddy.py 从 workbuddy_connect.yaml 写入。
+  crosscheck_file:
+    enabled: false
+    protected_dirs: []            # 受保护目录清单（绝对路径优先；相对路径由接入脚本解析）
+    max_files: 2000               # 单次快照文件数上限（超出截断并如实标记）
+    hash_max_size: 10485760       # 单文件哈希上限（字节，超出仅记 size/mtime）
+  # T3.3: Windows 审计日志交叉校验（第 3 层，系统审计 4688/4104 独立
+  # 观测源，经 PowerShell Get-WinEvent 用户态读取；仅告警不拦截；
+  # enabled=false/缺省时行为不变；审计未启用时如实标记不可用 + 指引。
+  # WorkBuddy 接入由 connect_workbuddy.py 从 workbuddy_connect.yaml 写入。
+  crosscheck_audit:
+    enabled: false
+    channels: [4688, 4104]        # 审计通道（4688 Security 进程创建 / 4104 PowerShell 脚本块）
+    lookback_s: 60                # 比对窗口前扩秒数（覆盖会话 start 前的审计事件）
+    max_events: 500               # 单会话单通道最大事件数
+    timeout_s: 30                 # 单通道查询超时（秒）
+    agent_process_names: []       # Agent 自身进程名白名单（WorkBuddy 接入时写入）
+    whitelist_extra: []           # 额外白名单进程名
+  # P1-3: 用户态快照交叉校验（定时驱动 + 4663 对象访问审计；仅告警不
+  # 拦截；enabled=false/缺省时行为不变）。
+  # interval_s: 定时快照间隔（秒）；protected_dirs 为空时回退用
+  # crosscheck_file.protected_dirs（同一受保护目录口径）；
+  # audit_4663: 停止时按 lookback_s 窗口查询 Security 4663
+  # （需管理员开启对象访问审计 + 目录 SACL，未启用时如实标记不可用）。
+  # WorkBuddy 接入由 connect_workbuddy.py 从 workbuddy_connect.yaml 写入。
+  snapshot_checker:
+    enabled: false
+    interval_s: 30                # 定时快照间隔（秒）
+    protected_dirs: []            # 受保护目录（为空回退 crosscheck_file 口径）
+    max_files: 2000               # 单次快照文件数上限（超出截断并如实标记）
+    hash_max_size: 10485760       # 单文件哈希上限（字节，超出仅记 size/mtime）
+    audit_4663: true              # 停止时读取 Security 4663 对象访问审计
+    lookback_s: 60                # 4663 比对窗口前扩秒数
+    max_events: 500               # 4663 单次查询最大事件数
+    timeout_s: 30                 # 4663 查询超时（秒）
+    whitelist_extra: []           # 额外白名单进程名（访问进程排除）
+  # P2-2: 双源一致性核对（申报 / hook 执行前裁决 / hook 执行后审计 /
+  # 快照校验 四源留痕交叉比对，三类不一致仅告警不拦截，不改判定管线；
+  # enabled=false/缺省时行为不变；各维度依赖源缺失时独立标记不可核对
+  # （unavailable + 指引），不中断其余维度。
+  # WorkBuddy 接入由 connect_workbuddy.py 从 workbuddy_connect.yaml 写入。
+  consistency_checker:
+    enabled: false
   # P1: Hooks 确定性申报摄入（Qoder CN PostToolUse Hook → reporter → 本端点）
   # enabled: false 时行为与纯 MCP 申报模式完全一致（不挂载该路由）
   hook_ingest:
     enabled: true
     path: "/api/hook-report"         # POST 摄入端点（与 MCP Server 同端口同应用）
     agent_id_default: "qoder"        # 申报体未携带 agent_id 时的默认标识
+
+# ============================================================
+# P0: 拦截路径（宿主 settings.json hooks PreToolUse 强阻止）
+# 入口脚本: observer_core/blocking/hook_gate.py
+# D-2 规则唯一基准: 资源级红线唯一数据源为 protected_paths /
+#   protected_extensions，hook_gate 与 RuleEngine 均只读本段，
+#   hook_gate 不内嵌任何业务规则；改规则只改本文件不改代码。
+# D-1 判定协议: protocol 开关（json = stdout JSON 三态，ask 默认关闭；
+#   exit2 = exit 2 + stderr 双态）；实测不支持 JSON 时切 exit2 即可。
+# D-3 分级失效语义: 受保护资源 fail-closed、其余 fail-open+告警，
+#   由 hook_gate 内部 try/except 兜底；进程崩溃由宿主 fail-closed 兜底。
+# ============================================================
+hook:
+  protocol: "exit2"                  # "json" | "exit2"（D-1 协议开关）
+  ask_enabled: false                 # ask 态默认关闭（D-1：实测支持 JSON 后仍保持关闭）
+  notify_url: "http://127.0.0.1:8765/api/hook-report"   # P1-4: 决策通知直达 daemon hook 摄入端点（与 MCP Server 同端口），失败不阻塞判定
+  notify_timeout_s: 2                # 通知超时（秒，防 hook 整体超时）
+  decisions_file: "output/hook_decisions.jsonl"  # 三轨证据第 2 轨：拦截决策留痕（相对项目根）
+  post_audit_enabled: true            # P1-1: PostToolUse 执行后审计开关（监测路径）
+  post_decisions_file: "output/hook_post_decisions.jsonl"  # P1-1: 执行后审计留痕（第 2 轨扩展）
+  protected_paths: ["output/hook_testdata"]  # 受保护目录（P0 实测靶标；正式红线由用户配置）
+  protected_extensions: [".pem", ".key"]    # 受保护扩展名（仅对 protected_paths 内文件生效）
 
 # ============================================================
 # 以下为现有配置段，全部保留不做修改
